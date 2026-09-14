@@ -192,7 +192,7 @@ section('6 · loadState() bei leerem Speicher liefert gültigen initialen Zustan
   localStorage.clear();
   const state = IdleCore.loadState();
 
-  assert(state.version === 1, 'loadState() (leerer Speicher): version === 1');
+  assert(state.version === IdleCore.IDLE_STATE_VERSION, `loadState() (leerer Speicher): version === ${IdleCore.IDLE_STATE_VERSION}`);
   assert(state.km === 0, 'loadState() (leerer Speicher): km === 0');
   assert(Array.isArray(state.ownedBikeIds) && state.ownedBikeIds.length === 1, 'loadState() (leerer Speicher): genau 1 besessenes Bike (Startbike)');
   assert(state.ownedBikeIds[0] === IdleCore.IDLE_BIKES[0].id, 'loadState() (leerer Speicher): Startbike === IDLE_BIKES[0]');
@@ -205,22 +205,22 @@ section('6 · loadState() bei leerem Speicher liefert gültigen initialen Zustan
 section('7 · migrateState() — fehlende/ältere/korrupte Rohdaten defensiv behandelt');
 (function () {
   const viaNull = IdleCore.migrateState(null);
-  assert(viaNull.version === 1, 'migrateState(null) liefert version 1');
+  assert(viaNull.version === IdleCore.IDLE_STATE_VERSION, `migrateState(null) liefert version ${IdleCore.IDLE_STATE_VERSION}`);
   assert(viaNull.km === 0, 'migrateState(null) liefert km 0');
 
   const viaUndefined = IdleCore.migrateState(undefined);
-  assert(viaUndefined.version === 1, 'migrateState(undefined) liefert version 1');
+  assert(viaUndefined.version === IdleCore.IDLE_STATE_VERSION, `migrateState(undefined) liefert version ${IdleCore.IDLE_STATE_VERSION}`);
 
   const viaGarbage = IdleCore.migrateState('nicht-mal-ein-objekt');
-  assert(viaGarbage.version === 1, 'migrateState(string) liefert version 1 (kein Absturz)');
+  assert(viaGarbage.version === IdleCore.IDLE_STATE_VERSION, `migrateState(string) liefert version ${IdleCore.IDLE_STATE_VERSION} (kein Absturz)`);
 
   const viaNoVersion = IdleCore.migrateState({ km: 42 });
-  assert(viaNoVersion.version === 1, 'migrateState({km:42}) (fehlende version) liefert version 1');
+  assert(viaNoVersion.version === IdleCore.IDLE_STATE_VERSION, `migrateState({km:42}) (fehlende version) liefert version ${IdleCore.IDLE_STATE_VERSION}`);
   assert(viaNoVersion.km === 42, 'migrateState({km:42}) übernimmt gültiges km-Feld');
   assert(Array.isArray(viaNoVersion.ownedBikeIds) && viaNoVersion.ownedBikeIds.length > 0, 'migrateState({km:42}) füllt fehlendes ownedBikeIds auf');
 
   const viaOlderVersion = IdleCore.migrateState({ version: 0, km: 10, ownedBikeIds: ['z125pro'], currentBikeId: 'z125pro', bikeLevels: { z125pro: 3 } });
-  assert(viaOlderVersion.version === 1, 'migrateState() hebt ältere version auf aktuelle version an');
+  assert(viaOlderVersion.version === IdleCore.IDLE_STATE_VERSION, `migrateState() hebt ältere version auf aktuelle version (${IdleCore.IDLE_STATE_VERSION}) an`);
   assert(viaOlderVersion.bikeLevels.z125pro === 3, 'migrateState() übernimmt gültige bikeLevels aus älterem Zustand');
 
   const viaBrokenOwned = IdleCore.migrateState({ version: 1, ownedBikeIds: 'kaputt', currentBikeId: 'unbekannt' });
@@ -647,6 +647,257 @@ section('13 · Statistiken (recordLap/recordComboPeak/addPlayTime) + vollständi
   const migratedCorrupt = IdleCore.migrateState(corruptRaw);
   assert(migratedCorrupt.prestige.contracts.length === 1 && migratedCorrupt.prestige.contracts[0] === 'ertrag25', 'migrateState() entfernt unbekannte Vertrags-ids, behält gültige');
   assert(migratedCorrupt.parts.collected.length === 1 && migratedCorrupt.parts.collected[0] === 'helm_standard', 'migrateState() entfernt unbekannte Teile-ids, behält gültige');
+
+  // feat(idle-bills)/feat(idle-gear): ein ECHTES altes v1-Save (KOMPLETT ohne finance/gear-Felder,
+  // exakt wie es vor Phase D persistiert worden wäre) migriert defensiv + verlustfrei auf v2.
+  const v1Raw = {
+    version: 1,
+    km: 4242,
+    totalKmEarned: 9999,
+    ownedBikeIds: ['z125pro', 'klx300'],
+    currentBikeId: 'klx300',
+    bikeLevels: { z125pro: 0, klx300: 2 },
+    prestige: { level: 3, points: 12, trophies: 4, contracts: ['ertrag25'] },
+    parts: { collected: ['helm_standard'] },
+    offline: { lastSeenAt: 555 },
+    stats: { laps: 10, bestCombo: 3, seasonHistory: [], playTimeSeconds: 100 },
+    combo: { count: 0, multiplier: 1, multiplierExpiresAt: null },
+    sound: { enabled: false, volume: 0.5 },
+  };
+  const migratedV1 = IdleCore.migrateState(v1Raw);
+  assert(migratedV1.version === IdleCore.IDLE_STATE_VERSION, `migrateState() hebt ein echtes v1-Save auf version ${IdleCore.IDLE_STATE_VERSION} an`);
+  assert(migratedV1.km === 4242 && migratedV1.totalKmEarned === 9999, 'migrateState() v1→v2: km/totalKmEarned bleiben verlustfrei erhalten');
+  assert(migratedV1.prestige.trophies === 4 && migratedV1.prestige.contracts.indexOf('ertrag25') !== -1, 'migrateState() v1→v2: prestige bleibt verlustfrei erhalten');
+  assert(migratedV1.parts.collected.indexOf('helm_standard') !== -1, 'migrateState() v1→v2: parts.collected bleibt verlustfrei erhalten');
+  assert(
+    migratedV1.finance && typeof migratedV1.finance === 'object' &&
+    migratedV1.finance.billsPaidOnTime === 0 && migratedV1.finance.insolvencies === 0 &&
+    migratedV1.finance.insolvencyFreeFlag === true &&
+    migratedV1.finance.activeBillAmount === null && migratedV1.finance.activeBillDueAt === null,
+    'migrateState() v1→v2: ein v1-Save OHNE finance-Feld bekommt defensiv einen gültigen, leeren finance-Zustand'
+  );
+  assert(migratedV1.gear && Array.isArray(migratedV1.gear.collected) && migratedV1.gear.collected.length === 0, 'migrateState() v1→v2: ein v1-Save OHNE gear-Feld bekommt defensiv eine leere gear-Sammlung');
+})();
+
+section('14 · AUSRÜSTUNG (GEAR) — feat(idle-gear): generalisierte Engine-Wiederverwendung (rollPartDrop/addPart/setBonuses mit pool)');
+(function () {
+  // Daten: 5 Kategorien × 4 Seltenheitsstufen = 20 Items.
+  assert(Array.isArray(IdleCore.IDLE_GEAR_SETS) && IdleCore.IDLE_GEAR_SETS.length === 5, `IDLE_GEAR_SETS enthält 5 Kategorien (gefunden: ${IdleCore.IDLE_GEAR_SETS.length})`);
+  assert(Array.isArray(IdleCore.IDLE_GEAR_ITEMS) && IdleCore.IDLE_GEAR_ITEMS.length === 20, `IDLE_GEAR_ITEMS enthält 20 Items (gefunden: ${IdleCore.IDLE_GEAR_ITEMS.length})`);
+  IdleCore.IDLE_GEAR_SETS.forEach((set) => {
+    const itemsInSet = IdleCore.IDLE_GEAR_ITEMS.filter((i) => i.setId === set.id);
+    assert(itemsInSet.length === 4, `Kategorie "${set.id}" hat genau 4 Items (eines je Seltenheitsstufe, gefunden: ${itemsInSet.length})`);
+    const rarities = itemsInSet.map((i) => i.rarity).sort().join(',');
+    assert(rarities === 'episch,gewoehnlich,legendaer,selten', `Kategorie "${set.id}" deckt exakt die 4 Seltenheitsstufen ab (gefunden: ${rarities})`);
+  });
+  assert(new Set(IdleCore.IDLE_GEAR_ITEMS.map((i) => i.id)).size === 20, 'Alle Gear-item-ids sind eindeutig');
+
+  // Pro-Item-Bonus +1–5% je Seltenheitsstufe.
+  const bonusByRarity = { gewoehnlich: 1, selten: 2, episch: 3, legendaer: 5 };
+  IdleCore.IDLE_GEAR_ITEMS.forEach((item) => {
+    assert(item.bonusPct === bonusByRarity[item.rarity], `${item.id}: bonusPct (${item.bonusPct}) entspricht der Seltenheitsstufe "${item.rarity}" (erwartet ${bonusByRarity[item.rarity]})`);
+    assert(item.bonusPct >= 1 && item.bonusPct <= 5, `${item.id}: bonusPct (${item.bonusPct}) liegt im Bereich +1–5%`);
+  });
+
+  // rollGearDrop(): deterministisch bei fester Zufallsfolge (nutzt IDLE_GEAR_POOL via rollPartDrop()).
+  const sequence = [0, 0, 0]; // Drop ja → Seltenheit 'gewoehnlich' (erste in GEAR_RARITY_WEIGHTS) → erstes 'gewoehnlich'-Item
+  let callIndex = 0;
+  const fixedRng = () => sequence[Math.min(callIndex++, sequence.length - 1)];
+  const firstGewoehnlichId = IdleCore.IDLE_GEAR_ITEMS.filter((i) => i.rarity === 'gewoehnlich')[0].id;
+  assert(IdleCore.rollGearDrop(fixedRng, 1) === firstGewoehnlichId, 'rollGearDrop() liefert mit fester Zufallsfolge [0,0,0] deterministisch das erste "gewoehnlich"-Item');
+  assert(IdleCore.rollGearDrop(() => 0.999, 0.18) === null, 'rollGearDrop() liefert null, falls die Zufallszahl über der Drop-Chance liegt');
+
+  // addGear(): neues Item vs. Dublette (→ km-Umwandlung über GEAR_DUPLICATE_KM_VALUE, NICHT PART_DUPLICATE_KM_VALUE).
+  const gearState = IdleCore.createInitialState();
+  const someGear = IdleCore.IDLE_GEAR_ITEMS[0];
+  const addedNewGear = IdleCore.addGear(gearState, someGear.id);
+  assert(addedNewGear.isNew === true, 'addGear() meldet isNew=true für ein neues Item');
+  assert(gearState.gear.collected.indexOf(someGear.id) !== -1, 'addGear() fügt die id zu state.gear.collected hinzu');
+  assert(gearState.km === 0, 'addGear() eines neuen Items verändert km nicht');
+  assert(gearState.parts.collected.length === 0, 'addGear() rührt state.parts.collected NICHT an (getrennte Sammlungen)');
+
+  const gearKmBefore = gearState.km;
+  const addedDupGear = IdleCore.addGear(gearState, someGear.id);
+  const expectedGearDupValue = IdleCore.IDLE_BALANCE.GEAR_DUPLICATE_KM_VALUE[someGear.rarity];
+  assert(addedDupGear.isNew === false && addedDupGear.awardedKm === expectedGearDupValue, `addGear() einer Dublette gewährt genau GEAR_DUPLICATE_KM_VALUE.${someGear.rarity} (${expectedGearDupValue}) km`);
+  assert(gearState.km === gearKmBefore + expectedGearDupValue, 'addGear() einer Dublette bucht die km korrekt auf state.km');
+  assert(gearState.gear.collected.filter((id) => id === someGear.id).length === 1, 'addGear() einer Dublette dupliziert die id NICHT in der Sammlung');
+
+  // Regression: addPart()/setBonuses() ohne pool-Argument verhalten sich weiterhin exakt wie zuvor (Teile-Sammlung unberührt).
+  const regressionState = IdleCore.createInitialState();
+  const firstPart = IdleCore.IDLE_PARTS[0];
+  const addedPartRegression = IdleCore.addPart(regressionState, firstPart.id);
+  assert(addedPartRegression.isNew === true && regressionState.parts.collected.indexOf(firstPart.id) !== -1, 'addPart() ohne pool-Argument funktioniert unverändert (Teile-Sammlung)');
+  assert(regressionState.gear.collected.length === 0, 'addPart() ohne pool-Argument rührt state.gear NICHT an');
+
+  // itemBonusSum(): summiert bonusPct über besessene Items.
+  assert(IdleCore.itemBonusSum([], IdleCore.IDLE_GEAR_ITEMS) === 0, 'itemBonusSum() ohne besessene Items === 0');
+  const helmGewoehnlich = IdleCore.IDLE_GEAR_ITEMS.find((i) => i.id === 'helm_gewoehnlich');
+  const helmSelten = IdleCore.IDLE_GEAR_ITEMS.find((i) => i.id === 'helm_selten');
+  const sumTwo = IdleCore.itemBonusSum(['helm_gewoehnlich', 'helm_selten'], IdleCore.IDLE_GEAR_ITEMS);
+  assert(sumTwo === helmGewoehnlich.bonusPct + helmSelten.bonusPct, `itemBonusSum() summiert korrekt (${sumTwo} === ${helmGewoehnlich.bonusPct + helmSelten.bonusPct})`);
+  assert(IdleCore.itemBonusSum(['helm_gewoehnlich', 'unbekannte-id'], IdleCore.IDLE_GEAR_ITEMS) === helmGewoehnlich.bonusPct, 'itemBonusSum() ignoriert unbekannte ids (kein Absturz)');
+  assert(IdleCore.itemBonusSum(['helm_gewoehnlich'], IdleCore.IDLE_PARTS) === 0, 'itemBonusSum() liefert 0, falls die id im übergebenen Pool (hier: Teile) nicht existiert');
+
+  // gearBonuses(): Pro-Item-Bonus OHNE komplettes Set.
+  const gearBonusState = IdleCore.createInitialState();
+  const noGearBonus = IdleCore.gearBonuses(gearBonusState);
+  assert(noGearBonus.totalBonusMultiplier === 1 && noGearBonus.itemBonusPct === 0 && noGearBonus.setBonusPct === 0, 'gearBonuses() ohne Ausrüstung: kein Bonus');
+
+  IdleCore.addGear(gearBonusState, 'helm_gewoehnlich');
+  const partialGearBonus = IdleCore.gearBonuses(gearBonusState);
+  assert(partialGearBonus.itemBonusPct === 1 && partialGearBonus.setBonusPct === 0, 'gearBonuses() mit einem einzelnen Item: Pro-Item-Bonus zählt, aber (noch) kein Set-Bonus');
+  assert(Math.abs(partialGearBonus.totalBonusMultiplier - 1.01) < 1e-9, 'gearBonuses() totalBonusMultiplier entspricht 1 + itemBonusPct/100 (ohne Set-Bonus)');
+
+  // gearBonuses(): komplettes Set (alle 4 Helm-Seltenheitsstufen) → zusätzlicher Set-Bonus obendrauf.
+  ['helm_selten', 'helm_episch', 'helm_legendaer'].forEach((id) => IdleCore.addGear(gearBonusState, id));
+  const completeSetBonus = IdleCore.gearBonuses(gearBonusState);
+  const helmSet = IdleCore.IDLE_GEAR_SETS.find((s) => s.id === 'helm');
+  const expectedItemPct = 1 + 2 + 3 + 5; // gewoehnlich+selten+episch+legendaer
+  assert(completeSetBonus.completedSets.length === 1 && completeSetBonus.completedSets[0] === 'helm', 'gearBonuses() zählt die Kategorie als komplett, sobald alle 4 Seltenheitsstufen besessen sind');
+  assert(completeSetBonus.itemBonusPct === expectedItemPct, `gearBonuses() itemBonusPct summiert alle 4 Helm-Items (${completeSetBonus.itemBonusPct} === ${expectedItemPct})`);
+  assert(completeSetBonus.setBonusPct === helmSet.bonusPct, `gearBonuses() setBonusPct entspricht dem Helm-Set-Bonus (${completeSetBonus.setBonusPct} === ${helmSet.bonusPct})`);
+  assert(
+    Math.abs(completeSetBonus.totalBonusMultiplier - (1 + (expectedItemPct + helmSet.bonusPct) / 100)) < 1e-9,
+    'gearBonuses() totalBonusMultiplier kombiniert Pro-Item- UND Set-Bonus additiv'
+  );
+})();
+
+section('15 · MECHANIK A — Werkstattrechnungen + Insolvenz (nextBillIntervalSeconds/billAmount/payBill/triggerInsolvency)');
+(function () {
+  // nextBillIntervalSeconds(): liegt für einen frischen Zustand im konfigurierten Basis-Bereich.
+  const fresh = IdleCore.createInitialState();
+  const freshInterval = IdleCore.nextBillIntervalSeconds(fresh, () => 0.5);
+  assert(
+    freshInterval >= IdleCore.IDLE_BALANCE.BILL_INTERVAL_MIN_SECONDS && freshInterval <= IdleCore.IDLE_BALANCE.BILL_INTERVAL_MAX_SECONDS,
+    `nextBillIntervalSeconds() liegt für einen frischen Zustand im Bereich [${IdleCore.IDLE_BALANCE.BILL_INTERVAL_MIN_SECONDS}, ${IdleCore.IDLE_BALANCE.BILL_INTERVAL_MAX_SECONDS}] (gefunden: ${freshInterval.toFixed(2)})`
+  );
+
+  // Schrumpft mit Saison-Fortschritt (trophiesForSeason), niemals unter dem konfigurierten Floor.
+  let prevInterval = freshInterval;
+  const progressState = IdleCore.createInitialState();
+  for (let i = 1; i <= 15; i++) {
+    progressState.ownedBikeIds.push(IdleCore.IDLE_BIKES[Math.min(i, IdleCore.IDLE_BIKES.length - 1)].id);
+    const interval = IdleCore.nextBillIntervalSeconds(progressState, () => 0.5);
+    assert(interval <= prevInterval, `nextBillIntervalSeconds() schrumpft (oder bleibt gleich) mit steigendem Saison-Fortschritt (${interval.toFixed(2)} <= ${prevInterval.toFixed(2)})`);
+    assert(interval >= IdleCore.IDLE_BALANCE.BILL_INTERVAL_FLOOR_SECONDS, `nextBillIntervalSeconds() respektiert BILL_INTERVAL_FLOOR_SECONDS (${interval.toFixed(2)} >= ${IdleCore.IDLE_BALANCE.BILL_INTERVAL_FLOOR_SECONDS})`);
+    prevInterval = interval;
+  }
+  // Bei sehr hohem Fortschritt: Bereich ist bis auf den Floor zusammengeschrumpft (min === max === Floor).
+  const veryHighProgress = IdleCore.createInitialState();
+  veryHighProgress.ownedBikeIds = IdleCore.IDLE_BIKES.map((b) => b.id);
+  IdleCore.IDLE_BIKES.forEach((b) => { veryHighProgress.bikeLevels[b.id] = IdleCore.IDLE_BALANCE.TUNING_LEVEL_CAP; }); // maximal mögliche trophiesForSeason()
+  const atFloorLow = IdleCore.nextBillIntervalSeconds(veryHighProgress, () => 0);
+  const atFloorHigh = IdleCore.nextBillIntervalSeconds(veryHighProgress, () => 0.999);
+  assert(Math.abs(atFloorLow - IdleCore.IDLE_BALANCE.BILL_INTERVAL_FLOOR_SECONDS) < 1e-9, 'nextBillIntervalSeconds() erreicht bei sehr hohem Fortschritt exakt den Floor (untere Zufallsgrenze)');
+  assert(Math.abs(atFloorHigh - IdleCore.IDLE_BALANCE.BILL_INTERVAL_FLOOR_SECONDS) < 1e-9, 'nextBillIntervalSeconds() erreicht bei sehr hohem Fortschritt exakt den Floor (obere Zufallsgrenze, Bereich komplett zusammengeschrumpft)');
+
+  // billGraceSeconds(): liegt im konfigurierten Fenster.
+  for (let i = 0; i < 20; i++) {
+    const grace = IdleCore.billGraceSeconds(() => i / 20);
+    assert(grace >= IdleCore.IDLE_BALANCE.BILL_GRACE_MIN_SECONDS && grace <= IdleCore.IDLE_BALANCE.BILL_GRACE_MAX_SECONDS, `billGraceSeconds() liegt im Bereich [${IdleCore.IDLE_BALANCE.BILL_GRACE_MIN_SECONDS}, ${IdleCore.IDLE_BALANCE.BILL_GRACE_MAX_SECONDS}] (gefunden: ${grace.toFixed(2)})`);
+  }
+
+  // billAmount(): steigt mit Bikes/Tuning (reine Ableitung aus passiveEarn(), kein eigenes Balancing).
+  const lowState = IdleCore.createInitialState();
+  const lowAmount = IdleCore.billAmount(lowState);
+  assert(lowAmount >= IdleCore.IDLE_BALANCE.BILL_AMOUNT_MIN_KM, `billAmount() respektiert BILL_AMOUNT_MIN_KM (${lowAmount} >= ${IdleCore.IDLE_BALANCE.BILL_AMOUNT_MIN_KM})`);
+
+  const higherState = IdleCore.createInitialState();
+  higherState.ownedBikeIds.push(IdleCore.IDLE_BIKES[1].id);
+  higherState.bikeLevels[IdleCore.IDLE_BIKES[1].id] = 0;
+  higherState.currentBikeId = IdleCore.IDLE_BIKES[1].id;
+  const higherAmount = IdleCore.billAmount(higherState);
+  assert(higherAmount > lowAmount, `billAmount() steigt mit einem schnelleren Bike (${higherAmount} > ${lowAmount})`);
+
+  const tunedState = IdleCore.createInitialState();
+  tunedState.bikeLevels[tunedState.currentBikeId] = 10;
+  const tunedAmount = IdleCore.billAmount(tunedState);
+  assert(tunedAmount > lowAmount, `billAmount() steigt mit Tuning-Level (${tunedAmount} > ${lowAmount})`);
+
+  const avgGrace = (IdleCore.IDLE_BALANCE.BILL_GRACE_MIN_SECONDS + IdleCore.IDLE_BALANCE.BILL_GRACE_MAX_SECONDS) / 2;
+  const expectedLowAmount = Math.max(IdleCore.IDLE_BALANCE.BILL_AMOUNT_MIN_KM, Math.round(IdleCore.passiveEarn(lowState, avgGrace) * IdleCore.IDLE_BALANCE.BILL_AMOUNT_SAFETY_FACTOR));
+  assert(lowAmount === expectedLowAmount, `billAmount() entspricht exakt passiveEarn(state, Ø-Fenster) × BILL_AMOUNT_SAFETY_FACTOR (${lowAmount} === ${expectedLowAmount})`);
+
+  // payBill(): deduziert km, gewährt Bonus + zählt On-Time/Last-Second, schlägt ohne genug km fehl.
+  const payState = IdleCore.createInitialState();
+  const amount = IdleCore.billAmount(payState);
+  const tooPoor = IdleCore.payBill(payState);
+  assert(tooPoor.success === false, 'payBill() schlägt fehl, falls nicht genug km vorhanden sind');
+  assert(payState.finance.billsPaidOnTime === 0, 'payBill() bei Fehlschlag erhöht billsPaidOnTime NICHT');
+
+  payState.km = amount + 1000;
+  const kmBeforePay = payState.km;
+  const paid = IdleCore.payBill(payState, true, false, () => 0.999); // Zufallszahl > GEAR_DROP_CHANCE_ON_BILL_PAY → kein Gear-Drop, deterministisch testbar
+  assert(paid.success === true, 'payBill() gelingt mit genug km');
+  assert(paid.amount === amount, 'payBill() zieht exakt billAmount(state) ab (vor der Zahlung berechnet)');
+  const expectedBonus = Math.round(amount * IdleCore.IDLE_BALANCE.BILL_PAY_BONUS_FRACTION);
+  assert(paid.bonusKm === expectedBonus, `payBill() gewährt exakt BILL_PAY_BONUS_FRACTION des Betrags als Bonus (${paid.bonusKm} === ${expectedBonus})`);
+  assert(payState.km === kmBeforePay - amount + expectedBonus, 'payBill() bucht Abzug UND Bonus korrekt auf state.km');
+  assert(payState.finance.billsPaidOnTime === 1, 'payBill() (onTime, Standard) erhöht finance.billsPaidOnTime');
+  assert(payState.finance.billsPaidLastSecond === 0, 'payBill() ohne lastSecond-Flag erhöht billsPaidLastSecond NICHT');
+  assert(paid.gearResult === null, 'payBill() mit einer über der Drop-Chance liegenden Zufallszahl liefert keinen Gear-Drop');
+
+  const lastSecondState = IdleCore.createInitialState();
+  lastSecondState.km = IdleCore.billAmount(lastSecondState) + 1000;
+  const paidLastSecond = IdleCore.payBill(lastSecondState, true, true, () => 0.999);
+  assert(paidLastSecond.success === true && lastSecondState.finance.billsPaidLastSecond === 1, 'payBill(..., lastSecond=true) erhöht zusätzlich finance.billsPaidLastSecond');
+
+  const gearDropState = IdleCore.createInitialState();
+  gearDropState.km = IdleCore.billAmount(gearDropState) + 1000;
+  const paidWithGear = IdleCore.payBill(gearDropState, true, false, () => 0); // Zufallszahl 0 → garantierter Gear-Drop + erstes 'gewoehnlich'-Item
+  assert(paidWithGear.gearResult !== null && paidWithGear.gearResult.isNew === true, 'payBill() mit einer garantiert unter der Drop-Chance liegenden Zufallszahl liefert einen neuen Gear-Drop');
+  assert(gearDropState.gear.collected.length === 1, 'payBill() bucht einen Gear-Drop-Treffer in state.gear.collected');
+
+  // finishSeason(state,{bypassEligibilityGate:true}): führt VOR der ZX-10R einen echten Reset aus
+  // (Regression: der einfache Aufruf OHNE opts bleibt unverändert ein No-op, siehe Sektion 10).
+  const zxIndex = IdleCore.findBikeIndex('zx10r');
+  const belowZx = IdleCore.createInitialState();
+  for (let i = 1; i < zxIndex; i++) belowZx.ownedBikeIds.push(IdleCore.IDLE_BIKES[i].id);
+  assert(IdleCore.canFinishSeason(belowZx) === false, 'Voraussetzung: canFinishSeason() ist vor der ZX-10R false');
+  assert(IdleCore.finishSeason(belowZx) === belowZx, 'Regression: finishSeason(state) OHNE opts bleibt vor der ZX-10R weiterhin ein No-op');
+
+  belowZx.km = 500;
+  belowZx.gear.collected = ['helm_gewoehnlich'];
+  belowZx.prestige.contracts = ['zoneBreiter10'];
+  const expectedBypassTrophies = IdleCore.trophiesForSeason(belowZx);
+  const bypassed = IdleCore.finishSeason(belowZx, { bypassEligibilityGate: true });
+  assert(bypassed !== belowZx, 'finishSeason(state,{bypassEligibilityGate:true}) führt VOR der ZX-10R einen ECHTEN Reset aus (neues Objekt)');
+  assert(bypassed.km === 0, 'finishSeason(bypass): km wird zurückgesetzt');
+  assert(bypassed.prestige.trophies === expectedBypassTrophies, 'finishSeason(bypass): Trophäen entsprechen dem aktuellen Fortschritt (trophiesForSeason)');
+  assert(bypassed.prestige.contracts.indexOf('zoneBreiter10') !== -1, 'finishSeason(bypass): Werksverträge bleiben erhalten');
+  assert(bypassed.gear.collected.indexOf('helm_gewoehnlich') !== -1, 'finishSeason(bypass): Gear-Sammlung bleibt erhalten');
+
+  // triggerInsolvency(): identische Reset-Semantik + Insolvenz-Zähler + KEIN "insolvenzfreie Saison"-Credit.
+  const insolvencyState = IdleCore.createInitialState();
+  insolvencyState.km = 777;
+  insolvencyState.parts.collected = ['helm_standard'];
+  insolvencyState.gear.collected = ['pokal_selten'];
+  insolvencyState.finance.billsPaidOnTime = 2;
+  insolvencyState.finance.activeBillAmount = 123;
+  insolvencyState.finance.activeBillDueAt = Date.now() + 5000;
+  insolvencyState.finance.activeBillGraceSeconds = 40;
+  const afterInsolvency = IdleCore.triggerInsolvency(insolvencyState);
+  assert(afterInsolvency.km === 0, 'triggerInsolvency(): km wird zurückgesetzt (normaler Reset, KEINE Strafe)');
+  assert(afterInsolvency.parts.collected.indexOf('helm_standard') !== -1, 'triggerInsolvency(): Teile-Sammlung bleibt erhalten');
+  assert(afterInsolvency.gear.collected.indexOf('pokal_selten') !== -1, 'triggerInsolvency(): Gear-Sammlung bleibt erhalten');
+  assert(afterInsolvency.finance.billsPaidOnTime === 2, 'triggerInsolvency(): Lebenszeit-Zähler (billsPaidOnTime) bleiben erhalten');
+  assert(afterInsolvency.finance.insolvencies === 1, 'triggerInsolvency(): finance.insolvencies wird um 1 erhöht');
+  assert(afterInsolvency.finance.activeBillAmount === null && afterInsolvency.finance.activeBillDueAt === null, 'triggerInsolvency(): eine offene Rechnung wird mit dem Reset hinfällig (activeBill* → null)');
+  assert(afterInsolvency.finance.insolvencyFreeFlag === true, 'triggerInsolvency(): die NEUE Saison startet wieder mit insolvencyFreeFlag:true');
+
+  const seasonsFreeBefore = insolvencyState.finance.seasonsInsolvencyFree || 0;
+  assert(afterInsolvency.finance.seasonsInsolvencyFree === seasonsFreeBefore, 'triggerInsolvency(): eine durch Insolvenz beendete Saison zählt NICHT als "insolvenzfreie Saison"');
+
+  // Gegenprobe: ein FREIWILLIGER finishSeason()-Abschluss (ohne vorherige Insolvenz) zählt als insolvenzfrei.
+  const voluntaryState = IdleCore.createInitialState();
+  for (let i = 1; i <= zxIndex; i++) {
+    voluntaryState.ownedBikeIds.push(IdleCore.IDLE_BIKES[i].id);
+    voluntaryState.bikeLevels[IdleCore.IDLE_BIKES[i].id] = 0;
+  }
+  assert(voluntaryState.finance.insolvencyFreeFlag === true, 'Voraussetzung: ein frischer Zustand startet mit insolvencyFreeFlag:true');
+  const afterVoluntary = IdleCore.finishSeason(voluntaryState);
+  assert(afterVoluntary.finance.seasonsInsolvencyFree === 1, 'finishSeason() (freiwillig, ohne vorherige Insolvenz) erhöht finance.seasonsInsolvencyFree um 1');
 })();
 
 // ============================================================
