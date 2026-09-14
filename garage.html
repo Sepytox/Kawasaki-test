@@ -143,9 +143,15 @@
     border-radius: var(--radius-md, 10px);
     padding: 0.9rem;
     background: var(--bg-secondary);
+    transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
 }
 .garage-ach-unlocked { border-color: var(--accent); }
 .garage-ach-locked { opacity: 0.55; }
+.garage-ach-card:not(.garage-ach-locked):hover {
+    border-color: var(--border-hover);
+    box-shadow: var(--shadow-sm);
+}
 .garage-ach-icon { font-size: 1.6em; flex-shrink: 0; }
 .garage-ach-body h4 { font-size: 0.95em; margin-bottom: 0.2rem; }
 .garage-ach-body p { color: var(--text-muted); font-size: 0.82em; margin: 0.1rem 0; }

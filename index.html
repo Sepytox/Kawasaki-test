@@ -325,6 +325,30 @@
     .hero-cta-row { flex-direction: column; align-items: stretch; }
 }
 
+/* "Legendary Sounds"-Teaser + Erlebnis-Links (siehe .closing-Sektion): waren
+   bisher rein inline gestylt (kein sichtbarer Button-Rahmen/Hover) — hier
+   eine dezente, token-basierte Grundoptik + Hover, die bestehende
+   Inline-Farbvarianten (background/border-color/color je Link) unverändert
+   lässt. */
+.btn-hear {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full, 999px);
+    color: var(--text);
+    font-weight: var(--fw-semibold, 600);
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                box-shadow var(--dur-base, 0.25s) var(--ease-standard, ease),
+                border-color var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.btn-hear:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow, var(--shadow-md));
+    transform: translateY(-2px) scale(1.02);
+}
+.btn-hear:active { transform: translateY(0) scale(0.98); }
+
 /* ====================================================
    GARAGE-NAV-WIDGET — Gamification (Garage/Achievements)
    ==================================================== */
@@ -1051,15 +1075,19 @@
         };
 
         // Bevorzugt ein echtes Foto (images/bikes/<id>.jpg) für die erste
-        // Galerie-Folie jedes Bikes; fällt bei Ladefehler auf die zuvor
-        // generierte Kategorie-SVG zurück (siehe renderSlides() unten und
-        // bike-image.js). Ergänzt außerdem `id`, damit der Bike-Datensatz
-        // seinen eigenen Schlüssel kennt (u. a. für BikeImage-Aufrufe).
+        // Galerie-Folie jedes Bikes — aber NUR, wenn BikeImage.hasPhoto()
+        // bestätigt, dass die Datei laut Manifest tatsächlich vorhanden ist
+        // (siehe bike-image.js), sonst bleibt die bereits generierte
+        // Kategorie-SVG als src stehen (kein 404-Ladeversuch ins Leere).
+        // Fällt bei Ladefehler eines echten Fotos auf die zuvor generierte
+        // Kategorie-SVG zurück (siehe renderSlides() unten und bike-image.js).
+        // Ergänzt außerdem `id`, damit der Bike-Datensatz seinen eigenen
+        // Schlüssel kennt (u. a. für BikeImage-Aufrufe).
         Object.keys(BIKES).forEach(function(key) {
             var bike = BIKES[key];
             bike.id = key;
             var firstSlide = bike.slides && bike.slides[0];
-            if (firstSlide && firstSlide.type === 'img') {
+            if (firstSlide && firstSlide.type === 'img' && BikeImage.hasPhoto(key)) {
                 firstSlide.fallbackSrc = firstSlide.src;
                 firstSlide.src = BikeImage.photoPath(key);
             }

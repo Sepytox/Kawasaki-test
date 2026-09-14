@@ -18,6 +18,31 @@
   var VIEWBOX_W = 520;
   var VIEWBOX_H = 200;
 
+  /**
+   * Manifest der Bike-IDs, für die unter images/bikes/<id>.jpg TATSÄCHLICH
+   * eine Foto-Datei im Repo liegt. Nur diese IDs lösen einen
+   * <img src="images/bikes/<id>.jpg">-Ladeversuch aus — alle anderen
+   * springen direkt zur generierten SVG-Illustration (siehe markup()),
+   * damit für (noch) nicht vorhandene Fotos KEIN 404-Request entsteht.
+   *
+   * Aktuell leer, weil images/bikes/ absichtlich noch keine echten Fotos
+   * enthält (siehe images/bikes/README.md). Um ein Foto zu aktivieren:
+   * Datei unter images/bikes/<id>.jpg ablegen UND die ID hier eintragen,
+   * z. B. `{ z900: true }`.
+   * @type {Object<string, boolean>}
+   */
+  var BIKE_PHOTO_MANIFEST = {};
+
+  /**
+   * Prüft, ob für eine Bike-ID laut BIKE_PHOTO_MANIFEST ein echtes Foto
+   * vorhanden ist.
+   * @param {string} id - Bike-ID (z. B. "z900").
+   * @returns {boolean} true, wenn ein Foto-Ladeversuch sinnvoll ist.
+   */
+  function hasPhoto(id) {
+    return !!(id && BIKE_PHOTO_MANIFEST[id]);
+  }
+
   /** Bildet die (deutschen) Kategorie-Strings aus den Bike-Daten auf einen der sechs Silhouette-Buckets ab. */
   var CATEGORY_MAP = {
     'Hypersportler': 'sport',
@@ -155,6 +180,12 @@
    * Einfügen via innerHTML. Nutzt inline onload/onerror, da die Aufrufer
    * (index.html, shop.html, wheel.html, garage.js) Karten/Widgets bereits
    * per String-Konkatenation/Template-Literal rendern.
+   *
+   * Versucht ein echtes Foto NUR, wenn die Bike-ID im BIKE_PHOTO_MANIFEST
+   * eingetragen ist (siehe hasPhoto()) — andernfalls wird direkt die
+   * generierte SVG-Illustration als src gesetzt, damit für (noch) nicht
+   * vorhandene Fotos kein 404-Request entsteht. Das Endergebnis (welche
+   * SVG letztlich angezeigt wird) ist in beiden Fällen identisch.
    * @param {Object} bike - Bike-Datensatz (mind. id, name; optional category, g1, g2).
    * @param {Object} [opts] - { eager?: boolean, className?: string }
    * @returns {string} HTML-Markup: <div class="bike-photo-wrap ...">...</div>.
@@ -162,14 +193,20 @@
   function markup(bike, opts) {
     opts = opts || {};
     var svgFallback = buildCategorySvg(bike);
-    var src = photoPath(bike && bike.id);
+    var id = bike && bike.id;
+    var photoAvailable = hasPhoto(id);
+    var src = photoAvailable ? photoPath(id) : svgFallback;
     var altText = escSvgText((bike && bike.name) || '');
     var loading = opts.eager ? 'eager' : 'lazy';
     var extraClass = opts.className ? ' ' + opts.className : '';
+    var imgClass = 'bike-photo' + (photoAvailable ? '' : ' bike-photo-fallback');
+    var onErrorAttr = photoAvailable
+      ? 'onerror="this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');" '
+      : '';
     return '<div class="bike-photo-wrap' + extraClass + '">' +
-      '<img class="bike-photo" src="' + src + '" alt="' + altText + '" loading="' + loading + '" ' +
-      'onload="this.classList.add(\'is-loaded\')" ' +
-      'onerror="this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');">' +
+      '<img class="' + imgClass + '" src="' + src + '" alt="' + altText + '" loading="' + loading + '" ' +
+      'onload="this.classList.add(\'is-loaded\')" ' + onErrorAttr +
+      '>' +
       '</div>';
   }
 
@@ -177,6 +214,8 @@
     categoryKey: categoryKey,
     buildCategorySvg: buildCategorySvg,
     photoPath: photoPath,
+    hasPhoto: hasPhoto,
+    photoManifest: BIKE_PHOTO_MANIFEST,
     markup: markup
   };
 

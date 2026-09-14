@@ -87,15 +87,42 @@ section('4 · buildCategorySvg() nutzt bike-eigenes g1/g2, falls vorhanden');
   assert(decodeURIComponent(withOwnGradient).indexOf('#123456') !== -1, 'Eigenes g2 wird statt Kategorie-Standardfarbe verwendet');
 })();
 
-section('5 · markup() liefert in sich geschlossenes, unquote-sicheres HTML');
+section('5 · markup() lädt kein Foto ohne BIKE_PHOTO_MANIFEST-Eintrag (kein 404)');
 (function() {
+  // images/bikes/ ist aktuell absichtlich leer — z900 ist NICHT im Manifest,
+  // markup() darf daher keinen Ladeversuch für images/bikes/z900.jpg machen.
   const html = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' }, { className: 'fact-card-image' });
   assert(html.indexOf('bike-photo-wrap fact-card-image') !== -1, 'Custom className wird angehängt');
-  assert(html.indexOf('src="images/bikes/z900.jpg"') !== -1, 'Foto-Pfad wird zuerst referenziert');
-  assert(html.indexOf('onerror=') !== -1 && html.indexOf('onload=') !== -1, 'onload- und onerror-Handler sind gesetzt');
+  assert(html.indexOf('src="images/bikes/z900.jpg"') === -1, 'Ohne Manifest-Eintrag wird KEIN Foto-Pfad referenziert (kein 404-Request)');
+  assert(html.indexOf('src="data:image/svg+xml,') === 0 || html.indexOf('src="data:image/svg+xml,') > -1, 'src zeigt direkt auf die generierte SVG-Illustration');
+  assert(html.indexOf('bike-photo-fallback') !== -1, 'bike-photo-fallback-Klasse ist von Anfang an gesetzt (identisches Endergebnis wie beim alten onerror-Pfad)');
+  assert(html.indexOf('onload=') !== -1, 'onload-Handler ist gesetzt');
   // Grobe Balance-Prüfung: gleiche Anzahl " wie erwartet (kein Attribut durch den SVG-Fallback aufgebrochen).
   const quoteCount = (html.match(/"/g) || []).length;
   assert(quoteCount % 2 === 0, `Doppelte Anführungszeichen sind paarig (${quoteCount}) — kein aufgebrochenes Attribut`);
+})();
+
+section('6 · markup() referenziert das echte Foto, sobald eine ID im BIKE_PHOTO_MANIFEST steht');
+(function() {
+  assert(typeof BikeImage.hasPhoto === 'function', 'hasPhoto() ist exportiert');
+  assert(typeof BikeImage.photoManifest === 'object' && BikeImage.photoManifest !== null, 'photoManifest ist exportiert');
+  assert(BikeImage.hasPhoto('z900') === false, 'z900 hat aktuell keinen Manifest-Eintrag (images/bikes/ ist leer)');
+
+  // Test-only: simuliert einen künftigen echten Foto-Eintrag, ohne die
+  // reale (leere) images/bikes/README.md-Konvention zu verletzen.
+  BikeImage.photoManifest.z900 = true;
+  try {
+    assert(BikeImage.hasPhoto('z900') === true, 'hasPhoto() erkennt den simulierten Manifest-Eintrag');
+    const html = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' });
+    assert(html.indexOf('src="images/bikes/z900.jpg"') !== -1, 'Mit Manifest-Eintrag wird das Foto zuerst referenziert');
+    assert(html.indexOf('onerror=') !== -1, 'Mit Manifest-Eintrag bleibt der onerror-Fallback auf die SVG erhalten');
+    // Nur das class-Attribut selbst prüfen (nicht den onerror-Handler-Text,
+    // der die Klasse "bike-photo-fallback" als String-Literal enthält).
+    const classAttr = (html.match(/class="([^"]*)"/) || [])[1] || '';
+    assert(classAttr.indexOf('bike-photo-fallback') === -1, 'Ohne vorherigen Ladefehler ist die Fallback-Klasse im class-Attribut noch NICHT gesetzt');
+  } finally {
+    delete BikeImage.photoManifest.z900; // aufräumen, damit andere Tests/Consumer unberührt bleiben
+  }
 })();
 
 // ============================================================

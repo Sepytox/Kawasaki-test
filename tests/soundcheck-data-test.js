@@ -121,6 +121,58 @@ section('4 · "Sound folgt"-Kennzeichnung ist implementiert (kein stilles Fehlve
   assert(soundcheckSrc.includes('sc-badge-synth'), 'CSS-Klasse für das "Sound folgt"-Badge wird gesetzt');
 })();
 
+section('5 · TEIL 2: Sound-Wiedergabe ist über ein Feature-Flag deaktiviert ("Im Aufbau")');
+(function() {
+  assert(/var SOUND_PLAYBACK_ENABLED\s*=\s*false;/.test(soundcheckSrc), 'SOUND_PLAYBACK_ENABLED ist auf false gesetzt (Sound-Vorschau deaktiviert)');
+
+  // Zentrales Gate in openPlayer() — verhindert JEDE Wiedergabe (Bike-Karten,
+  // Favoriten, URL-Param-Autoplay), ohne die eigentlichen Play-Funktionen
+  // zu löschen.
+  const openPlayerMatch = soundcheckSrc.match(/function openPlayer\(bike, exhaustIdx\) \{([\s\S]*?)\n  \}/);
+  assert(openPlayerMatch !== null, 'openPlayer() gefunden');
+  const openPlayerBody = openPlayerMatch ? openPlayerMatch[1] : '';
+  assert(/if \(!SOUND_PLAYBACK_ENABLED\)/.test(openPlayerBody), 'openPlayer() prüft SOUND_PLAYBACK_ENABLED zuerst (zentraler Kill-Switch)');
+  assert(/showComingSoonNotice\(\)/.test(openPlayerBody), 'openPlayer() zeigt bei deaktiviertem Sound die Hinweismeldung statt abzuspielen');
+
+  // A/B Compare hat ein eigenes Gate (läuft nicht über openPlayer()).
+  const toggleABMatch = soundcheckSrc.match(/function toggleABCompare\(\) \{([\s\S]*?)if \(!compareA/);
+  assert(toggleABMatch !== null && /SOUND_PLAYBACK_ENABLED/.test(toggleABMatch[1]), 'toggleABCompare() prüft SOUND_PLAYBACK_ENABLED ebenfalls');
+
+  // Die eigentlichen Play-Funktionen bleiben vollständig erhalten (nicht
+  // gelöscht), damit eine Reaktivierung (Flag auf true) sofort funktioniert.
+  ['function playExhaust(', 'function playRealAudio(', 'function fallbackToSynthesis('].forEach(sig => {
+    assert(soundcheckSrc.includes(sig), `${sig.replace('function ', '').replace('(', '()')} bleibt im Code erhalten (nur gegated, nicht gelöscht)`);
+  });
+
+  // UI-Kennzeichnung: "Im Aufbau"-Badge + deutsche Hinweismeldung.
+  assert(soundcheckSrc.includes('sc-badge-wip'), 'CSS-Klasse für das "Im Aufbau"-Badge wird gesetzt');
+  assert(soundcheckSrc.includes('🚧 Im Aufbau'), 'UI zeigt den deutschen "🚧 Im Aufbau"-Hinweis');
+  assert(soundcheckSrc.includes('Dieser Sound wird gerade überarbeitet.'), 'Klick auf einen deaktivierten Play-Button zeigt die deutsche Hinweismeldung');
+  assert(soundcheckSrc.includes('function showComingSoonNotice'), 'showComingSoonNotice() Toast-Funktion existiert');
+  assert(!/console\.log/.test(soundcheckSrc), 'Kein console.log im Feature-Code (GOLDEN_PRINCIPLES_KE.md Regel 2)');
+})();
+
+section('6 · Kein horizontaler Overflow bei 375px (soundcheck.css)');
+(function() {
+  // Statischer Regressionsschutz für den per Playwright verifizierten Fix
+  // (scrollWidth 462px -> 375px bei 375px Viewportbreite): Grid-Items
+  // dürfen unter ihre Content-Mindestbreite schrumpfen (min-width:0), und
+  // die gestapelte Mobile-Ansicht der Exhaust-Zeilen greift bereits ab
+  // 480px (vorher nur ab 360px, also nicht bei 375px).
+  const css = read('soundcheck.css');
+
+  const cardBlockMatch = css.match(/\.sc-bike-card \{([\s\S]*?)\n\}/);
+  assert(cardBlockMatch !== null, '.sc-bike-card Regelblock gefunden');
+  assert(cardBlockMatch && /min-width:\s*0/.test(cardBlockMatch[1]), '.sc-bike-card erlaubt min-width:0 (kann unter Content-Breite schrumpfen)');
+
+  const nameBlockMatch = css.match(/\.sc-exhaust-name \{([\s\S]*?)\n\}/);
+  assert(nameBlockMatch !== null, '.sc-exhaust-name Regelblock gefunden');
+  assert(nameBlockMatch && /min-width:\s*0/.test(nameBlockMatch[1]), '.sc-exhaust-name erlaubt min-width:0 (Text kann umbrechen statt Zeile zu sprengen)');
+
+  assert(/@media \(max-width:\s*480px\)\s*\{\s*\.sc-intro/.test(css), 'Die gestapelte Mobile-Ansicht der Exhaust-Zeilen greift bereits ab 480px (deckt 375px-Viewports ab)');
+  assert(!/@media \(max-width:\s*360px\)\s*\{\s*\.sc-intro/.test(css), 'Die alte, zu enge 360px-Schwelle wurde ersetzt (nicht doppelt vorhanden)');
+})();
+
 // ============================================================
 // Results
 // ============================================================

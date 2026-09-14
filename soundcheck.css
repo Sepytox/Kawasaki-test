@@ -288,6 +288,13 @@ main#soundcheckMain {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* Grid items default to min-width:auto (= min-content of all descendants),
+     which lets a card's exhaust rows force it wider than its assigned
+     1-column grid track on narrow viewports (horizontal page overflow at
+     e.g. 375px). min-width:0 allows the card to actually shrink to the
+     track width; .sc-exhaust-name below gets the matching flex min-width:0
+     so its text can wrap/truncate instead of forcing extra width. */
+  min-width: 0;
 }
 
 .sc-bike-card:hover {
@@ -410,6 +417,7 @@ main#soundcheckMain {
   font-size: 0.72em;
   color: var(--text);
   flex: 1;
+  min-width: 0;
 }
 
 /* "Sound folgt" — Kennzeichnung für Bike/Exhaust-Kombinationen ohne echte
@@ -437,6 +445,75 @@ main#soundcheckMain {
     margin: 0.2em 0 0;
     width: fit-content;
   }
+}
+
+/* TEIL 2 — Sound-Wiedergabe global deaktiviert (soundcheck.js,
+   SOUND_PLAYBACK_ENABLED=false). "🚧 Im Aufbau"-Badge, analog zu
+   .sc-badge-synth gestaltet, aber optisch als klarer "kommt bald"-Hinweis
+   (Warnfarbe) statt als reine Info-Kennzeichnung. */
+.sc-badge-wip {
+  display: inline-block;
+  margin-left: 0.4em;
+  padding: 0.08em 0.5em;
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f5a623;
+  background: rgba(245,166,35,0.12);
+  border: 1px solid #f5a623;
+  border-radius: var(--radius-full, 999px);
+  vertical-align: middle;
+  max-width: 100%;
+}
+
+@media (max-width: 480px) {
+  .sc-badge-wip {
+    display: block;
+    margin: 0.2em 0 0;
+    width: fit-content;
+  }
+}
+
+/* Play-Buttons (Karten, Favoriten, Player-Modal) im "Im Aufbau"-Zustand:
+   sichtbar greyed-out, bleiben aber klickbar (siehe soundcheck.js
+   showComingSoonNotice()), damit ein Klick die Hinweismeldung zeigt. */
+.sc-play-btn-disabled {
+  opacity: 0.4;
+  filter: grayscale(70%);
+  cursor: not-allowed;
+}
+
+.sc-play-btn-disabled:hover {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: none;
+}
+
+/* Kurzlebiger Hinweis-Toast, wenn auf einen deaktivierten Play-Button
+   geklickt wird ("Dieser Sound wird gerade überarbeitet."). */
+.sc-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 12px);
+  background: var(--card-bg, #16181f);
+  color: var(--text, #fff);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 10px);
+  padding: 0.7em 1.1em;
+  font-size: 0.85em;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 9999;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+}
+
+.sc-toast-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .sc-exhaust-db {
@@ -1273,8 +1350,12 @@ body.cyberpunk-mode .eq-bar {
    21. MOBILE-RESPONSIVE SOUNDCHECK — Final Touch
    ============================================================ */
 
-/* Extra small screens (360px and below) */
-@media (max-width: 360px) {
+/* Extra small screens (480px and below). War vorher max-width:360px — auf
+   480px erweitert, damit auch verbreitete 375px-Viewports (z. B. iPhone
+   SE/8) die gestapelte Exhaust-Zeilen-Ansicht bekommen; ohne das erzwang
+   der (nicht umbrechbare) Zeileninhalt eine horizontale
+   Seiten-Überlaufbreite von ~462px bei 375px Viewportbreite. */
+@media (max-width: 480px) {
   .sc-intro {
     padding: 14px;
   }

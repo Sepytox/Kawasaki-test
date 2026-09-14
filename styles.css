@@ -239,6 +239,16 @@ footer {
 }
 .qstat { transition: transform var(--dur-fast, 0.15s) var(--ease-standard, ease), border-color var(--dur-fast, 0.15s) var(--ease-standard, ease); }
 
+/* "Customize"-Link innerhalb der Bike-Karte (index.html, dynamisch gerendert) */
+.card-action-link {
+  transition: filter var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.card-action-link:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
 .fact-card h3 {
   font-size: 1.15em;
   font-weight: 700;

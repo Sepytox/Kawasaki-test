@@ -342,6 +342,119 @@ summary:focus-visible,
   transform: scaleX(1);
 }
 
+/* ── "Erlebnisse"-Dropdown (Quiz/Glücksrad/Racing Sim/SoundCheck/Idle
+   Racer) — siehe navbar.js buildMarkup()/wireDropdown(). Desktop: ein
+   Popover, das sanft einblendet (Fade + leichtes Herunterschieben aus dem
+   Trigger); dieselbe .is-open-Klasse wird unten (@media max-width:768px)
+   zu einer aufklappbaren Inline-Sektion umdefiniert — kein separater
+   JS-Pfad für Mobile nötig. */
+.nav-dropdown {
+  position: relative;
+}
+
+.nav-dropdown-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition: color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              background var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+
+.nav-dropdown-trigger:hover,
+.nav-dropdown-trigger:focus-visible,
+.nav-dropdown-trigger.active,
+.nav-dropdown.is-open .nav-dropdown-trigger {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.nav-dropdown-caret {
+  display: inline-block;
+  font-size: 0.7em;
+  line-height: 1;
+  transition: transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+
+.nav-dropdown.is-open .nav-dropdown-caret {
+  transform: rotate(180deg);
+}
+
+.nav-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: var(--shadow-lg);
+  padding: 0.4rem;
+  z-index: 110;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px) scale(0.98);
+  transition: opacity var(--dur-base, 0.25s) var(--ease-standard, ease),
+              transform var(--dur-base, 0.25s) var(--ease-standard, ease),
+              visibility 0s linear var(--dur-base, 0.25s);
+}
+
+.nav-dropdown-menu a {
+  display: block;
+  white-space: nowrap;
+}
+
+.nav-dropdown.is-open .nav-dropdown-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  transition: opacity var(--dur-base, 0.25s) var(--ease-standard, ease),
+              transform var(--dur-base, 0.25s) var(--ease-standard, ease),
+              visibility 0s linear 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-dropdown-menu { transform: none; }
+}
+
+/* Mobile: das Popover wird zur aufklappbaren Inline-Sektion innerhalb des
+   Burger-Menüs (kein Hover/Overlay auf Touch-Geräten). Dieselbe
+   is-open-Klasse steuert jetzt max-height statt Fade/Transform. */
+@media (max-width: 768px) {
+  .nav-dropdown-menu {
+    position: static;
+    margin-top: 0.15rem;
+    padding: 0 0 0 0.75rem;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    opacity: 1;
+    transform: none;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height var(--dur-base, 0.25s) var(--ease-standard, ease),
+                visibility 0s linear var(--dur-base, 0.25s);
+  }
+  .nav-dropdown.is-open .nav-dropdown-menu {
+    max-height: 60vh;
+    transition: max-height var(--dur-base, 0.25s) var(--ease-standard, ease),
+                visibility 0s linear 0s;
+  }
+  .nav-dropdown-menu a { padding: 0.55rem 0.6rem; }
+  .nav-dropdown-trigger { width: 100%; padding: 0.65rem 0.6rem; }
+}
+
 /* Theme toggle button in nav */
 .theme-toggle {
   margin-left: auto;

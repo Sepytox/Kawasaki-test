@@ -6,6 +6,15 @@
  * garantiert identisch ist (Link-Set, aktiver Menüpunkt, Garage-Badge,
  * Theme-Toggle, mobiles Burger-Menü, Scroll-Verhalten).
  *
+ * Struktur (style(hover)/feat(navbar) — Design-Polish-Phase): die schlanke
+ * Top-Level-Navigation (Home, Aftermarket, Garage) bleibt flach; die fünf
+ * "Erlebnis"-Seiten (Quiz, Glücksrad, Racing Sim, SoundCheck, Idle Racer)
+ * sind unter einem gemeinsamen "Erlebnisse"-Dropdown gruppiert
+ * (siehe TOP_LINKS/EXPERIENCE_LINKS + wireDropdown()). Auf Mobile (siehe
+ * `@media (max-width: 768px)` in design.css) wird aus dem Popover-Dropdown
+ * automatisch eine aufklappbare Sektion innerhalb des Burger-Menüs — rein
+ * über CSS, dieselbe `is-open`-Klasse/Klick-Logik steuert beides.
+ *
  * Einbindung:
  * - Bearbeitbare Seiten (index/quiz/race/wheel/shop/garage) laden diese
  *   Datei per <script src="navbar.js"> direkt NACH einem leeren
@@ -37,14 +46,19 @@
     /** localStorage-Key der Favoriten (nur lesend, siehe GOLDEN_PRINCIPLES_KE.md Regel 7). */
     var FAVORITES_KEY = 'vroooom_favorites';
 
-    /** Link-Set + Reihenfolge, identisch auf jeder Seite. */
-    var NAV_LINKS = [
+    /** Schlanke Top-Level-Links (immer sichtbar, kein Dropdown). Garage wird
+     *  separat gerendert (eigenes Badge-Widget, siehe buildMarkup()). */
+    var TOP_LINKS = [
         { href: 'index.html', label: 'Übersicht' },
-        { href: 'soundcheck.html', label: 'SoundCheck' },
-        { href: 'race.html', label: 'Racing Sim' },
         { href: 'shop.html', label: 'Aftermarket' },
+    ];
+
+    /** "Spiel/Demo"-Seiten, gruppiert unter dem "Erlebnisse"-Dropdown. */
+    var EXPERIENCE_LINKS = [
         { href: 'quiz.html', label: 'Quiz' },
-        { href: 'wheel.html', label: 'Wheel' },
+        { href: 'wheel.html', label: 'Glücksrad' },
+        { href: 'race.html', label: 'Racing Sim' },
+        { href: 'soundcheck.html', label: 'SoundCheck' },
         { href: 'idle.html', label: 'Idle Racer' },
     ];
 
@@ -75,15 +89,29 @@
     }
 
     /**
-     * Baut das innere Markup der Navbar (Wordmark, Burger, Links,
-     * Garage-Badge, Theme-Toggle) als HTML-String.
+     * Baut das innere Markup der Navbar (Wordmark, Burger, Top-Level-Links,
+     * "Erlebnisse"-Dropdown, Garage-Badge, Theme-Toggle) als HTML-String.
      * @returns {string} HTML-Markup für den Navbar-Container.
      */
     function buildMarkup() {
         var page = currentPageFile();
-        var linksHtml = NAV_LINKS.map(function (link) {
+
+        var topLinksHtml = TOP_LINKS.map(function (link) {
             var activeAttr = link.href === page ? ' class="active"' : '';
             return '<a href="' + link.href + '"' + activeAttr + '>' + link.label + '</a>';
+        }).join('');
+
+        // Ist die aktuell angezeigte Seite eine der fünf Dropdown-Seiten?
+        // Falls ja, wird der Dropdown-Trigger selbst zusätzlich als "aktiv"
+        // markiert (analog zum bestehenden garageActiveClass-Muster), damit
+        // z.B. auf quiz.html sichtbar bleibt, in welchem Menü man sich
+        // befindet.
+        var experienceActive = EXPERIENCE_LINKS.some(function (link) {
+            return link.href === page;
+        });
+        var experienceLinksHtml = EXPERIENCE_LINKS.map(function (link) {
+            var activeAttr = link.href === page ? ' class="active"' : '';
+            return '<a href="' + link.href + '" role="menuitem"' + activeAttr + '>' + link.label + '</a>';
         }).join('');
 
         var favCount = readFavoritesCount();
@@ -96,7 +124,15 @@
                 '<span></span><span></span><span></span>' +
             '</button>' +
             '<div class="site-nav-links" id="siteNavLinks">' +
-                linksHtml +
+                topLinksHtml +
+                '<div class="nav-dropdown' + (experienceActive ? ' active' : '') + '" id="navExperiencesDropdown">' +
+                    '<button type="button" class="nav-dropdown-trigger' + (experienceActive ? ' active' : '') + '" id="navExperiencesTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="navExperiencesMenu">' +
+                        'Erlebnisse <span class="nav-dropdown-caret" aria-hidden="true">▾</span>' +
+                    '</button>' +
+                    '<div class="nav-dropdown-menu" id="navExperiencesMenu" role="menu" aria-label="Erlebnisse">' +
+                        experienceLinksHtml +
+                    '</div>' +
+                '</div>' +
                 '<a href="garage.html" class="garage-nav-link' + garageActiveClass + '">🏠 Garage ' +
                     '<span class="garage-nav-badge" id="garageNavFavCount"' + badgeHiddenAttr + '>' + favCount + '</span>' +
                 '</a>' +
@@ -175,6 +211,81 @@
     }
 
     /**
+     * Verdrahtet das "Erlebnisse"-Dropdown: Öffnen/Schließen per Klick auf
+     * den Trigger, per Tastatur (Enter/Leertaste/Pfeil-runter öffnet + setzt
+     * Fokus auf den ersten Eintrag, Pfeil-hoch/-runter wandert innerhalb des
+     * Menüs, Escape schließt und gibt den Fokus an den Trigger zurück),
+     * Schließen bei Klick ausserhalb sowie bei Klick auf einen Menüpunkt.
+     * Dieselbe `is-open`-Klasse steuert sowohl das Desktop-Popover
+     * (Fade + leichtes Herunterschieben) als auch — per CSS-Media-Query in
+     * design.css — die mobile aufklappbare Sektion; hier ist keine
+     * Verzweigung nach Viewport nötig.
+     * @param {HTMLElement} nav - Das Navbar-Wurzelelement.
+     * @returns {void}
+     */
+    function wireDropdown(nav) {
+        var dropdown = nav.querySelector('#navExperiencesDropdown');
+        var trigger = nav.querySelector('#navExperiencesTrigger');
+        var menu = nav.querySelector('#navExperiencesMenu');
+        if (!dropdown || !trigger || !menu) return;
+
+        var menuItems = Array.prototype.slice.call(menu.querySelectorAll('a'));
+
+        function setOpen(open) {
+            dropdown.classList.toggle('is-open', open);
+            trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        function isOpen() {
+            return dropdown.classList.contains('is-open');
+        }
+
+        trigger.addEventListener('click', function (e) {
+            e.stopPropagation();
+            setOpen(!isOpen());
+        });
+
+        trigger.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setOpen(true);
+                if (menuItems[0]) menuItems[0].focus();
+            } else if (e.key === 'Escape' && isOpen()) {
+                setOpen(false);
+            }
+        });
+
+        menu.addEventListener('keydown', function (e) {
+            var idx = menuItems.indexOf(global.document.activeElement);
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                (menuItems[idx + 1] || menuItems[0]).focus();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                (menuItems[idx - 1] || menuItems[menuItems.length - 1]).focus();
+            } else if (e.key === 'Escape') {
+                setOpen(false);
+                trigger.focus();
+            }
+        });
+
+        menu.addEventListener('click', function (e) {
+            if (e.target && e.target.tagName === 'A') setOpen(false);
+        });
+
+        // Schliessen bei Klick ausserhalb des Dropdowns.
+        global.document.addEventListener('click', function (e) {
+            if (isOpen() && !dropdown.contains(e.target)) setOpen(false);
+        });
+
+        // Schliessen bei Escape, unabhängig davon, wo der Fokus gerade liegt
+        // (deckt z.B. den Fall ab, dass mit der Maus geöffnet wurde).
+        global.document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && isOpen()) setOpen(false);
+        });
+    }
+
+    /**
      * Eigenständige Theme-Toggle-Verdrahtung — funktional identisch zu
      * theme-toggle.js's initThemeToggle(), aber nur für Seiten gedacht,
      * die den Toggle nirgendwo sonst verdrahten (aktuell nur
@@ -208,6 +319,7 @@
         nav.innerHTML = buildMarkup();
         wireScrollState(nav);
         wireBurger(nav);
+        wireDropdown(nav);
         if (nav.getAttribute('data-theme-toggle') !== 'external') {
             wireThemeToggleFallback();
         }
@@ -238,5 +350,10 @@
     global.VroooomNavbar = {
         mount: mount,
         refreshGarageBadge: refreshGarageBadge,
+        // Read-only Einblick für Tests (tests/navbar-test.js) — Kopien, kein
+        // Verweis auf die internen Arrays, damit niemand von aussen
+        // versehentlich die Navigation mutiert.
+        topLinks: TOP_LINKS.slice(),
+        experienceLinks: EXPERIENCE_LINKS.slice(),
     };
 })(window);

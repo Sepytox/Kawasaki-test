@@ -10,6 +10,56 @@
   'use strict';
 
   /* ============================================================
+     TEIL 2 — SOUND-WIEDERGABE GLOBAL DEAKTIVIEREN ("Im Aufbau")
+     ============================================================ */
+  /**
+   * Feature-Flag: Wenn `false`, wird beim Klick auf JEDEN Play-Button
+   * (Bike-Karten, Favoriten, Player-Modal, A/B Compare) NICHTS abgespielt —
+   * kein `AudioContext`, keine echte MP3-Wiedergabe, keine Web-Audio-
+   * Synthese. Play-Buttons werden stattdessen greyed/disabled mit dem
+   * Badge "🚧 Im Aufbau" dargestellt und ein Klick zeigt eine kurze,
+   * freundliche deutsche Hinweismeldung ("Dieser Sound wird gerade
+   * überarbeitet.") statt einen Sound abzuspielen.
+   *
+   * Alle zugrunde liegenden Play-Funktionen (openPlayer(), playExhaust(),
+   * playRealAudio(), fallbackToSynthesis() usw.) bleiben unverändert im
+   * Code erhalten — sie werden nur an ihrem zentralen Einstiegspunkt
+   * (openPlayer()) gegated und sind dadurch schlicht nicht mehr erreichbar,
+   * solange das Flag `false` ist.
+   *
+   * REAKTIVIERUNG: Diese Konstante auf `true` setzen — die komplette
+   * bisherige Play-Funktionalität ist dann sofort wieder aktiv, ohne dass
+   * an anderer Stelle im Code etwas geändert werden muss.
+   * @const {boolean}
+   */
+  var SOUND_PLAYBACK_ENABLED = false;
+
+  /**
+   * Zeigt eine kurze, nicht-blockierende deutsche Hinweismeldung ("Toast"),
+   * wenn ein Nutzer versucht, einen (wegen SOUND_PLAYBACK_ENABLED=false)
+   * deaktivierten Play-Button zu benutzen. Erzeugt bei Bedarf das
+   * Toast-Element einmalig und blendet es für ein paar Sekunden ein.
+   * @returns {void}
+   */
+  function showComingSoonNotice() {
+    var toast = document.getElementById('scSoundDisabledToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'scSoundDisabledToast';
+      toast.className = 'sc-toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
+      document.body.appendChild(toast);
+    }
+    toast.textContent = '🚧 Dieser Sound wird gerade überarbeitet.';
+    toast.classList.add('sc-toast-visible');
+    clearTimeout(showComingSoonNotice._timer);
+    showComingSoonNotice._timer = setTimeout(function() {
+      toast.classList.remove('sc-toast-visible');
+    }, 2800);
+  }
+
+  /* ============================================================
      MOTORCYCLE DATA
      ============================================================ */
   var BIKES = [
@@ -803,7 +853,36 @@
   /* ============================================================
      MODAL MANAGEMENT
      ============================================================ */
+  /**
+   * TEIL 2: Markiert die statischen Player-Modal-Steuerelemente (Play/Pause,
+   * Rewind, Forward) visuell als deaktiviert, solange
+   * SOUND_PLAYBACK_ENABLED=false ist. Rein kosmetisch/defensiv — das Modal
+   * öffnet sich ohnehin nie (siehe openPlayer()-Gate), diese Elemente sind
+   * also praktisch nie sichtbar, sollen aber laut Spezifikation ebenfalls
+   * als "Im Aufbau" erkennbar sein, falls sie doch einmal erreicht werden.
+   * @returns {void}
+   */
+  function applySoundDisabledModalUI() {
+    if (SOUND_PLAYBACK_ENABLED) return;
+    var ids = ['btnPlayPause', 'btnRewind', 'btnForward'];
+    ids.forEach(function(id) {
+      var btn = document.getElementById(id);
+      if (!btn) return;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.classList.add('sc-play-btn-disabled');
+    });
+  }
+
   function openPlayer(bike, exhaustIdx) {
+    // TEIL 2: zentraler Kill-Switch — solange SOUND_PLAYBACK_ENABLED=false
+    // ist, öffnet sich der Player NIE und es wird NICHTS abgespielt. Alle
+    // Play-Buttons (Karten, Favoriten, URL-Param-Autoplay) laufen über
+    // diese Funktion, daher genügt der Gate hier zentral.
+    if (!SOUND_PLAYBACK_ENABLED) {
+      showComingSoonNotice();
+      return;
+    }
+
     currentBike = bike;
     currentExhaustIdx = exhaustIdx || 0;
 
@@ -907,14 +986,22 @@
       if (exIdx === -1) return;
       var exhaust = bike.exhausts[exIdx];
 
+      // TEIL 2: Play-Button auch in der Favoriten-Liste sichtbar deaktivieren
+      // + "Im Aufbau"-Badge, solange SOUND_PLAYBACK_ENABLED=false ist.
+      var favPlayAttrs = !SOUND_PLAYBACK_ENABLED
+        ? ' aria-disabled="true" aria-label="Abspielen (bald verfügbar): ' + bike.name + ' ' + exhaust.type + '"'
+        : ' aria-label="Abspielen: ' + bike.name + ' ' + exhaust.type + '"';
+      var favPlayClass = 'sc-fav-play' + (!SOUND_PLAYBACK_ENABLED ? ' sc-play-btn-disabled' : '');
+      var favWipBadge = !SOUND_PLAYBACK_ENABLED ? '<span class="sc-badge-wip" title="Sound-Vorschau wird gerade überarbeitet">🚧 Im Aufbau</span>' : '';
+
       var item = document.createElement('div');
       item.className = 'sc-fav-item sr-scale';
       item.setAttribute('role', 'article');
       item.innerHTML =
-        '<button class="sc-fav-play" aria-label="Abspielen: ' + bike.name + ' ' + exhaust.type + '">▶</button>' +
+        '<button class="' + favPlayClass + '"' + favPlayAttrs + '>▶</button>' +
         '<div class="sc-fav-info">' +
           '<div class="sc-fav-bike">' + bike.icon + ' ' + bike.name + '</div>' +
-          '<div class="sc-fav-type">' + exhaust.type.toUpperCase() + ' · ' + exhaust.brand + ' · ' + exhaust.db + ' dB</div>' +
+          '<div class="sc-fav-type">' + exhaust.type.toUpperCase() + ' · ' + exhaust.brand + ' · ' + exhaust.db + ' dB' + favWipBadge + '</div>' +
         '</div>' +
         '<button class="sc-fav-remove" aria-label="Favorit entfernen">✕</button>';
 
@@ -986,6 +1073,13 @@
   }
 
   function toggleABCompare() {
+    // TEIL 2: A/B Compare läuft nie über openPlayer() und braucht daher ein
+    // eigenes Gate (Robustheit — die Slots werden ohnehin nie befüllt, da
+    // "A SETZEN"/"B SETZEN" nur im Player-Modal sitzen, das nie öffnet).
+    if (!SOUND_PLAYBACK_ENABLED) {
+      showComingSoonNotice();
+      return;
+    }
     if (!compareA || !compareB) return;
 
     if (isABPlaying) {
@@ -1053,14 +1147,24 @@
       var exhaustsHTML = bike.exhausts.map(function(ex, eIdx) {
         var dbPercent = ((ex.db - 80) / 40 * 100).toFixed(0);
         var isSynth = !hasRealAudio(bike.id, ex.type);
-        var synthBadge = isSynth ? '<span class="sc-badge-synth" title="Noch keine Original-Aufnahme — Motor-Sound wird live synthetisiert">🎛️ Sound folgt</span>' : '';
-        return '<div class="sc-exhaust-row" role="button" tabindex="0" aria-label="' + ex.label + ', ' + ex.db + ' dB' + (isSynth ? ', Sound folgt (synthetisiert)' : '') + '" data-bike="' + bike.id + '" data-ex-idx="' + eIdx + '">' +
+        // TEIL 2: Solange die Wiedergabe global deaktiviert ist ("Im
+        // Aufbau"), ist das feinere "Sound folgt"-Badge (echte Aufnahme vs.
+        // Synthese) irrelevant — stattdessen zeigt jede Zeile einheitlich
+        // das "Im Aufbau"-Badge und der Play-Button wirkt sichtbar
+        // deaktiviert (bleibt aber klickbar, um die Hinweismeldung zu zeigen).
+        var badge = !SOUND_PLAYBACK_ENABLED
+          ? '<span class="sc-badge-wip" title="Sound-Vorschau wird gerade überarbeitet">🚧 Im Aufbau</span>'
+          : (isSynth ? '<span class="sc-badge-synth" title="Noch keine Original-Aufnahme — Motor-Sound wird live synthetisiert">🎛️ Sound folgt</span>' : '');
+        var extraAriaLabel = !SOUND_PLAYBACK_ENABLED ? ', Sound-Vorschau im Aufbau, bald verfügbar' : (isSynth ? ', Sound folgt (synthetisiert)' : '');
+        var playBtnAttrs = !SOUND_PLAYBACK_ENABLED ? ' aria-disabled="true" aria-label="Abspielen (bald verfügbar)"' : ' aria-label="Abspielen"';
+        var playBtnClass = 'sc-play-btn' + (!SOUND_PLAYBACK_ENABLED ? ' sc-play-btn-disabled' : '');
+        return '<div class="sc-exhaust-row" role="button" tabindex="0" aria-label="' + ex.label + ', ' + ex.db + ' dB' + extraAriaLabel + '" data-bike="' + bike.id + '" data-ex-idx="' + eIdx + '">' +
           '<div class="sc-exhaust-type"><span class="sc-exhaust-label label-' + ex.type + '">' + ex.type.toUpperCase() + '</span></div>' +
-          '<span class="sc-exhaust-name">' + ex.brand + synthBadge + '</span>' +
+          '<span class="sc-exhaust-name">' + ex.brand + badge + '</span>' +
           '<div class="sc-db-bar"><div class="sc-db-bar-fill" style="width:' + dbPercent + '%"></div></div>' +
           '<span class="sc-exhaust-db">' + ex.db + 'dB</span>' +
           '<div class="sc-mini-wave">' + generateMiniWave(8) + '</div>' +
-          '<button class="sc-play-btn" aria-label="Abspielen">▶</button>' +
+          '<button class="' + playBtnClass + '"' + playBtnAttrs + '>▶</button>' +
           '</div>';
       }).join('');
 
@@ -1326,6 +1430,7 @@
     initPersistentVolume();
     initTimeline();
     initRewindForward();
+    applySoundDisabledModalUI();
 
     // Handle URL param ?bike=xxx to auto-open
     var params = new URLSearchParams(window.location.search);
