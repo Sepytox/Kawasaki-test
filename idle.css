@@ -450,6 +450,19 @@
   border-radius: var(--radius-lg, 16px);
   padding: 1.5rem;
 }
+
+/* .idle-bills-section/.idle-gear-section (Phase D) übernehmen dieselbe
+   Karten-Optik + denselben Sektions-Abstand wie oben — als eigener Block
+   statt in die bestehende, von tests/hover-polish-test.js exakt geprüfte
+   Selektor-Liste eingefügt (dort unverändert gelassen). */
+.idle-bills-section,
+.idle-gear-section {
+  margin-bottom: 1.75rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 16px);
+  padding: 1.5rem;
+}
 .idle-season h2 { font-size: 1.15em; margin-bottom: 0.5rem; }
 .idle-season-intro {
   color: var(--text-muted);
@@ -606,6 +619,180 @@
   text-overflow: ellipsis;
 }
 
+/* ── Ausrüstungs-Sammlung — feat(idle-gear) ─────────────────────── */
+.idle-gear-section h2 { font-size: 1.15em; margin-bottom: 0.5rem; }
+.idle-gear-intro {
+  color: var(--text-muted);
+  font-size: 0.88em;
+  margin-bottom: 1.1rem;
+  max-width: 720px;
+}
+.idle-gear-sets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.idle-gear-set {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  padding: 0.9rem 1rem;
+  transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.idle-gear-set.is-complete { border-color: var(--accent); }
+.idle-gear-set:not(.is-complete):hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-sm);
+}
+.idle-gear-set-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.6rem;
+}
+.idle-gear-set-header h4 { font-size: 0.95em; margin: 0; }
+.idle-gear-set-bonus {
+  font-size: 0.78em;
+  color: var(--text-subtle);
+}
+.idle-gear-set.is-complete .idle-gear-set-bonus { color: var(--accent); font-weight: var(--fw-semibold); }
+.idle-gear-set-items {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+/* Seltenheitsstufe als dezenter Farbakzent (schmale linke Kante + sehr
+   leichter Verlauf) statt eines auffälligen/vollen Rahmens — bewusst
+   subtil, konsistent mit der übrigen, zurückhaltenden Karten-Optik. */
+.idle-gear-chip {
+  flex: 1;
+  min-width: 50px;
+  text-align: center;
+  padding: 0.5rem 0.3rem;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 1.3em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+}
+.idle-gear-chip.is-missing {
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+.idle-gear-chip.is-owned.idle-gear-rarity-gewoehnlich {
+  border-left-color: #9aa0a6;
+  background: linear-gradient(135deg, rgba(154, 160, 166, 0.16), transparent);
+}
+.idle-gear-chip.is-owned.idle-gear-rarity-selten {
+  border-left-color: #4f9dde;
+  background: linear-gradient(135deg, rgba(79, 157, 222, 0.16), transparent);
+}
+.idle-gear-chip.is-owned.idle-gear-rarity-episch {
+  border-left-color: #b06fe0;
+  background: linear-gradient(135deg, rgba(176, 111, 224, 0.16), transparent);
+}
+.idle-gear-chip.is-owned.idle-gear-rarity-legendaer {
+  border-left-color: #e0a83f;
+  background: linear-gradient(135deg, rgba(224, 168, 63, 0.18), transparent);
+}
+.idle-gear-chip-label {
+  display: block;
+  font-size: 0.6em;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Werkstattrechnungen + Insolvenz (MECHANIK A) — feat(idle-bills) ── */
+.idle-bills-section h2 { font-size: 1.15em; margin-bottom: 0.5rem; }
+.idle-bills-intro {
+  color: var(--text-muted);
+  font-size: 0.88em;
+  margin-bottom: 1.1rem;
+  max-width: 720px;
+}
+/* Countdown-Farbdrift: --idle-bill-warn (0..1, von idle.js pro Frame
+   gesetzt) blendet Rahmen/Hintergrund/Fortschrittsbalken sanft Richtung
+   der bestehenden gedämpften Warnfarbe (rgba(200,60,60,…), siehe
+   .idle-shift-track.is-miss weiter oben) — bewusst OHNE Blinken/
+   Keyframe-Animation, nur eine kontinuierliche Farbwert-Interpolation. */
+.idle-bill-panel {
+  --idle-bill-warn: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  padding: 1rem 1.1rem;
+  box-shadow: var(--shadow-sm);
+  border-color: rgba(200, 60, 60, var(--idle-bill-warn));
+  background-image: linear-gradient(135deg, rgba(200, 60, 60, calc(var(--idle-bill-warn) * 0.16)), transparent);
+  transition: border-color 250ms var(--ease-standard, ease),
+              background-image 250ms var(--ease-standard, ease);
+}
+.idle-bill-panel[hidden] { display: none; }
+.idle-bill-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.idle-bill-amount { font-size: 0.95em; color: var(--text); }
+.idle-bill-amount strong { color: var(--accent); font-family: var(--font-display); }
+.idle-bill-countdown {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.idle-bill-progress-track {
+  height: 6px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg);
+  overflow: hidden;
+  margin-bottom: 0.9rem;
+}
+.idle-bill-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full, 999px);
+  background: linear-gradient(90deg, var(--accent), rgba(200, 60, 60, var(--idle-bill-warn, 0)));
+  transition: width 200ms linear;
+}
+.idle-bill-pay-btn {
+  width: 100%;
+  justify-content: center;
+}
+.idle-bill-paid-stamp {
+  text-align: center;
+  margin-top: 0.6rem;
+  font-weight: var(--fw-bold);
+  color: var(--accent);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 250ms var(--ease-spring, ease),
+              transform 250ms var(--ease-spring, ease);
+}
+.idle-bill-paid-stamp.is-visible { opacity: 1; transform: scale(1); }
+.idle-bill-paid-stamp[hidden] { display: none; }
+
+.idle-insolvency-notice {
+  margin-top: 1rem;
+  padding: 0.9rem 1.1rem;
+  background: linear-gradient(135deg, var(--accent-dim), transparent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 10px);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 250ms var(--ease-standard, ease),
+              transform 250ms var(--ease-standard, ease);
+}
+.idle-insolvency-notice.is-visible { opacity: 1; transform: translateY(0); }
+.idle-insolvency-notice[hidden] { display: none; }
+.idle-insolvency-notice strong { display: block; margin-bottom: 0.3rem; color: var(--text); }
+.idle-insolvency-notice p { color: var(--text-muted); font-size: 0.85em; margin: 0; }
+
 /* Teile-Drop-Toast */
 .idle-toast-container {
   position: fixed;
@@ -712,4 +899,8 @@
   .idle-handover { transition: none; }
   .idle-shift { transition: none; }
   .idle-toast { transition: none; }
+  .idle-bill-panel,
+  .idle-bill-progress-fill,
+  .idle-bill-paid-stamp,
+  .idle-insolvency-notice { transition: none; }
 }

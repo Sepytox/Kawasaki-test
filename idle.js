@@ -81,8 +81,17 @@
   /** Anzeigedauer (ms) eines Teile-Drop-Toasts, bevor er wieder ausblendet. */
   var PART_TOAST_VISIBLE_MS = 3200;
 
+  /** Emoji-Zuordnung je Gear-Seltenheitsstufe (feat(idle-gear)), rein dekorativ. */
+  var GEAR_RARITY_ICONS = { gewoehnlich: '🥉', selten: '🥈', episch: '🥇', legendaer: '💠' };
+
   /** Mindest-Abwesenheitszeit (Sekunden), ab der ein Offline-Willkommens-Banner gezeigt wird (verhindert Rauschen bei schnellen Reloads/Tab-Wechseln). */
   var OFFLINE_MIN_AWAY_SECONDS = 30;
+
+  /* ── Werkstattrechnungen + Insolvenz (MECHANIK A) — feat(idle-bills) ── */
+  /** Anzeigedauer (ms) des "Bezahlt!"-Stempel-Effekts, bevor das Rechnungs-Panel ausblendet. */
+  var BILL_PAID_STAMP_MS = 900;
+  /** Anzeigedauer (ms) des Insolvenz-Hinweises, bevor er automatisch ausblendet. */
+  var BILL_INSOLVENCY_NOTICE_MS = 5200;
 
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = IdleCore.loadState();
@@ -100,6 +109,43 @@
       // Sofort speichern (aktualisiert auch offline.lastSeenAt, siehe
       // idle-core.js saveState()) — verhindert Doppel-Gutschrift, falls
       // die Seite vor dem nächsten Auto-Save/beforeunload erneut geladen wird.
+      IdleCore.saveState(state);
+    }
+  })();
+
+  /* ── Werkstattrechnungen (MECHANIK A): Laufzeit-Zustand einer Rechnung —
+     NICHT persistiert (mirrors shiftState/shiftTimerSeconds), NUR die
+     amount/dueAt/graceSeconds-Eckdaten einer AKTIVEN Rechnung leben in
+     state.finance (siehe idle-core.js), damit ein schnelles Neuladen eine
+     laufende Frist nicht einfach verschwinden lässt. ── */
+  var billState = { active: false, amount: 0, totalSeconds: 0, secondsRemaining: 0 };
+  /** Sekunden bis zur nächsten fälligen Werkstattrechnung (siehe idle-core.js nextBillIntervalSeconds()). */
+  var billTimerSeconds = IdleCore.nextBillIntervalSeconds(state);
+
+  // Stellt eine beim letzten Speichern noch aktive, aber noch nicht abgelaufene
+  // Rechnung wieder her (verhindert, dass ein schnelles Neuladen die laufende
+  // Frist einfach "wegzaubert" und so trivial umgangen werden könnte). Eine
+  // WÄHREND der Abwesenheit abgelaufene Rechnung wird dagegen bewusst
+  // VERZIEHEN — Insolvenz entsteht NIEMALS durch blosse Abwesenheit, sondern
+  // ausschliesslich durch tickBill() bei offener/aktiver Seite (Fairness).
+  (function restoreOrForgiveActiveBill() {
+    if (!state.finance || typeof state.finance.activeBillDueAt !== 'number') return;
+    var remainingMs = state.finance.activeBillDueAt - Date.now();
+    if (remainingMs > 0 && typeof state.finance.activeBillAmount === 'number') {
+      var graceSeconds = typeof state.finance.activeBillGraceSeconds === 'number' ? state.finance.activeBillGraceSeconds : remainingMs / 1000;
+      billState = {
+        active: true,
+        amount: state.finance.activeBillAmount,
+        totalSeconds: graceSeconds,
+        secondsRemaining: remainingMs / 1000,
+      };
+    } else {
+      state.finance.activeBillAmount = null;
+      state.finance.activeBillDueAt = null;
+      state.finance.activeBillGraceSeconds = null;
+      // Sofort speichern (analog zur Offline-Ertrags-Gutschrift oben) — die
+      // "Verziehen"-Entscheidung soll dauerhaft in localStorage stehen und
+      // nicht erst auf den nächsten Auto-Save (bis zu 5s) warten müssen.
       IdleCore.saveState(state);
     }
   })();
@@ -184,8 +230,9 @@
    * Aggregiert ALLE Ertrags-Multiplikatoren, die auf JEDEN km-Ertrag
    * (aktiv wie passiv) angewendet werden: den Schaltpunkt-Combo-
    * Multiplikator (siehe activeComboMultiplier), den permanenten
-   * Werksvertrag-/Prestige-Bonus (siehe IdleCore.contractEffects) UND
-   * den permanenten Teile-Set-Bonus (siehe IdleCore.setBonuses).
+   * Werksvertrag-/Prestige-Bonus (siehe IdleCore.contractEffects), den
+   * permanenten Teile-Set-Bonus (siehe IdleCore.setBonuses) UND den
+   * permanenten Ausrüstungs-Bonus (Pro-Item + Set, siehe IdleCore.gearBonuses).
    * @param {number} nowMs - Aktueller Zeitstempel (ms), für activeComboMultiplier.
    * @returns {number} Gesamt-Multiplikator (>= 1).
    */
@@ -193,7 +240,8 @@
     var combo = IdleCore.activeComboMultiplier(state, nowMs);
     var contract = IdleCore.contractEffects(state).earnMultiplier;
     var parts = IdleCore.setBonuses(state).totalBonusMultiplier;
-    return combo * contract * parts;
+    var gear = IdleCore.gearBonuses(state).totalBonusMultiplier;
+    return combo * contract * parts * gear;
   }
 
   /**
@@ -333,7 +381,9 @@
     renderShopList();
     renderSeasonPanel();
     renderPartsPanel();
+    renderGearPanel();
     renderStatsPanel();
+    renderBillPanel();
   }
 
   /**
@@ -1155,6 +1205,284 @@
   }
 
   /* ============================================================
+     AUSRÜSTUNGS-SAMMLUNG (GEAR) — feat(idle-gear)
+     ============================================================ */
+
+  /**
+   * Rendert die Ausrüstungs-Sammlung, gruppiert nach Kategorie: besessene
+   * Items farbig MIT dezentem Seltenheits-Farbakzent, fehlende als
+   * Silhouette (identisches Muster zu renderPartsPanel()); pro Kategorie
+   * wird deren Set-Bonus gezeigt (hervorgehoben, sobald komplett).
+   * @returns {void}
+   */
+  function renderGearPanel() {
+    var container = document.getElementById('idleGearSets');
+    if (!container) return;
+    container.innerHTML = '';
+
+    var owned = state.gear.collected;
+
+    IdleCore.IDLE_GEAR_SETS.forEach(function (set) {
+      var itemsInSet = IdleCore.IDLE_GEAR_ITEMS.filter(function (i) { return i.setId === set.id; });
+      var allOwned = itemsInSet.length > 0 && itemsInSet.every(function (i) { return owned.indexOf(i.id) !== -1; });
+
+      var card = document.createElement('div');
+      card.className = 'idle-gear-set' + (allOwned ? ' is-complete' : '');
+
+      var header = document.createElement('div');
+      header.className = 'idle-gear-set-header';
+      var h4 = document.createElement('h4');
+      h4.textContent = set.name;
+      var bonus = document.createElement('span');
+      bonus.className = 'idle-gear-set-bonus';
+      bonus.textContent = (allOwned ? '✅ ' : '') + '+' + set.bonusPct + '% Set-Bonus';
+      header.appendChild(h4);
+      header.appendChild(bonus);
+      card.appendChild(header);
+
+      var itemsRow = document.createElement('div');
+      itemsRow.className = 'idle-gear-set-items';
+      itemsInSet.forEach(function (item) {
+        var isOwned = owned.indexOf(item.id) !== -1;
+        var chip = document.createElement('div');
+        chip.className = 'idle-gear-chip idle-gear-rarity-' + item.rarity + ' ' + (isOwned ? 'is-owned' : 'is-missing');
+        chip.title = isOwned ? (item.name + ' (+' + item.bonusPct + '% Ertrag)') : 'Noch nicht gefunden';
+
+        var icon = document.createElement('span');
+        icon.textContent = GEAR_RARITY_ICONS[item.rarity] || '🎽';
+        var label = document.createElement('span');
+        label.className = 'idle-gear-chip-label';
+        label.textContent = isOwned ? item.name : '???';
+
+        chip.appendChild(icon);
+        chip.appendChild(label);
+        itemsRow.appendChild(chip);
+      });
+      card.appendChild(itemsRow);
+
+      container.appendChild(card);
+    });
+  }
+
+  /**
+   * Zeigt einen kurzen Toast für einen Ausrüstungs-Drop: neues Item oder
+   * (bei einer Dublette) die umgewandelte km-Gutschrift. Nutzt denselben
+   * Toast-Container/dieselbe CSS-Klasse wie showPartToast().
+   * @param {{isNew: boolean, awardedKm: number, part: Object}} result - Ergebnis von IdleCore.addGear().
+   * @returns {void}
+   */
+  function showGearToast(result) {
+    var container = document.getElementById('idleToastContainer');
+    if (!container || !result || !result.part) return;
+
+    var toast = document.createElement('div');
+    toast.className = 'idle-toast';
+    toast.textContent = result.isNew
+      ? '🎽 Neue Ausrüstung: ' + result.part.name
+      : '♻️ Ausrüstungs-Dublette umgewandelt: ' + result.part.name + ' (+' + formatKm(result.awardedKm) + ' km)';
+    container.appendChild(toast);
+
+    window.requestAnimationFrame(function () { toast.classList.add('is-visible'); });
+    setTimeout(function () {
+      toast.classList.remove('is-visible');
+      setTimeout(function () {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 400);
+    }, PART_TOAST_VISIBLE_MS);
+  }
+
+  /* ============================================================
+     WERKSTATTRECHNUNGEN + INSOLVENZ (MECHANIK A) — feat(idle-bills)
+     ============================================================ */
+
+  /**
+   * Rendert das Rechnungs-Panel: versteckt es, solange keine Rechnung
+   * aktiv ist, zeigt sonst Betrag + Zahlen-Button (deaktiviert, falls
+   * nicht genug km vorhanden sind) und aktualisiert den Countdown.
+   * @returns {void}
+   */
+  function renderBillPanel() {
+    var panel = document.getElementById('idleBillPanel');
+    var amountEl = document.getElementById('idleBillAmount');
+    var payBtn = document.getElementById('idleBillPayBtn');
+    if (!panel) return;
+
+    if (!billState.active) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    if (amountEl) amountEl.textContent = formatKm(billState.amount);
+    if (payBtn) payBtn.disabled = state.km < billState.amount;
+    renderBillCountdown();
+  }
+
+  /**
+   * Aktualisiert Countdown-Text, Fortschrittsbalken UND die (blinkfreie,
+   * sanft driftende) Warnfarb-Intensität des aktiven Rechnungs-Panels,
+   * je knapper die Restzeit wird. Kein Fortschritt/keine aktive Rechnung
+   * → No-op.
+   * @returns {void}
+   */
+  function renderBillCountdown() {
+    if (!billState.active) return;
+    var panel = document.getElementById('idleBillPanel');
+    var countdownEl = document.getElementById('idleBillCountdown');
+    var fillEl = document.getElementById('idleBillProgressFill');
+
+    var remain = Math.max(0, billState.secondsRemaining);
+    if (countdownEl) countdownEl.textContent = Math.ceil(remain) + 's';
+
+    var pct = billState.totalSeconds > 0 ? Math.max(0, Math.min(100, (remain / billState.totalSeconds) * 100)) : 0;
+    if (fillEl) fillEl.style.width = pct + '%';
+
+    // Driftet sanft Richtung gedämpfter Warnfarbe (rgba(200,60,60,…), siehe
+    // idle.css .idle-shift-track.is-miss-Präzedenzfall), je weniger Zeit
+    // bleibt — KEIN Blinken, nur eine kontinuierliche Intensität (0–1).
+    var urgency = 1 - pct / 100;
+    if (panel) panel.style.setProperty('--idle-bill-warn', urgency.toFixed(3));
+  }
+
+  /**
+   * Startet eine neue, fällige Werkstattrechnung: berechnet Betrag
+   * (IdleCore.billAmount) + Zahlungsfenster (IdleCore.billGraceSeconds),
+   * persistiert deren Eckdaten SOFORT in state.finance (anti-"schnelles
+   * Neuladen dodged die Rechnung", siehe restoreOrForgiveActiveBill())
+   * und macht das Panel sichtbar.
+   * @returns {void}
+   */
+  function startBill() {
+    var amount = IdleCore.billAmount(state);
+    var grace = IdleCore.billGraceSeconds();
+    state.finance.activeBillAmount = amount;
+    state.finance.activeBillGraceSeconds = grace;
+    state.finance.activeBillDueAt = Date.now() + grace * 1000;
+    billState = { active: true, amount: amount, totalSeconds: grace, secondsRemaining: grace };
+    renderBillPanel();
+    IdleCore.saveState(state);
+  }
+
+  /**
+   * Beendet eine BEZAHLTE Rechnung: löscht die persistierten activeBill*-
+   * Felder, würfelt das Intervall bis zur nächsten Rechnung neu, und
+   * blendet das Panel nach dem kurzen "Bezahlt!"-Stempel-Effekt aus.
+   * @returns {void}
+   */
+  function endBill() {
+    state.finance.activeBillAmount = null;
+    state.finance.activeBillDueAt = null;
+    state.finance.activeBillGraceSeconds = null;
+    billTimerSeconds = IdleCore.nextBillIntervalSeconds(state);
+    setTimeout(function () {
+      billState = { active: false, amount: 0, totalSeconds: 0, secondsRemaining: 0 };
+      var panel = document.getElementById('idleBillPanel');
+      if (panel) panel.hidden = true;
+      var stamp = document.getElementById('idleBillPaidStamp');
+      if (stamp) {
+        stamp.classList.remove('is-visible');
+        stamp.hidden = true;
+      }
+    }, BILL_PAID_STAMP_MS);
+  }
+
+  /**
+   * Zeigt den kurzen "Bezahlt!"-Stempel-Effekt nach einer erfolgreichen
+   * Zahlung (transform/opacity, respektiert prefers-reduced-motion via CSS).
+   * @returns {void}
+   */
+  function showBillPaidStamp() {
+    var stamp = document.getElementById('idleBillPaidStamp');
+    if (!stamp) return;
+    stamp.hidden = false;
+    void stamp.offsetWidth; // Reflow erzwingen, damit die Transition bei erneuter Anzeige greift.
+    stamp.classList.add('is-visible');
+  }
+
+  /**
+   * Zeigt den nicht-punitiven Insolvenz-Hinweis ("Saison zurückgesetzt,
+   * frischer Neustart") kurz an und blendet ihn danach automatisch aus.
+   * @returns {void}
+   */
+  function showInsolvencyNotice() {
+    var notice = document.getElementById('idleInsolvencyNotice');
+    if (!notice) return;
+    notice.hidden = false;
+    window.requestAnimationFrame(function () { notice.classList.add('is-visible'); });
+    setTimeout(function () {
+      notice.classList.remove('is-visible');
+      setTimeout(function () { notice.hidden = true; }, 400);
+    }, BILL_INSOLVENCY_NOTICE_MS);
+  }
+
+  /**
+   * Verarbeitet eine unbezahlt abgelaufene Werkstattrechnung: löst
+   * IdleCore.triggerInsolvency() aus (ein normaler, NICHT-punitiver
+   * Saison-Reset) und ersetzt die lokale state-Referenz durch den neuen
+   * Zustand — exakt das Aufrufer-Muster von wireSeasonControls().
+   * @returns {void}
+   */
+  function handleInsolvency() {
+    state = IdleCore.triggerInsolvency(state);
+    billState = { active: false, amount: 0, totalSeconds: 0, secondsRemaining: 0 };
+    billTimerSeconds = IdleCore.nextBillIntervalSeconds(state);
+    var panel = document.getElementById('idleBillPanel');
+    if (panel) panel.hidden = true;
+    IdleCore.saveState(state);
+    showInsolvencyNotice();
+    renderAll();
+  }
+
+  /**
+   * Verdrahtet den "Jetzt bezahlen"-Button des Rechnungs-Panels: manuelle
+   * Frühzahlung ist jederzeit während des Zahlungsfensters möglich, nicht
+   * nur kurz vor Ablauf.
+   * @returns {void}
+   */
+  function wireBillPayButton() {
+    var btn = document.getElementById('idleBillPayBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (!billState.active) return;
+      var lastSecond = billState.secondsRemaining <= IdleCore.IDLE_BALANCE.BILL_LAST_SECOND_THRESHOLD_SECONDS;
+      var result = IdleCore.payBill(state, true, lastSecond, Math.random);
+      if (!result.success) return;
+
+      showBillPaidStamp();
+      if (result.gearResult && result.gearResult.part) {
+        renderGearPanel();
+        showGearToast(result.gearResult);
+      }
+      endBill();
+      renderAll();
+      IdleCore.saveState(state);
+    });
+  }
+
+  /**
+   * EIN Game-Loop-Tick der Werkstattrechnungen: zählt entweder bis zur
+   * nächsten fälligen Rechnung herunter (startBill() bei Ablauf), oder
+   * lässt die Restzeit der aktiven Rechnung weiterlaufen (rendert den
+   * Countdown) und löst bei Ablauf handleInsolvency() aus. Tickt NUR,
+   * während die Seite offen/im Vordergrund ist (dtSeconds stammt aus dem
+   * rAF-Loop) — Abwesenheit allein kann daher NIE eine Insolvenz auslösen
+   * (siehe restoreOrForgiveActiveBill() für die Lade-seitige Fairness).
+   * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
+   * @returns {void}
+   */
+  function tickBill(dtSeconds) {
+    if (!billState.active) {
+      billTimerSeconds -= dtSeconds;
+      if (billTimerSeconds <= 0) startBill();
+      return;
+    }
+    billState.secondsRemaining -= dtSeconds;
+    renderBillCountdown();
+    if (billState.secondsRemaining <= 0) {
+      handleInsolvency();
+    }
+  }
+
+  /* ============================================================
      STATISTIKEN — feat(idle-stats)
      ============================================================ */
 
@@ -1263,6 +1591,7 @@
     renderTacho(info.stats.geschwindigkeitPct, kmh);
     updateEngineSound(info.stats.geschwindigkeitPct);
     tickShift(clampedDt);
+    tickBill(clampedDt);
     updateComboBadge();
 
     window.requestAnimationFrame(tick);
@@ -1314,6 +1643,7 @@
     wireShiftInteraction();
     wireSoundControls();
     wireSeasonControls();
+    wireBillPayButton();
     wireLifecycleSave();
     window.requestAnimationFrame(tick);
   }
