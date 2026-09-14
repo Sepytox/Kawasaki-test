@@ -38,6 +38,12 @@
  * setBonuses akzeptieren jetzt einen optionalen pool-Parameter) UND
  * zusätzlich einen permanenten Pro-Item-Ertragsbonus gewährt (siehe
  * itemBonusSum/gearBonuses).
+ *
+ * Phase E ergänzt MECHANIK B: Sparschweine zerschlagen
+ * (nextPiggyIntervalSeconds/piggyVisibleSeconds/piggybankReward/
+ * smashPiggybank) — ein zeitkritisches, rein optionales Extra (Verpassen
+ * hat KEINE Strafe) mit einem km-Bonus + derselben wiederverwendeten
+ * Gear-Drop-Chance wie payBill().
  */
 'use strict';
 
@@ -196,6 +202,28 @@ var IDLE_BALANCE = {
   GEAR_DUPLICATE_KM_VALUE: { gewoehnlich: 20, selten: 50, episch: 120, legendaer: 300 },
   /** Wahrscheinlichkeit (0–1), dass eine pünktlich bezahlte Rechnung zusätzlich ein Gear-Item dropt. */
   GEAR_DROP_CHANCE_ON_BILL_PAY: 0.18,
+
+  /* ── Phase E: MECHANIK B — Sparschweine zerschlagen ────────────────
+   * Alle nextPiggyIntervalSeconds() Sekunden (flach, 20–40s) erscheint
+   * ein Sparschwein (DOM-Overlay wie #idleHandover, siehe idle.js), das
+   * für piggyVisibleSeconds() Sekunden (3–4s) sichtbar/klickbar ist.
+   * Ein rechtzeitiger Klick zerschlägt es (piggybankReward()/
+   * smashPiggybank()): ein km-Bonus PLUS eine Chance auf einen Gear-Drop
+   * (wiederverwendet dieselbe Engine wie payBill(), siehe rollGearDrop()).
+   * Verpasst/unbeklickt abgelaufen = KEINE Strafe (identisches Muster
+   * zur Schaltpunkt-Leiste, siehe tickShift()/endShift(..., true)). */
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Sparschweinen — untere Grenze. */
+  PIGGY_INTERVAL_MIN_SECONDS: 20,
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Sparschweinen — obere Grenze. */
+  PIGGY_INTERVAL_MAX_SECONDS: 40,
+  /** Sichtbarkeitsdauer (Sekunden) EINES Sparschweins, bevor es unbeklickt wieder verschwindet — untere Grenze. */
+  PIGGY_VISIBLE_MIN_SECONDS: 3,
+  /** Sichtbarkeitsdauer (Sekunden) EINES Sparschweins, bevor es unbeklickt wieder verschwindet — obere Grenze. */
+  PIGGY_VISIBLE_MAX_SECONDS: 4,
+  /** Vielfaches von activeEarn(state), das ein zerschlagenes Sparschwein als km-Bonus gewährt (skaliert automatisch mit Bike/Tuning, wie billAmount() über passiveEarn()). */
+  PIGGY_KM_BONUS_MULTIPLIER: 6,
+  /** Wahrscheinlichkeit (0–1), dass ein zerschlagenes Sparschwein zusätzlich ein Gear-Item dropt. */
+  GEAR_DROP_CHANCE_ON_PIGGY_SMASH: 0.22,
 };
 
 /**
@@ -534,6 +562,12 @@ function createInitialState() {
     },
     /** Gesammelte Ausrüstungs-ids (siehe IDLE_GEAR_ITEMS/addGear) — permanent, überlebt Saison-Resets. */
     gear: { collected: [] },
+
+    /* ── Phase E: MECHANIK B — Sparschweine zerschlagen ────────────
+     * Eigener, kleiner Namensraum (parallel zu finance/gear) — NUR ein
+     * Lebenszeit-Zähler, überlebt Saison-Resets (siehe finishSeason()),
+     * genutzt für die "10 Sparschweine zerschlagen"-Achievement. */
+    piggy: { smashedCount: 0 },
   };
 }
 
@@ -605,6 +639,20 @@ function migrateGear(raw, fresh) {
 }
 
 /**
+ * Migriert das piggy-Feld (Lebenszeit-Zähler zerschlagener Sparschweine)
+ * defensiv.
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges piggy-Objekt.
+ */
+function migratePiggy(raw, fresh) {
+  var rp = raw && raw.piggy && typeof raw.piggy === 'object' ? raw.piggy : {};
+  return {
+    smashedCount: typeof rp.smashedCount === 'number' && rp.smashedCount >= 0 ? rp.smashedCount : fresh.piggy.smashedCount,
+  };
+}
+
+/**
  * Migriert das offline-Feld (Zeitstempel der letzten Sichtung) defensiv.
  * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
  * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
@@ -670,6 +718,7 @@ function migrateState(raw) {
     } : fresh.sound,
     finance: migrateFinance(raw, fresh),
     gear: migrateGear(raw, fresh),
+    piggy: migratePiggy(raw, fresh),
   };
 
   if (state.ownedBikeIds.length === 0) state.ownedBikeIds = fresh.ownedBikeIds.slice();
@@ -1058,6 +1107,7 @@ function finishSeason(state, opts) {
   var prevStats = state.stats || fresh.stats;
   var prevGear = state.gear || fresh.gear;
   var prevFinance = state.finance && typeof state.finance === 'object' ? state.finance : fresh.finance;
+  var prevPiggy = state.piggy && typeof state.piggy === 'object' ? state.piggy : fresh.piggy;
 
   fresh.totalKmEarned = typeof state.totalKmEarned === 'number' ? state.totalKmEarned : fresh.totalKmEarned;
 
@@ -1069,6 +1119,8 @@ function finishSeason(state, opts) {
   };
   fresh.parts = { collected: Array.isArray(prevParts.collected) ? prevParts.collected.slice() : [] };
   fresh.gear = { collected: Array.isArray(prevGear.collected) ? prevGear.collected.slice() : [] };
+  // Lebenszeit-Zähler, überlebt jeden Saison-Reset (identisches Muster zu finance-Lebenszeit-Zählern unten).
+  fresh.piggy = { smashedCount: typeof prevPiggy.smashedCount === 'number' ? prevPiggy.smashedCount : 0 };
   fresh.offline = state.offline && typeof state.offline === 'object' ? { lastSeenAt: state.offline.lastSeenAt } : fresh.offline;
   fresh.sound = state.sound && typeof state.sound === 'object' ? { enabled: state.sound.enabled, volume: state.sound.volume } : fresh.sound;
 
@@ -1643,6 +1695,96 @@ function triggerInsolvency(state) {
 }
 
 /* ============================================================
+   SPARSCHWEINE ZERSCHLAGEN (MECHANIK B) — feat(idle-piggybanks)
+   Alle nextPiggyIntervalSeconds() Sekunden (flach, 20–40s) erscheint ein
+   Sparschwein (DOM-Overlay, siehe idle.js), das für piggyVisibleSeconds()
+   Sekunden (3–4s) klickbar ist. Ein rechtzeitiger Klick zerschlägt es
+   (smashPiggybank()): ein km-Bonus PLUS eine Chance auf einen Gear-Drop
+   (dieselbe generalisierte Engine wie payBill(), siehe rollGearDrop()/
+   addGear()). Verpasst/unbeklickt abgelaufen ist KEINE Strafe — identisches
+   Muster zur Schaltpunkt-Leiste (tickShift()/endShift(..., true)).
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.piggy ein gültiges Objekt ist (defensiv, für
+ * Zustände, die nicht über createInitialState()/migrateState() gelaufen
+ * sind).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensurePiggyState(state) {
+  if (!state.piggy || typeof state.piggy !== 'object') {
+    state.piggy = { smashedCount: 0 };
+  }
+}
+
+/**
+ * Würfelt das Zufallsintervall (Sekunden) bis zum nächsten erscheinenden
+ * Sparschwein, zwischen IDLE_BALANCE.PIGGY_INTERVAL_MIN_SECONDS und
+ * PIGGY_INTERVAL_MAX_SECONDS (flach, wächst NICHT mit dem Saison-Fortschritt
+ * — anders als nextBillIntervalSeconds()). Zufälligkeit wird als Parameter
+ * übergeben, damit die Funktion deterministisch testbar bleibt.
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zum nächsten Sparschwein.
+ */
+function nextPiggyIntervalSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.PIGGY_INTERVAL_MIN_SECONDS;
+  var max = IDLE_BALANCE.PIGGY_INTERVAL_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Würfelt die Sichtbarkeitsdauer (Sekunden) EINES erschienenen Sparschweins,
+ * zwischen IDLE_BALANCE.PIGGY_VISIBLE_MIN_SECONDS und PIGGY_VISIBLE_MAX_SECONDS,
+ * bevor es unbeklickt wieder verschwindet.
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden Sichtbarkeit.
+ */
+function piggyVisibleSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.PIGGY_VISIBLE_MIN_SECONDS;
+  var max = IDLE_BALANCE.PIGGY_VISIBLE_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Berechnet die Belohnung für EIN zerschlagenes Sparschwein: einen km-Bonus
+ * (ein Vielfaches von activeEarn(state), skaliert dadurch automatisch mit
+ * Bike/Tuning wie billAmount() über passiveEarn() — KEINE eigene, parallele
+ * Balancing-Formel) PLUS eine gewürfelte Chance auf einen Gear-Drop
+ * (wiederverwendet rollGearDrop()/IDLE_GEAR_POOL, siehe payBill()). Reine
+ * Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {Function} [rng] - Zufallsfunktion für den Gear-Drop-Roll; Standard Math.random.
+ * @returns {{kmBonus: number, gearId: (string|null)}} Berechnete Belohnung.
+ */
+function piggybankReward(state, rng) {
+  var kmBonus = Math.round(activeEarn(state) * IDLE_BALANCE.PIGGY_KM_BONUS_MULTIPLIER);
+  var gearId = rollGearDrop(rng, IDLE_BALANCE.GEAR_DROP_CHANCE_ON_PIGGY_SMASH);
+  return { kmBonus: kmBonus, gearId: gearId };
+}
+
+/**
+ * Zerschlägt ein Sparschwein: berechnet + verbucht dessen Belohnung
+ * (piggybankReward()) — gutschreibt den km-Bonus, fügt einen eventuellen
+ * Gear-Drop hinzu (siehe addGear()) — und zählt state.piggy.smashedCount
+ * (Lebenszeit-Zähler, überlebt Saison-Resets, siehe finishSeason()) hoch.
+ * Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {Function} [rng] - Zufallsfunktion für den Gear-Drop-Roll; Standard Math.random.
+ * @returns {{kmBonus: number, gearResult: (Object|null), smashedCount: number}} Ergebnis.
+ */
+function smashPiggybank(state, rng) {
+  ensurePiggyState(state);
+  var reward = piggybankReward(state, rng);
+  creditKm(state, reward.kmBonus);
+  var gearResult = reward.gearId ? addGear(state, reward.gearId) : null;
+  state.piggy.smashedCount += 1;
+  return { kmBonus: reward.kmBonus, gearResult: gearResult, smashedCount: state.piggy.smashedCount };
+}
+
+/* ============================================================
    OFFLINE-ERTRAG — feat(idle-offline)
    ============================================================ */
 
@@ -1791,6 +1933,13 @@ var IdleCore = {
   billAmount: billAmount,
   payBill: payBill,
   triggerInsolvency: triggerInsolvency,
+
+  /* ── Phase E: MECHANIK B — Sparschweine zerschlagen — feat(idle-piggybanks) ── */
+  ensurePiggyState: ensurePiggyState,
+  nextPiggyIntervalSeconds: nextPiggyIntervalSeconds,
+  piggyVisibleSeconds: piggyVisibleSeconds,
+  piggybankReward: piggybankReward,
+  smashPiggybank: smashPiggybank,
 
   /* ── Phase C: Offline-Ertrag ──────────────────────────────────────── */
   offlineEarn: offlineEarn,
