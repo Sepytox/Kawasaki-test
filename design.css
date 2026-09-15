@@ -493,6 +493,60 @@ summary:focus-visible,
   color: var(--accent);
 }
 
+.nav-login-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              background var(--dur-fast) var(--ease-standard);
+}
+.nav-login-btn:hover,
+.nav-login-btn:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ── Login-Platzhalter-Dialog ("Login folgt bald") ──────────────
+   Kein echtes Auth-UI, reines Platzhalter-Modal im neuen Design-System.
+   Escape/Click-outside/Schliessen-Button schliessen (siehe wireLogin()
+   in navbar.js). */
+.nav-login-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: var(--space-4);
+}
+.nav-login-dialog-overlay[hidden] { display: none; }
+
+.nav-login-dialog {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-5);
+  max-width: 320px;
+  width: 100%;
+  text-align: center;
+}
+.nav-login-dialog h2 {
+  margin-bottom: var(--space-2);
+  font-size: 1.15rem;
+}
+.nav-login-dialog p {
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
 /* Theme toggle button in nav */
 .theme-toggle {
   background: transparent;

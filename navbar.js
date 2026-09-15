@@ -147,6 +147,7 @@
                 '<a href="shop.html" class="nav-cart-link" id="navCartLink" aria-label="Warenkorb">' +
                     '<span aria-hidden="true">🛒</span>' +
                 '</a>' +
+                '<button type="button" class="nav-login-btn" id="navLoginBtn">Anmelden</button>' +
                 '<button type="button" class="theme-toggle" id="themeToggle" aria-label="Theme umschalten">☀️</button>' +
             '</div>'
         );
@@ -319,6 +320,70 @@
         });
     }
 
+    /** ID des einmalig in den Body eingehängten Login-Platzhalter-Dialogs. */
+    var LOGIN_DIALOG_ID = 'navLoginDialog';
+
+    /**
+     * Erstellt (falls noch nicht vorhanden) den "Login folgt bald"-Dialog
+     * und hängt ihn einmalig an document.body an. Rein additiv/idempotent —
+     * ein zweiter mount()-Aufruf (z.B. erneutes Rendern) erzeugt keinen
+     * doppelten Dialog.
+     * @returns {HTMLElement} Das Dialog-Root-Element.
+     */
+    function ensureLoginDialog() {
+        var existing = global.document.getElementById(LOGIN_DIALOG_ID);
+        if (existing) return existing;
+
+        var overlay = global.document.createElement('div');
+        overlay.id = LOGIN_DIALOG_ID;
+        overlay.className = 'nav-login-dialog-overlay';
+        overlay.hidden = true;
+        overlay.innerHTML =
+            '<div class="nav-login-dialog" role="dialog" aria-modal="true" aria-labelledby="navLoginDialogTitle" tabindex="-1">' +
+                '<h2 id="navLoginDialogTitle">Anmeldung</h2>' +
+                '<p>Login folgt bald.</p>' +
+                '<button type="button" class="btn btn-outline nav-login-dialog-close" id="navLoginDialogClose">Schließen</button>' +
+            '</div>';
+        global.document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    /**
+     * Verdrahtet den Login-Platzhalter-Button: öffnet einen einfachen
+     * "Login folgt bald"-Dialog (keine echte Authentifizierung, reine UI).
+     * Schliesst per Klick auf den Schliessen-Button, Klick ausserhalb des
+     * Dialogs oder Escape.
+     * @param {HTMLElement} nav - Das Navbar-Wurzelelement.
+     * @returns {void}
+     */
+    function wireLogin(nav) {
+        var loginBtn = nav.querySelector('#navLoginBtn');
+        if (!loginBtn) return;
+        var dialog = ensureLoginDialog();
+        var closeBtn = dialog.querySelector('#navLoginDialogClose');
+        var panel = dialog.querySelector('.nav-login-dialog');
+
+        function open() {
+            dialog.hidden = false;
+            if (panel) panel.focus();
+        }
+        function close() {
+            dialog.hidden = true;
+            loginBtn.focus();
+        }
+
+        loginBtn.addEventListener('click', open);
+        if (closeBtn) closeBtn.addEventListener('click', close);
+
+        dialog.addEventListener('click', function (e) {
+            if (e.target === dialog) close();
+        });
+
+        global.document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !dialog.hidden) close();
+        });
+    }
+
     /**
      * Rendert die Navbar in den übergebenen Container und verdrahtet
      * alle interaktiven Elemente.
@@ -331,6 +396,7 @@
         wireScrollState(nav);
         wireBurger(nav);
         wireDropdown(nav);
+        wireLogin(nav);
         if (nav.getAttribute('data-theme-toggle') !== 'external') {
             wireThemeToggleFallback();
         }
