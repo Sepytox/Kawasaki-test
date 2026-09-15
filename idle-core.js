@@ -27,6 +27,23 @@
  * TROPHÄEN sind PERMANENT und kaufen dauerhafte WERKSVERTRÄGE
  * (IDLE_CONTRACTS/contractEffects), die Reset-Saisons überleben. Teile-
  * Sammlung/Offline-Ertrag/Statistiken folgen in weiteren Phase-C-Commits.
+ *
+ * Phase D (IDLE_STATE_VERSION 2) ergänzt eine ZWEITE MECHANIK A:
+ * Werkstattrechnungen + Insolvenz (nextBillIntervalSeconds/billAmount/
+ * payBill/triggerInsolvency) — eine unbezahlte Rechnung löst KEINE Strafe
+ * aus, sondern eine Insolvenz (ein normaler Saison-Reset via finishSeason
+ * mit bypassEligibilityGate). Ausserdem AUSRÜSTUNG (GEAR): eine zweite,
+ * parallele Sammlung zu den Teilen, die dieselbe generalisierte
+ * Drop-/Dubletten-/Set-Bonus-Engine wiederverwendet (rollPartDrop/addPart/
+ * setBonuses akzeptieren jetzt einen optionalen pool-Parameter) UND
+ * zusätzlich einen permanenten Pro-Item-Ertragsbonus gewährt (siehe
+ * itemBonusSum/gearBonuses).
+ *
+ * Phase E ergänzt MECHANIK B: Sparschweine zerschlagen
+ * (nextPiggyIntervalSeconds/piggyVisibleSeconds/piggybankReward/
+ * smashPiggybank) — ein zeitkritisches, rein optionales Extra (Verpassen
+ * hat KEINE Strafe) mit einem km-Bonus + derselben wiederverwendeten
+ * Gear-Drop-Chance wie payBill().
  */
 'use strict';
 
@@ -34,7 +51,7 @@
 var IDLE_STATE_KEY = 'vroooom_idle_state';
 
 /** Aktuelle Zustands-Versionsnummer (für migrateState). */
-var IDLE_STATE_VERSION = 1;
+var IDLE_STATE_VERSION = 2;
 
 /**
  * IDLE_BALANCE — zentrale Balancing-Konstanten für die gesamte Idle-Economy.
@@ -146,6 +163,67 @@ var IDLE_BALANCE = {
   SHIFT_INTERVAL_MAX_SECONDS: 30,
   /** Dauer (Sekunden) des Marker-Durchlaufs einer einzelnen Schaltpunkt-Leiste. */
   SHIFT_SWEEP_DURATION_SECONDS: 2.2,
+
+  /* ── Phase D: MECHANIK A — Werkstattrechnungen + Insolvenz ────────
+   * Alle nextBillIntervalSeconds() Sekunden wird eine Werkstattrechnung
+   * fällig; ein sichtbares Zahlungsfenster (billGraceSeconds()) läuft
+   * ab, bevor eine unbezahlte Rechnung zu einer Insolvenz führt.
+   * Insolvenz ist dabei KEINE Strafe, sondern ein normaler Saison-Reset
+   * (siehe triggerInsolvency/finishSeason mit bypassEligibilityGate). */
+  /** Basis-Intervall (Sekunden) bis zur nächsten Rechnung — untere Grenze bei Saison-Start. */
+  BILL_INTERVAL_MIN_SECONDS: 60,
+  /** Basis-Intervall (Sekunden) bis zur nächsten Rechnung — obere Grenze bei Saison-Start. */
+  BILL_INTERVAL_MAX_SECONDS: 120,
+  /** Untere Grenze, unter die das Intervall trotz Saison-Fortschritt niemals schrumpft. */
+  BILL_INTERVAL_FLOOR_SECONDS: 30,
+  /** Schrumpfung (Sekunden) von Min/Max je Trophäe (trophiesForSeason) Saison-Fortschritt. */
+  BILL_INTERVAL_SHRINK_PER_TROPHY_SECONDS: 1.5,
+  /** Sichtbares Zahlungsfenster (Sekunden) einer fälligen Rechnung — untere Grenze. */
+  BILL_GRACE_MIN_SECONDS: 30,
+  /** Sichtbares Zahlungsfenster (Sekunden) einer fälligen Rechnung — obere Grenze. */
+  BILL_GRACE_MAX_SECONDS: 45,
+  /** Sicherheits-Faktor auf den aus passiveEarn() abgeleiteten Rechnungsbetrag (siehe billAmount()). */
+  BILL_AMOUNT_SAFETY_FACTOR: 1.3,
+  /** Mindestbetrag (km) einer Rechnung, damit sehr frühe Rechnungen nicht auf 0 runden. */
+  BILL_AMOUNT_MIN_KM: 20,
+  /** Anteil des bezahlten Betrags, der als kleiner Bonus zurück-gutgeschrieben wird (siehe payBill()). */
+  BILL_PAY_BONUS_FRACTION: 0.08,
+  /** Schwelle (Sekunden Restzeit), ab der eine Zahlung als "in letzter Sekunde" gilt. */
+  BILL_LAST_SECOND_THRESHOLD_SECONDS: 3,
+
+  /* ── Phase D: Ausrüstung (GEAR) — feat(idle-gear) ─────────────────
+   * Zweite, parallele Sammlung zu den Teilen (siehe IDLE_PARTS oben),
+   * wiederverwendet dieselbe generalisierte Engine (rollPartDrop/addPart/
+   * setBonuses). 4 Seltenheitsstufen statt 3, UND ein permanenter
+   * Pro-Item-Ertragsbonus zusätzlich zum Set-Bonus (siehe gearBonuses()). */
+  /** Relative Gewichtung der vier Seltenheitsstufen bei einem Gear-Drop. */
+  GEAR_RARITY_WEIGHTS: { gewoehnlich: 60, selten: 25, episch: 11, legendaer: 4 },
+  /** km-Gutschrift für eine Gear-Dublette, je Seltenheitsstufe. */
+  GEAR_DUPLICATE_KM_VALUE: { gewoehnlich: 20, selten: 50, episch: 120, legendaer: 300 },
+  /** Wahrscheinlichkeit (0–1), dass eine pünktlich bezahlte Rechnung zusätzlich ein Gear-Item dropt. */
+  GEAR_DROP_CHANCE_ON_BILL_PAY: 0.18,
+
+  /* ── Phase E: MECHANIK B — Sparschweine zerschlagen ────────────────
+   * Alle nextPiggyIntervalSeconds() Sekunden (flach, 20–40s) erscheint
+   * ein Sparschwein (DOM-Overlay wie #idleHandover, siehe idle.js), das
+   * für piggyVisibleSeconds() Sekunden (3–4s) sichtbar/klickbar ist.
+   * Ein rechtzeitiger Klick zerschlägt es (piggybankReward()/
+   * smashPiggybank()): ein km-Bonus PLUS eine Chance auf einen Gear-Drop
+   * (wiederverwendet dieselbe Engine wie payBill(), siehe rollGearDrop()).
+   * Verpasst/unbeklickt abgelaufen = KEINE Strafe (identisches Muster
+   * zur Schaltpunkt-Leiste, siehe tickShift()/endShift(..., true)). */
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Sparschweinen — untere Grenze. */
+  PIGGY_INTERVAL_MIN_SECONDS: 20,
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Sparschweinen — obere Grenze. */
+  PIGGY_INTERVAL_MAX_SECONDS: 40,
+  /** Sichtbarkeitsdauer (Sekunden) EINES Sparschweins, bevor es unbeklickt wieder verschwindet — untere Grenze. */
+  PIGGY_VISIBLE_MIN_SECONDS: 3,
+  /** Sichtbarkeitsdauer (Sekunden) EINES Sparschweins, bevor es unbeklickt wieder verschwindet — obere Grenze. */
+  PIGGY_VISIBLE_MAX_SECONDS: 4,
+  /** Vielfaches von activeEarn(state), das ein zerschlagenes Sparschwein als km-Bonus gewährt (skaliert automatisch mit Bike/Tuning, wie billAmount() über passiveEarn()). */
+  PIGGY_KM_BONUS_MULTIPLIER: 6,
+  /** Wahrscheinlichkeit (0–1), dass ein zerschlagenes Sparschwein zusätzlich ein Gear-Item dropt. */
+  GEAR_DROP_CHANCE_ON_PIGGY_SMASH: 0.22,
 };
 
 /**
@@ -463,6 +541,33 @@ function createInitialState() {
     combo: { count: 0, multiplier: 1, multiplierExpiresAt: null },
     /** Motorsound-Einstellungen (Web Audio, standardmässig AUS). */
     sound: { enabled: false, volume: 0.5 },
+
+    /* ── Phase D: MECHANIK A — Werkstattrechnungen + Insolvenz ─────
+     * Lebenszeit-Zähler (überleben jeden Saison-Reset) PLUS die aktuell
+     * fällige Rechnung (activeBill*, null falls keine offen) — wird
+     * persistiert, damit ein schnelles Neuladen eine noch laufende Frist
+     * nicht einfach verschwinden lässt (siehe idle.js). insolvencyFreeFlag
+     * startet true und wird bei einer Insolvenz auf false gesetzt; ein
+     * darauffolgender ERFOLGREICHER Saisonabschluss zählt dann NICHT als
+     * insolvenzfrei (siehe finishSeason/triggerInsolvency). */
+    finance: {
+      billsPaidOnTime: 0,
+      billsPaidLastSecond: 0,
+      insolvencies: 0,
+      seasonsInsolvencyFree: 0,
+      insolvencyFreeFlag: true,
+      activeBillAmount: null,
+      activeBillDueAt: null,
+      activeBillGraceSeconds: null,
+    },
+    /** Gesammelte Ausrüstungs-ids (siehe IDLE_GEAR_ITEMS/addGear) — permanent, überlebt Saison-Resets. */
+    gear: { collected: [] },
+
+    /* ── Phase E: MECHANIK B — Sparschweine zerschlagen ────────────
+     * Eigener, kleiner Namensraum (parallel zu finance/gear) — NUR ein
+     * Lebenszeit-Zähler, überlebt Saison-Resets (siehe finishSeason()),
+     * genutzt für die "10 Sparschweine zerschlagen"-Achievement. */
+    piggy: { smashedCount: 0 },
   };
 }
 
@@ -493,6 +598,57 @@ function migrateParts(raw, fresh) {
   var rp = raw && raw.parts && typeof raw.parts === 'object' ? raw.parts : {};
   return {
     collected: Array.isArray(rp.collected) ? rp.collected.filter(function (id) { return !!getPartById(id); }) : fresh.parts.collected.slice(),
+  };
+}
+
+/**
+ * Migriert das finance-Feld (Werkstattrechnungen/Insolvenz-Zähler + aktuell
+ * fällige Rechnung) defensiv. Lebenszeit-Zähler und die aktuell fällige
+ * Rechnung (activeBill*, siehe createInitialState) werden je einzeln aus
+ * raw übernommen, falls gültig getypt, sonst aus fresh übernommen.
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges finance-Objekt.
+ */
+function migrateFinance(raw, fresh) {
+  var rf = raw && raw.finance && typeof raw.finance === 'object' ? raw.finance : {};
+  return {
+    billsPaidOnTime: typeof rf.billsPaidOnTime === 'number' && rf.billsPaidOnTime >= 0 ? rf.billsPaidOnTime : fresh.finance.billsPaidOnTime,
+    billsPaidLastSecond: typeof rf.billsPaidLastSecond === 'number' && rf.billsPaidLastSecond >= 0 ? rf.billsPaidLastSecond : fresh.finance.billsPaidLastSecond,
+    insolvencies: typeof rf.insolvencies === 'number' && rf.insolvencies >= 0 ? rf.insolvencies : fresh.finance.insolvencies,
+    seasonsInsolvencyFree: typeof rf.seasonsInsolvencyFree === 'number' && rf.seasonsInsolvencyFree >= 0 ? rf.seasonsInsolvencyFree : fresh.finance.seasonsInsolvencyFree,
+    insolvencyFreeFlag: typeof rf.insolvencyFreeFlag === 'boolean' ? rf.insolvencyFreeFlag : fresh.finance.insolvencyFreeFlag,
+    activeBillAmount: typeof rf.activeBillAmount === 'number' && rf.activeBillAmount >= 0 ? rf.activeBillAmount : null,
+    activeBillDueAt: typeof rf.activeBillDueAt === 'number' ? rf.activeBillDueAt : null,
+    activeBillGraceSeconds: typeof rf.activeBillGraceSeconds === 'number' && rf.activeBillGraceSeconds > 0 ? rf.activeBillGraceSeconds : null,
+  };
+}
+
+/**
+ * Migriert das gear-Feld (gesammelte Ausrüstungs-ids) defensiv — unbekannte/
+ * ungültige ids werden verworfen (mirrors migrateParts()).
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges gear-Objekt.
+ */
+function migrateGear(raw, fresh) {
+  var rg = raw && raw.gear && typeof raw.gear === 'object' ? raw.gear : {};
+  return {
+    collected: Array.isArray(rg.collected) ? rg.collected.filter(function (id) { return !!getGearItemById(id); }) : fresh.gear.collected.slice(),
+  };
+}
+
+/**
+ * Migriert das piggy-Feld (Lebenszeit-Zähler zerschlagener Sparschweine)
+ * defensiv.
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges piggy-Objekt.
+ */
+function migratePiggy(raw, fresh) {
+  var rp = raw && raw.piggy && typeof raw.piggy === 'object' ? raw.piggy : {};
+  return {
+    smashedCount: typeof rp.smashedCount === 'number' && rp.smashedCount >= 0 ? rp.smashedCount : fresh.piggy.smashedCount,
   };
 }
 
@@ -560,6 +716,9 @@ function migrateState(raw) {
       enabled: typeof raw.sound.enabled === 'boolean' ? raw.sound.enabled : false,
       volume: typeof raw.sound.volume === 'number' && raw.sound.volume >= 0 && raw.sound.volume <= 1 ? raw.sound.volume : 0.5,
     } : fresh.sound,
+    finance: migrateFinance(raw, fresh),
+    gear: migrateGear(raw, fresh),
+    piggy: migratePiggy(raw, fresh),
   };
 
   if (state.ownedBikeIds.length === 0) state.ownedBikeIds = fresh.ownedBikeIds.slice();
@@ -925,20 +1084,30 @@ function canFinishSeason(state) {
  * state.stats.seasonHistory an. Reine Funktion — mutiert das übergebene
  * state NICHT, sondern gibt einen komplett neuen Zustand zurück (Aufrufer
  * in idle.js muss die lokale state-Referenz ersetzen + saveState()
- * aufrufen). Ist canFinishSeason(state) false, wird state UNVERÄNDERT
- * zurückgegeben (kein Reset, kein Effekt).
+ * aufrufen). Ist canFinishSeason(state) false UND opts.bypassEligibilityGate
+ * nicht true, wird state UNVERÄNDERT zurückgegeben (kein Reset, kein Effekt).
  * @param {Object} state - Zentraler Idle-Zustand vor dem Saisonabschluss.
+ * @param {{bypassEligibilityGate: boolean}} [opts] - Optionen. Bei
+ *   bypassEligibilityGate:true wird die ZX-10R-Zugangsschranke
+ *   übersprungen und der IDENTISCHE Reset/Erhalt-Ablauf trotzdem
+ *   ausgeführt — genutzt von triggerInsolvency() für eine Insolvenz VOR
+ *   Besitz der ZX-10R. Voll abwärtskompatibel: ohne opts (alle
+ *   bestehenden Aufrufstellen) verhält sich die Funktion exakt wie zuvor.
  * @returns {Object} Neuer, nach dem Saisonabschluss gültiger Idle-Zustand
  *   (oder das unveränderte state, falls (noch) nicht abschliessbar).
  */
-function finishSeason(state) {
-  if (!canFinishSeason(state)) return state;
+function finishSeason(state, opts) {
+  var bypassGate = !!(opts && opts.bypassEligibilityGate === true);
+  if (!bypassGate && !canFinishSeason(state)) return state;
 
   var earnedTrophies = trophiesForSeason(state);
   var fresh = createInitialState();
   var prevPrestige = state.prestige || fresh.prestige;
   var prevParts = state.parts || fresh.parts;
   var prevStats = state.stats || fresh.stats;
+  var prevGear = state.gear || fresh.gear;
+  var prevFinance = state.finance && typeof state.finance === 'object' ? state.finance : fresh.finance;
+  var prevPiggy = state.piggy && typeof state.piggy === 'object' ? state.piggy : fresh.piggy;
 
   fresh.totalKmEarned = typeof state.totalKmEarned === 'number' ? state.totalKmEarned : fresh.totalKmEarned;
 
@@ -949,8 +1118,32 @@ function finishSeason(state) {
     contracts: Array.isArray(prevPrestige.contracts) ? prevPrestige.contracts.slice() : [],
   };
   fresh.parts = { collected: Array.isArray(prevParts.collected) ? prevParts.collected.slice() : [] };
+  fresh.gear = { collected: Array.isArray(prevGear.collected) ? prevGear.collected.slice() : [] };
+  // Lebenszeit-Zähler, überlebt jeden Saison-Reset (identisches Muster zu finance-Lebenszeit-Zählern unten).
+  fresh.piggy = { smashedCount: typeof prevPiggy.smashedCount === 'number' ? prevPiggy.smashedCount : 0 };
   fresh.offline = state.offline && typeof state.offline === 'object' ? { lastSeenAt: state.offline.lastSeenAt } : fresh.offline;
   fresh.sound = state.sound && typeof state.sound === 'object' ? { enabled: state.sound.enabled, volume: state.sound.volume } : fresh.sound;
+
+  // finance: Lebenszeit-Zähler bleiben erhalten; eine noch offene Rechnung
+  // wird mit dem Reset hinfällig (activeBill* → null, egal ob freiwilliger
+  // Abschluss oder Insolvenz — die Saison, die sie ausgelöst hat, endet
+  // gerade). War insolvencyFreeFlag beim Abschluss noch true (diese Saison
+  // hatte KEINE Insolvenz), zählt das als "Saison ohne Insolvenz"
+  // (seasonsInsolvencyFree) — triggerInsolvency() setzt das Flag VOR
+  // diesem Aufruf bewusst auf false, damit eine insolvenz-ausgelöste
+  // Saison hier NICHT mitgezählt wird. Jede neue Saison startet wieder
+  // mit insolvencyFreeFlag:true.
+  var wasInsolvencyFree = prevFinance.insolvencyFreeFlag !== false;
+  fresh.finance = {
+    billsPaidOnTime: typeof prevFinance.billsPaidOnTime === 'number' ? prevFinance.billsPaidOnTime : 0,
+    billsPaidLastSecond: typeof prevFinance.billsPaidLastSecond === 'number' ? prevFinance.billsPaidLastSecond : 0,
+    insolvencies: typeof prevFinance.insolvencies === 'number' ? prevFinance.insolvencies : 0,
+    seasonsInsolvencyFree: (typeof prevFinance.seasonsInsolvencyFree === 'number' ? prevFinance.seasonsInsolvencyFree : 0) + (wasInsolvencyFree ? 1 : 0),
+    insolvencyFreeFlag: true,
+    activeBillAmount: null,
+    activeBillDueAt: null,
+    activeBillGraceSeconds: null,
+  };
 
   var historyEntry = { season: fresh.prestige.level, trophiesEarned: earnedTrophies, finishedAt: Date.now() };
   fresh.stats = {
@@ -1028,38 +1221,55 @@ function getPartById(partId) {
 }
 
 /**
- * Wählt anhand IDLE_BALANCE.PART_RARITY_WEIGHTS eine gewichtete
- * Seltenheitsstufe. Zufälligkeit wird als Parameter übergeben, damit die
- * Funktion deterministisch testbar bleibt.
+ * Wählt eine gewichtete Seltenheitsstufe anhand eines Gewichtungsobjekts
+ * (Seltenheitsstufe → relatives Gewicht). Zufälligkeit wird als Parameter
+ * übergeben, damit die Funktion deterministisch testbar bleibt. Optional
+ * pool-fähig (Standard IDLE_BALANCE.PART_RARITY_WEIGHTS — die 3 Teile-
+ * Sammlung-Stufen) — bestehende Aufrufstellen ohne zweites Argument
+ * verhalten sich exakt wie zuvor. Iteriert in Objekt-Einfügereihenfolge
+ * (z. B. common→rare→legendary), identisch zur ursprünglichen festen
+ * Reihenfolge.
  * @param {Function} rnd - Zufallsfunktion, liefert [0,1).
- * @returns {string} 'common'|'rare'|'legendary'.
+ * @param {Object} [weights] - Gewichtungsobjekt {seltenheit: gewicht, ...};
+ *   Standard IDLE_BALANCE.PART_RARITY_WEIGHTS.
+ * @returns {string} Gewählte Seltenheitsstufe (ein Schlüssel aus weights).
  */
-function pickWeightedRarity(rnd) {
-  var weights = IDLE_BALANCE.PART_RARITY_WEIGHTS;
-  var total = weights.common + weights.rare + weights.legendary;
+function pickWeightedRarity(rnd, weights) {
+  var w = weights || IDLE_BALANCE.PART_RARITY_WEIGHTS;
+  var keys = Object.keys(w);
+  var total = keys.reduce(function (sum, key) { return sum + w[key]; }, 0);
   var roll = rnd() * total;
-  if (roll < weights.common) return 'common';
-  if (roll < weights.common + weights.rare) return 'rare';
-  return 'legendary';
+  var acc = 0;
+  for (var i = 0; i < keys.length; i++) {
+    acc += w[keys[i]];
+    if (roll < acc) return keys[i];
+  }
+  return keys[keys.length - 1];
 }
 
 /**
- * Würfelt EINEN Teile-Drop (z. B. nach einer abgeschlossenen Runde):
- * zuerst, OB überhaupt ein Teil dropt (IDLE_BALANCE.PART_DROP_CHANCE_PER_
- * LAP), dann — falls ja — gewichtet WELCHE Seltenheitsstufe
- * (pickWeightedRarity), dann ein zufälliges Teil aus dieser Stufe.
- * Zufälligkeit wird als Parameter übergeben (Standard Math.random), damit
- * die Funktion deterministisch testbar bleibt (eine Fake-Funktion, die
- * eine vorgegebene Zahlenfolge zurückgibt, macht das Ergebnis exakt
- * reproduzierbar).
+ * Würfelt EINEN Sammel-Drop (Teil oder — via pool-Parameter — Ausrüstung,
+ * siehe IDLE_GEAR_ITEMS/rollGearDrop): zuerst, OB überhaupt etwas dropt
+ * (pool.chance), dann — falls ja — gewichtet WELCHE Seltenheitsstufe
+ * (pickWeightedRarity mit pool.weights), dann ein zufälliges Item aus
+ * dieser Stufe (pool.items). Zufälligkeit wird als Parameter übergeben
+ * (Standard Math.random), damit die Funktion deterministisch testbar
+ * bleibt. OHNE pool-Argument verhält sich die Funktion exakt wie zuvor:
+ * die Teile-Sammlung (IDLE_PARTS/PART_DROP_CHANCE_PER_LAP/PART_RARITY_
+ * WEIGHTS) — bestehende Aufrufstellen (idle.js onLapCompleted()) sind
+ * dadurch komplett unverändert.
  * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
- * @returns {string|null} id des gedroppten Teils, oder null (kein Drop).
+ * @param {{items: Object[], chance: number, weights: Object}} [pool] -
+ *   Optionaler Item-Pool; Standard {items: IDLE_PARTS, chance:
+ *   PART_DROP_CHANCE_PER_LAP, weights: PART_RARITY_WEIGHTS}.
+ * @returns {string|null} id des gedroppten Items, oder null (kein Drop).
  */
-function rollPartDrop(rng) {
+function rollPartDrop(rng, pool) {
   var rnd = typeof rng === 'function' ? rng : Math.random;
-  if (rnd() >= IDLE_BALANCE.PART_DROP_CHANCE_PER_LAP) return null;
-  var rarity = pickWeightedRarity(rnd);
-  var candidates = IDLE_PARTS.filter(function (p) { return p.rarity === rarity; });
+  var p = pool || { items: IDLE_PARTS, chance: IDLE_BALANCE.PART_DROP_CHANCE_PER_LAP, weights: IDLE_BALANCE.PART_RARITY_WEIGHTS };
+  if (rnd() >= p.chance) return null;
+  var rarity = pickWeightedRarity(rnd, p.weights);
+  var candidates = p.items.filter(function (item) { return item.rarity === rarity; });
   if (candidates.length === 0) return null;
   var idx = Math.floor(rnd() * candidates.length);
   if (idx >= candidates.length) idx = candidates.length - 1;
@@ -1080,53 +1290,498 @@ function ensurePartsState(state) {
 }
 
 /**
- * Fügt ein gedropptes Teil zum Zustand hinzu. Ist das Teil bereits
- * besessen (Dublette), wird stattdessen sein IDLE_BALANCE.PART_DUPLICATE_
- * KM_VALUE (je Seltenheitsstufe) als km gutgeschrieben (Dubletten→km-
- * Umwandlung) — die Sammlung selbst bleibt unverändert. Mutiert state.
+ * Fügt ein gedropptes Sammel-Item zum Zustand hinzu (Teil oder — via
+ * pool-Parameter — Ausrüstung, siehe IDLE_GEAR_ITEMS/addGear). Ist das
+ * Item bereits besessen (Dublette), wird stattdessen sein Dubletten-km-
+ * Wert (je Seltenheitsstufe) gutgeschrieben — die Sammlung selbst bleibt
+ * unverändert. Mutiert state. OHNE pool-Argument verhält sich die
+ * Funktion exakt wie zuvor: die Teile-Sammlung (state.parts.collected/
+ * IDLE_PARTS/PART_DUPLICATE_KM_VALUE) — bestehende Aufrufstellen sind
+ * dadurch komplett unverändert.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
- * @param {string} partId - id des gedropptes Teils (siehe rollPartDrop()).
+ * @param {string} itemId - id des gedroppten Items (siehe rollPartDrop()).
+ * @param {{collectionKey: string, items: Object[], getById: Function, dupValues: Object}} [pool] -
+ *   Optionaler Item-Pool.
  * @returns {{isNew: boolean, awardedKm: number, part: (Object|null)}} Ergebnis.
  */
-function addPart(state, partId) {
-  var part = getPartById(partId);
-  if (!part) return { isNew: false, awardedKm: 0, part: null };
-  ensurePartsState(state);
+function addPart(state, itemId, pool) {
+  if (!pool) {
+    var part = getPartById(itemId);
+    if (!part) return { isNew: false, awardedKm: 0, part: null };
+    ensurePartsState(state);
 
-  var alreadyOwned = state.parts.collected.indexOf(partId) !== -1;
-  if (alreadyOwned) {
-    var value = IDLE_BALANCE.PART_DUPLICATE_KM_VALUE[part.rarity] || 0;
-    creditKm(state, value);
-    return { isNew: false, awardedKm: value, part: part };
+    var alreadyOwnedPart = state.parts.collected.indexOf(itemId) !== -1;
+    if (alreadyOwnedPart) {
+      var valuePart = IDLE_BALANCE.PART_DUPLICATE_KM_VALUE[part.rarity] || 0;
+      creditKm(state, valuePart);
+      return { isNew: false, awardedKm: valuePart, part: part };
+    }
+
+    state.parts.collected.push(itemId);
+    return { isNew: true, awardedKm: 0, part: part };
   }
 
-  state.parts.collected.push(partId);
-  return { isNew: true, awardedKm: 0, part: part };
+  var item = pool.getById(itemId);
+  if (!item) return { isNew: false, awardedKm: 0, part: null };
+  if (!state[pool.collectionKey] || typeof state[pool.collectionKey] !== 'object' || !Array.isArray(state[pool.collectionKey].collected)) {
+    state[pool.collectionKey] = { collected: [] };
+  }
+  var collection = state[pool.collectionKey];
+  var alreadyOwned = collection.collected.indexOf(itemId) !== -1;
+  if (alreadyOwned) {
+    var value = pool.dupValues[item.rarity] || 0;
+    creditKm(state, value);
+    return { isNew: false, awardedKm: value, part: item };
+  }
+  collection.collected.push(itemId);
+  return { isNew: true, awardedKm: 0, part: item };
 }
 
 /**
- * Berechnet die aggregierten Set-Boni aus der aktuellen Teile-Sammlung:
- * für jedes IDLE_PART_SETS-Set, dessen 3 Teile ALLE besessen sind, zählt
- * dessen bonusPct dauerhaft zum Gesamtertrag. Reine Funktion — mutiert
- * state NICHT.
+ * Berechnet die aggregierten Set-Boni aus einer Sammlung: für jedes Set
+ * (pool.sets), dessen zugehörige Items ALLE besessen sind, zählt dessen
+ * bonusPct dauerhaft zum Gesamtertrag. Reine Funktion — mutiert state
+ * NICHT. OHNE pool-Argument verhält sich die Funktion exakt wie zuvor:
+ * die Teile-Sammlung (state.parts.collected/IDLE_PARTS/IDLE_PART_SETS) —
+ * bestehende Aufrufstellen sind dadurch komplett unverändert. Mit pool
+ * (z. B. für Ausrüstung, siehe gearBonuses()) wird state[pool.collectionKey]
+ * ausgewertet.
  * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {{collectionKey: string, items: Object[], sets: Object[]}} [pool] -
+ *   Optionaler Sammlungs-Pool.
  * @returns {{totalBonusMultiplier: number, totalBonusPct: number, completedSets: string[]}} Aggregierte Boni.
  */
-function setBonuses(state) {
-  var owned = state && state.parts && Array.isArray(state.parts.collected) ? state.parts.collected : [];
-  var completedSets = [];
-  var totalBonusPct = 0;
+function setBonuses(state, pool) {
+  if (!pool) {
+    var owned = state && state.parts && Array.isArray(state.parts.collected) ? state.parts.collected : [];
+    var completedSets = [];
+    var totalBonusPct = 0;
 
-  IDLE_PART_SETS.forEach(function (set) {
-    var partIds = IDLE_PARTS.filter(function (p) { return p.setId === set.id; }).map(function (p) { return p.id; });
-    var allOwned = partIds.length > 0 && partIds.every(function (id) { return owned.indexOf(id) !== -1; });
+    IDLE_PART_SETS.forEach(function (set) {
+      var partIds = IDLE_PARTS.filter(function (p) { return p.setId === set.id; }).map(function (p) { return p.id; });
+      var allOwned = partIds.length > 0 && partIds.every(function (id) { return owned.indexOf(id) !== -1; });
+      if (allOwned) {
+        completedSets.push(set.id);
+        totalBonusPct += set.bonusPct;
+      }
+    });
+
+    return { totalBonusMultiplier: 1 + totalBonusPct / 100, totalBonusPct: totalBonusPct, completedSets: completedSets };
+  }
+
+  var ownedItems = state && state[pool.collectionKey] && Array.isArray(state[pool.collectionKey].collected) ? state[pool.collectionKey].collected : [];
+  var completed = [];
+  var bonusPct = 0;
+  pool.sets.forEach(function (set) {
+    var ids = pool.items.filter(function (item) { return item.setId === set.id; }).map(function (item) { return item.id; });
+    var allOwned = ids.length > 0 && ids.every(function (id) { return ownedItems.indexOf(id) !== -1; });
     if (allOwned) {
-      completedSets.push(set.id);
-      totalBonusPct += set.bonusPct;
+      completed.push(set.id);
+      bonusPct += set.bonusPct;
     }
   });
+  return { totalBonusMultiplier: 1 + bonusPct / 100, totalBonusPct: bonusPct, completedSets: completed };
+}
 
-  return { totalBonusMultiplier: 1 + totalBonusPct / 100, totalBonusPct: totalBonusPct, completedSets: completedSets };
+/**
+ * Summiert den permanenten Pro-Item-Ertragsbonus (bonusPct) über alle
+ * aktuell besessenen Items eines Pools (z. B. Ausrüstung, siehe
+ * IDLE_GEAR_ITEMS/gearBonuses()). Die Teile-Sammlung hat keine bonusPct-
+ * Felder auf Item-Ebene (nur Set-Boni, siehe setBonuses()) — für sie
+ * liefert diese Funktion daher stets 0. Reine Funktion.
+ * @param {string[]} ownedIds - Besessene Item-ids.
+ * @param {Object[]} itemsPool - Pool aller möglichen Items ({id, bonusPct, ...}).
+ * @returns {number} Summierter bonusPct (>= 0).
+ */
+function itemBonusSum(ownedIds, itemsPool) {
+  if (!Array.isArray(ownedIds) || !Array.isArray(itemsPool)) return 0;
+  var byId = {};
+  itemsPool.forEach(function (item) { byId[item.id] = item; });
+  var sum = 0;
+  ownedIds.forEach(function (id) {
+    var item = byId[id];
+    if (item && typeof item.bonusPct === 'number') sum += item.bonusPct;
+  });
+  return sum;
+}
+
+/* ============================================================
+   AUSRÜSTUNG (GEAR) — feat(idle-gear)
+   Zweite, parallele Sammlung zur Teile-Sammlung (siehe oben), nutzt
+   dieselbe generalisierte Engine (rollPartDrop/addPart/setBonuses) wieder
+   — KEIN eigener Drop-/Dubletten-Algorithmus. 5 Kategorien × 4
+   Seltenheitsstufen (Gewöhnlich/Selten/Episch/Legendär), jedes Item
+   gewährt zusätzlich zum (wiederverwendeten) Set-Bonus einen PERMANENTEN
+   Pro-Item-Ertragsbonus (siehe itemBonusSum()/gearBonuses()).
+   ============================================================ */
+
+/**
+ * IDLE_GEAR_SETS — die 5 Ausrüstungs-Kategorien. Ist eine Kategorie
+ * komplett (alle 4 Seltenheitsstufen besessen, siehe setBonuses() mit
+ * IDLE_GEAR_POOL), gilt dessen bonusPct zusätzlich zum Pro-Item-Bonus
+ * (siehe gearBonuses()).
+ */
+var IDLE_GEAR_SETS = [
+  { id: 'helm', name: 'Helm', bonusPct: 4 },
+  { id: 'handschuhe', name: 'Handschuhe', bonusPct: 3 },
+  { id: 'lederkombi', name: 'Lederkombi', bonusPct: 5 },
+  { id: 'werkzeugkiste', name: 'Werkzeugkiste', bonusPct: 3 },
+  { id: 'pokal', name: 'Pokal', bonusPct: 6 },
+];
+
+/**
+ * Baut einen einzelnen IDLE_GEAR_ITEMS-Eintrag.
+ * @param {string} id - Eindeutige Ausrüstungs-id.
+ * @param {string} name - Anzeigename.
+ * @param {string} setId - id des zugehörigen IDLE_GEAR_SETS-Eintrags.
+ * @param {string} rarity - Seltenheitsstufe ('gewoehnlich'|'selten'|'episch'|'legendaer').
+ * @param {number} bonusPct - Permanenter Pro-Item-Ertragsbonus in Prozent (1–5, je Seltenheit).
+ * @returns {Object} Vollständiger IDLE_GEAR_ITEMS-Eintrag.
+ */
+function makeIdleGearItem(id, name, setId, rarity, bonusPct) {
+  return { id: id, name: name, setId: setId, rarity: rarity, bonusPct: bonusPct };
+}
+
+/**
+ * IDLE_GEAR_ITEMS — 20 Ausrüstungsteile = 5 Kategorien × 4 Seltenheitsstufen
+ * (gewoehnlich/selten/episch/legendaer), erspielbar über rollGearDrop()
+ * (z. B. beim Bezahlen einer Werkstattrechnung, siehe payBill()). Jedes
+ * Item gewährt +1–5% permanenten Ertragsbonus, je Seltenheitsstufe.
+ */
+var IDLE_GEAR_ITEMS = [
+  makeIdleGearItem('helm_gewoehnlich', 'Standard-Helm', 'helm', 'gewoehnlich', 1),
+  makeIdleGearItem('helm_selten', 'Sport-Helm', 'helm', 'selten', 2),
+  makeIdleGearItem('helm_episch', 'Carbon-Renn-Helm', 'helm', 'episch', 3),
+  makeIdleGearItem('helm_legendaer', 'Meister-Helm', 'helm', 'legendaer', 5),
+
+  makeIdleGearItem('handschuhe_gewoehnlich', 'Stoff-Handschuhe', 'handschuhe', 'gewoehnlich', 1),
+  makeIdleGearItem('handschuhe_selten', 'Leder-Handschuhe', 'handschuhe', 'selten', 2),
+  makeIdleGearItem('handschuhe_episch', 'Renn-Handschuhe', 'handschuhe', 'episch', 3),
+  makeIdleGearItem('handschuhe_legendaer', 'Meister-Handschuhe', 'handschuhe', 'legendaer', 5),
+
+  makeIdleGearItem('lederkombi_gewoehnlich', 'Einteiler-Kombi', 'lederkombi', 'gewoehnlich', 1),
+  makeIdleGearItem('lederkombi_selten', 'Sport-Lederkombi', 'lederkombi', 'selten', 2),
+  makeIdleGearItem('lederkombi_episch', 'Renn-Lederkombi', 'lederkombi', 'episch', 3),
+  makeIdleGearItem('lederkombi_legendaer', 'Meister-Lederkombi', 'lederkombi', 'legendaer', 5),
+
+  makeIdleGearItem('werkzeugkiste_gewoehnlich', 'Basis-Werkzeugkiste', 'werkzeugkiste', 'gewoehnlich', 1),
+  makeIdleGearItem('werkzeugkiste_selten', 'Profi-Werkzeugkiste', 'werkzeugkiste', 'selten', 2),
+  makeIdleGearItem('werkzeugkiste_episch', 'Werkstatt-Komplettset', 'werkzeugkiste', 'episch', 3),
+  makeIdleGearItem('werkzeugkiste_legendaer', 'Meister-Werkzeugkiste', 'werkzeugkiste', 'legendaer', 5),
+
+  makeIdleGearItem('pokal_gewoehnlich', 'Bronze-Pokal', 'pokal', 'gewoehnlich', 1),
+  makeIdleGearItem('pokal_selten', 'Silber-Pokal', 'pokal', 'selten', 2),
+  makeIdleGearItem('pokal_episch', 'Gold-Pokal', 'pokal', 'episch', 3),
+  makeIdleGearItem('pokal_legendaer', 'Meister-Pokal', 'pokal', 'legendaer', 5),
+];
+
+/**
+ * Findet ein Ausrüstungsteil anhand seiner id.
+ * @param {string} gearId - id des Ausrüstungsteils.
+ * @returns {Object|null} Eintrag aus IDLE_GEAR_ITEMS, oder null.
+ */
+function getGearItemById(gearId) {
+  for (var i = 0; i < IDLE_GEAR_ITEMS.length; i++) {
+    if (IDLE_GEAR_ITEMS[i].id === gearId) return IDLE_GEAR_ITEMS[i];
+  }
+  return null;
+}
+
+/**
+ * Wiederverwendbarer Pool für die generalisierten Engine-Funktionen
+ * (rollPartDrop/addPart/setBonuses, siehe oben) — die GEAR-Sammlung lebt
+ * unter state.gear.collected, komplett getrennt von state.parts.collected.
+ */
+var IDLE_GEAR_POOL = {
+  collectionKey: 'gear',
+  items: IDLE_GEAR_ITEMS,
+  sets: IDLE_GEAR_SETS,
+  getById: getGearItemById,
+  weights: IDLE_BALANCE.GEAR_RARITY_WEIGHTS,
+  dupValues: IDLE_BALANCE.GEAR_DUPLICATE_KM_VALUE,
+};
+
+/**
+ * Würfelt EINEN Ausrüstungs-Drop (wrapped rollPartDrop() mit IDLE_GEAR_POOL).
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @param {number} [chance] - Drop-Wahrscheinlichkeit (0–1); Standard IDLE_BALANCE.GEAR_DROP_CHANCE_ON_BILL_PAY.
+ * @returns {string|null} id des gedroppten Ausrüstungsteils, oder null (kein Drop).
+ */
+function rollGearDrop(rng, chance) {
+  var c = typeof chance === 'number' ? chance : IDLE_BALANCE.GEAR_DROP_CHANCE_ON_BILL_PAY;
+  return rollPartDrop(rng, { items: IDLE_GEAR_POOL.items, chance: c, weights: IDLE_GEAR_POOL.weights });
+}
+
+/**
+ * Fügt ein gedropptes Ausrüstungsteil zum Zustand hinzu (wrapped addPart()
+ * mit IDLE_GEAR_POOL) — neu → state.gear.collected, Dublette → km (siehe
+ * IDLE_BALANCE.GEAR_DUPLICATE_KM_VALUE).
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {string} gearId - id des gedroppten Ausrüstungsteils.
+ * @returns {{isNew: boolean, awardedKm: number, part: (Object|null)}} Ergebnis.
+ */
+function addGear(state, gearId) {
+  return addPart(state, gearId, IDLE_GEAR_POOL);
+}
+
+/**
+ * Aggregiert ALLE GEAR-Boni (siehe IDLE_GEAR_ITEMS/IDLE_GEAR_SETS): den
+ * permanenten Pro-Item-Bonus (itemBonusSum über alle besessenen Items)
+ * PLUS den Set-Vervollständigungs-Bonus (setBonuses() mit IDLE_GEAR_POOL).
+ * Reine Funktion — mutiert state NICHT. Wird zusammen mit contractEffects()
+ * und dem Teile-setBonuses() in den Gesamt-Ertragsmultiplikator eingerechnet
+ * (siehe idle.js totalEarnMultiplier()/idle-core.js offlineEarn()).
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {{totalBonusMultiplier: number, itemBonusPct: number, setBonusPct: number, completedSets: string[]}} Aggregierte Gear-Boni.
+ */
+function gearBonuses(state) {
+  var owned = state && state.gear && Array.isArray(state.gear.collected) ? state.gear.collected : [];
+  var itemPct = itemBonusSum(owned, IDLE_GEAR_ITEMS);
+  var setResult = setBonuses(state, IDLE_GEAR_POOL);
+  var totalPct = itemPct + setResult.totalBonusPct;
+  return {
+    totalBonusMultiplier: 1 + totalPct / 100,
+    itemBonusPct: itemPct,
+    setBonusPct: setResult.totalBonusPct,
+    completedSets: setResult.completedSets,
+  };
+}
+
+/* ============================================================
+   WERKSTATTRECHNUNGEN + INSOLVENZ (MECHANIK A) — feat(idle-bills)
+   Alle nextBillIntervalSeconds() Sekunden droht eine Werkstattrechnung,
+   deren Betrag sich automatisch aus dem aktuellen Passivertrag ableitet
+   (billAmount()) — ein aufmerksamer Spieler erwirtschaftet sie praktisch
+   von selbst. Bleibt sie unbezahlt, ist die Folge KEINE Strafe, sondern
+   eine Insolvenz: ein normaler, nicht-punitiver Saison-Reset (identische
+   Semantik wie ein freiwilliger Saisonabschluss, siehe finishSeason()
+   oben, nur ohne dessen ZX-10R-Zugangsschranke).
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.finance ein gültiges Objekt ist (defensiv, für
+ * Zustände, die nicht über createInitialState()/migrateState() gelaufen
+ * sind).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensureFinanceState(state) {
+  if (!state.finance || typeof state.finance !== 'object') {
+    state.finance = {
+      billsPaidOnTime: 0,
+      billsPaidLastSecond: 0,
+      insolvencies: 0,
+      seasonsInsolvencyFree: 0,
+      insolvencyFreeFlag: true,
+      activeBillAmount: null,
+      activeBillDueAt: null,
+      activeBillGraceSeconds: null,
+    };
+  }
+}
+
+/**
+ * Würfelt das Zufallsintervall (Sekunden) bis zur nächsten fälligen
+ * Werkstattrechnung, zwischen IDLE_BALANCE.BILL_INTERVAL_MIN_SECONDS und
+ * BILL_INTERVAL_MAX_SECONDS — beide schrumpfen mit dem Saison-Fortschritt
+ * (trophiesForSeason(state)), niemals unter BILL_INTERVAL_FLOOR_SECONDS.
+ * Ein fortgeschrittener Spieler bekommt Rechnungen dadurch spürbar
+ * häufiger. Zufälligkeit wird als Parameter übergeben, damit die Funktion
+ * deterministisch testbar bleibt.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zur nächsten Werkstattrechnung.
+ */
+function nextBillIntervalSeconds(state, randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var progress = trophiesForSeason(state);
+  var shrink = progress * IDLE_BALANCE.BILL_INTERVAL_SHRINK_PER_TROPHY_SECONDS;
+  var floor = IDLE_BALANCE.BILL_INTERVAL_FLOOR_SECONDS;
+  var min = Math.max(floor, IDLE_BALANCE.BILL_INTERVAL_MIN_SECONDS - shrink);
+  var max = Math.max(min, IDLE_BALANCE.BILL_INTERVAL_MAX_SECONDS - shrink);
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Würfelt die Länge (Sekunden) des sichtbaren Zahlungsfensters (Countdown)
+ * EINER fällig gewordenen Werkstattrechnung, zwischen IDLE_BALANCE.
+ * BILL_GRACE_MIN_SECONDS und BILL_GRACE_MAX_SECONDS.
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden Zahlungsfenster.
+ */
+function billGraceSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.BILL_GRACE_MIN_SECONDS;
+  var max = IDLE_BALANCE.BILL_GRACE_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Berechnet den Betrag (in km) der aktuell fälligen Werkstattrechnung.
+ * Leitet sich direkt aus dem aktuellen Passivertrag ab (passiveEarn()),
+ * hochgerechnet auf die durchschnittliche Fensterlänge und mit einem
+ * kleinen Sicherheits-Faktor versehen (IDLE_BALANCE.BILL_AMOUNT_SAFETY_
+ * FACTOR) — skaliert dadurch automatisch mit besessenen/getunten Bikes,
+ * OHNE eigene, parallele Balancing-Formel: ein aufmerksamer Spieler, der
+ * das Zahlungsfenster nutzt, erwirtschaftet die Rechnung praktisch von
+ * selbst. Reine Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Betrag in km (>= IDLE_BALANCE.BILL_AMOUNT_MIN_KM).
+ */
+function billAmount(state) {
+  var avgGrace = (IDLE_BALANCE.BILL_GRACE_MIN_SECONDS + IDLE_BALANCE.BILL_GRACE_MAX_SECONDS) / 2;
+  var raw = passiveEarn(state, avgGrace) * IDLE_BALANCE.BILL_AMOUNT_SAFETY_FACTOR;
+  return Math.max(IDLE_BALANCE.BILL_AMOUNT_MIN_KM, Math.round(raw));
+}
+
+/**
+ * Bezahlt die aktuell fällige Werkstattrechnung: zieht billAmount(state)
+ * km ab (schlägt fehl — success:false, KEINE Mutation —, falls nicht
+ * genug km vorhanden sind), gewährt dafür einen kleinen Bonus
+ * (IDLE_BALANCE.BILL_PAY_BONUS_FRACTION des bezahlten Betrags, als km
+ * gutgeschrieben) UND würfelt eine Chance auf einen Gear-Drop (siehe
+ * rollGearDrop()/addGear()). Zählt die Zahlung in state.finance.
+ * billsPaidOnTime (und optional billsPaidLastSecond). Mutiert state bei
+ * Erfolg.
+ * @param {Object} state - Zentraler Idle-Zustand (wird bei Erfolg mutiert).
+ * @param {boolean} [onTime] - true, falls rechtzeitig bezahlt (zählt zu
+ *   finance.billsPaidOnTime); Standard true.
+ * @param {boolean} [lastSecond] - true, falls die Zahlung innerhalb von
+ *   IDLE_BALANCE.BILL_LAST_SECOND_THRESHOLD_SECONDS Restzeit erfolgte
+ *   (zählt zusätzlich zu finance.billsPaidLastSecond).
+ * @param {Function} [rng] - Zufallsfunktion für den Gear-Drop-Roll; Standard Math.random.
+ * @returns {{success: boolean, amount: number, bonusKm: number, gearResult: (Object|null)}} Ergebnis.
+ */
+function payBill(state, onTime, lastSecond, rng) {
+  var amount = billAmount(state);
+  if (!state || state.km < amount) return { success: false, amount: amount, bonusKm: 0, gearResult: null };
+
+  state.km -= amount;
+  var bonusKm = Math.round(amount * IDLE_BALANCE.BILL_PAY_BONUS_FRACTION);
+  creditKm(state, bonusKm);
+
+  ensureFinanceState(state);
+  if (onTime !== false) state.finance.billsPaidOnTime += 1;
+  if (lastSecond) state.finance.billsPaidLastSecond += 1;
+
+  var gearResult = null;
+  var gearId = rollGearDrop(rng);
+  if (gearId) gearResult = addGear(state, gearId);
+
+  return { success: true, amount: amount, bonusKm: bonusKm, gearResult: gearResult };
+}
+
+/**
+ * MECHANIK A — Insolvenz: ein normaler, NICHT-punitiver Saison-Reset,
+ * ausgelöst durch eine unbezahlt abgelaufene Werkstattrechnung. Ruft
+ * finishSeason(state, {bypassEligibilityGate:true}) auf — identische
+ * Reset-/Erhalt-Semantik wie ein freiwilliger Saisonabschluss (Trophäen
+ * nach aktuellem Fortschritt, Werksverträge/Teile/Gear/Statistiken
+ * bleiben erhalten), nur OHNE die ZX-10R-Zugangsschranke — eine Insolvenz
+ * kann so auch früh in einer Saison stattfinden. Markiert VOR dem Reset
+ * state.finance.insolvencyFreeFlag als false (diese Saison hatte eine
+ * Insolvenz, siehe finishSeason()'s seasonsInsolvencyFree-Logik) und
+ * zählt insolvencies hoch. state wird direkt danach durch den
+ * Rückgabewert ersetzt (Aufrufer-Muster identisch zu finishSeason()).
+ * @param {Object} state - Zentraler Idle-Zustand vor der Insolvenz.
+ * @returns {Object} Neuer, nach dem Reset gültiger Idle-Zustand.
+ */
+function triggerInsolvency(state) {
+  ensureFinanceState(state);
+  state.finance.insolvencyFreeFlag = false;
+  var next = finishSeason(state, { bypassEligibilityGate: true });
+  next.finance.insolvencies = (next.finance.insolvencies || 0) + 1;
+  return next;
+}
+
+/* ============================================================
+   SPARSCHWEINE ZERSCHLAGEN (MECHANIK B) — feat(idle-piggybanks)
+   Alle nextPiggyIntervalSeconds() Sekunden (flach, 20–40s) erscheint ein
+   Sparschwein (DOM-Overlay, siehe idle.js), das für piggyVisibleSeconds()
+   Sekunden (3–4s) klickbar ist. Ein rechtzeitiger Klick zerschlägt es
+   (smashPiggybank()): ein km-Bonus PLUS eine Chance auf einen Gear-Drop
+   (dieselbe generalisierte Engine wie payBill(), siehe rollGearDrop()/
+   addGear()). Verpasst/unbeklickt abgelaufen ist KEINE Strafe — identisches
+   Muster zur Schaltpunkt-Leiste (tickShift()/endShift(..., true)).
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.piggy ein gültiges Objekt ist (defensiv, für
+ * Zustände, die nicht über createInitialState()/migrateState() gelaufen
+ * sind).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensurePiggyState(state) {
+  if (!state.piggy || typeof state.piggy !== 'object') {
+    state.piggy = { smashedCount: 0 };
+  }
+}
+
+/**
+ * Würfelt das Zufallsintervall (Sekunden) bis zum nächsten erscheinenden
+ * Sparschwein, zwischen IDLE_BALANCE.PIGGY_INTERVAL_MIN_SECONDS und
+ * PIGGY_INTERVAL_MAX_SECONDS (flach, wächst NICHT mit dem Saison-Fortschritt
+ * — anders als nextBillIntervalSeconds()). Zufälligkeit wird als Parameter
+ * übergeben, damit die Funktion deterministisch testbar bleibt.
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zum nächsten Sparschwein.
+ */
+function nextPiggyIntervalSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.PIGGY_INTERVAL_MIN_SECONDS;
+  var max = IDLE_BALANCE.PIGGY_INTERVAL_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Würfelt die Sichtbarkeitsdauer (Sekunden) EINES erschienenen Sparschweins,
+ * zwischen IDLE_BALANCE.PIGGY_VISIBLE_MIN_SECONDS und PIGGY_VISIBLE_MAX_SECONDS,
+ * bevor es unbeklickt wieder verschwindet.
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden Sichtbarkeit.
+ */
+function piggyVisibleSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.PIGGY_VISIBLE_MIN_SECONDS;
+  var max = IDLE_BALANCE.PIGGY_VISIBLE_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Berechnet die Belohnung für EIN zerschlagenes Sparschwein: einen km-Bonus
+ * (ein Vielfaches von activeEarn(state), skaliert dadurch automatisch mit
+ * Bike/Tuning wie billAmount() über passiveEarn() — KEINE eigene, parallele
+ * Balancing-Formel) PLUS eine gewürfelte Chance auf einen Gear-Drop
+ * (wiederverwendet rollGearDrop()/IDLE_GEAR_POOL, siehe payBill()). Reine
+ * Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {Function} [rng] - Zufallsfunktion für den Gear-Drop-Roll; Standard Math.random.
+ * @returns {{kmBonus: number, gearId: (string|null)}} Berechnete Belohnung.
+ */
+function piggybankReward(state, rng) {
+  var kmBonus = Math.round(activeEarn(state) * IDLE_BALANCE.PIGGY_KM_BONUS_MULTIPLIER);
+  var gearId = rollGearDrop(rng, IDLE_BALANCE.GEAR_DROP_CHANCE_ON_PIGGY_SMASH);
+  return { kmBonus: kmBonus, gearId: gearId };
+}
+
+/**
+ * Zerschlägt ein Sparschwein: berechnet + verbucht dessen Belohnung
+ * (piggybankReward()) — gutschreibt den km-Bonus, fügt einen eventuellen
+ * Gear-Drop hinzu (siehe addGear()) — und zählt state.piggy.smashedCount
+ * (Lebenszeit-Zähler, überlebt Saison-Resets, siehe finishSeason()) hoch.
+ * Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {Function} [rng] - Zufallsfunktion für den Gear-Drop-Roll; Standard Math.random.
+ * @returns {{kmBonus: number, gearResult: (Object|null), smashedCount: number}} Ergebnis.
+ */
+function smashPiggybank(state, rng) {
+  ensurePiggyState(state);
+  var reward = piggybankReward(state, rng);
+  creditKm(state, reward.kmBonus);
+  var gearResult = reward.gearId ? addGear(state, reward.gearId) : null;
+  state.piggy.smashedCount += 1;
+  return { kmBonus: reward.kmBonus, gearResult: gearResult, smashedCount: state.piggy.smashedCount };
 }
 
 /* ============================================================
@@ -1139,10 +1794,10 @@ function setBonuses(state) {
  * SECONDS (4h) — verdoppelt auf 8h durch den "Offline-Ertrag
  * verdoppelt"-Werksvertrag (siehe contractEffects().offlineCapMultiplier).
  * Wendet denselben Ertrags-Multiplikator (Werksverträge + Prestige-Level)
- * UND die Teile-Set-Boni an wie der normale Passivertrag — NICHT jedoch
- * den Schaltpunkt-Combo-Multiplikator (der ist an Live-Interaktion
- * gebunden und daher offline nie aktiv). Reine Funktion — mutiert state
- * NICHT.
+ * UND die Teile-Set-Boni UND die GEAR-Boni (Pro-Item + Set, siehe
+ * gearBonuses()) an wie der normale Passivertrag — NICHT jedoch den
+ * Schaltpunkt-Combo-Multiplikator (der ist an Live-Interaktion gebunden
+ * und daher offline nie aktiv). Reine Funktion — mutiert state NICHT.
  * @param {Object} state - Zentraler Idle-Zustand.
  * @param {number} awaySeconds - Verstrichene Abwesenheitszeit in Sekunden (>= 0).
  * @returns {number} Gutzuschreibende km (>= 0).
@@ -1152,8 +1807,9 @@ function offlineEarn(state, awaySeconds) {
   var effects = contractEffects(state);
   var cap = IDLE_BALANCE.OFFLINE_CAP_SECONDS * effects.offlineCapMultiplier;
   var cappedSeconds = Math.min(awaySeconds, cap);
-  var bonus = setBonuses(state).totalBonusMultiplier;
-  return passiveEarn(state, cappedSeconds) * IDLE_BALANCE.OFFLINE_EARN_FRACTION * effects.earnMultiplier * bonus;
+  var partsBonus = setBonuses(state).totalBonusMultiplier;
+  var gearBonus = gearBonuses(state).totalBonusMultiplier;
+  return passiveEarn(state, cappedSeconds) * IDLE_BALANCE.OFFLINE_EARN_FRACTION * effects.earnMultiplier * partsBonus * gearBonus;
 }
 
 /* ============================================================
@@ -1260,6 +1916,30 @@ var IdleCore = {
   rollPartDrop: rollPartDrop,
   addPart: addPart,
   setBonuses: setBonuses,
+  itemBonusSum: itemBonusSum,
+
+  /* ── Phase D: Ausrüstung (GEAR) — feat(idle-gear) ─────────────────── */
+  IDLE_GEAR_SETS: IDLE_GEAR_SETS,
+  IDLE_GEAR_ITEMS: IDLE_GEAR_ITEMS,
+  getGearItemById: getGearItemById,
+  rollGearDrop: rollGearDrop,
+  addGear: addGear,
+  gearBonuses: gearBonuses,
+
+  /* ── Phase D: MECHANIK A — Werkstattrechnungen + Insolvenz ────────── */
+  ensureFinanceState: ensureFinanceState,
+  nextBillIntervalSeconds: nextBillIntervalSeconds,
+  billGraceSeconds: billGraceSeconds,
+  billAmount: billAmount,
+  payBill: payBill,
+  triggerInsolvency: triggerInsolvency,
+
+  /* ── Phase E: MECHANIK B — Sparschweine zerschlagen — feat(idle-piggybanks) ── */
+  ensurePiggyState: ensurePiggyState,
+  nextPiggyIntervalSeconds: nextPiggyIntervalSeconds,
+  piggyVisibleSeconds: piggyVisibleSeconds,
+  piggybankReward: piggybankReward,
+  smashPiggybank: smashPiggybank,
 
   /* ── Phase C: Offline-Ertrag ──────────────────────────────────────── */
   offlineEarn: offlineEarn,
