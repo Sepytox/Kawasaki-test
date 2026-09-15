@@ -77,12 +77,29 @@ function safeWriteJSON(key, value) {
 }
 
 /**
+ * Liefert die api-client.js-Bridge, falls verfügbar (window.ApiClient im
+ * Browser, sonst per require() im Node-Testkontext) — siehe api-client.js
+ * für die Begründung dieser Bridge. Liefert null, falls beides fehlschlägt
+ * (dann greift der rohe safeReadJSON/safeWriteJSON-Fallback).
+ * @returns {Object|null} ApiClient-API oder null.
+ */
+function getApiClient() {
+  if (typeof window !== 'undefined' && window.ApiClient) return window.ApiClient;
+  if (typeof globalThis !== 'undefined' && globalThis.ApiClient) return globalThis.ApiClient;
+  try {
+    if (typeof require === 'function') return require('./api-client.js');
+  } catch (e) { /* kein api-client.js verfügbar — Fallback greift */ }
+  return null;
+}
+
+/**
  * Liest das aktuelle Statistik-Objekt aus localStorage, ergänzt um
  * fehlende Standardfelder (robust gegen ältere/teilweise Datensätze).
  * @returns {Object} Vollständiges Statistik-Objekt.
  */
 function getStats() {
-  var stored = safeReadJSON(STATS_KEY, {});
+  var api = getApiClient();
+  var stored = (api && typeof api.getStats === 'function') ? api.getStats() : safeReadJSON(STATS_KEY, {});
   var defaults = getDefaultStats();
   var merged = Object.assign({}, defaults, stored);
   merged.wheelResultCounts = Object.assign({}, defaults.wheelResultCounts, stored.wheelResultCounts || {});
@@ -97,7 +114,9 @@ function getStats() {
  */
 function saveStats(stats) {
   stats.lastUpdated = new Date().toISOString();
-  safeWriteJSON(STATS_KEY, stats);
+  var api = getApiClient();
+  if (api && typeof api.recordStat === 'function') api.recordStat(stats);
+  else safeWriteJSON(STATS_KEY, stats);
   return stats;
 }
 
@@ -234,6 +253,8 @@ function getMostViewedBike() {
  * @returns {Object<string, string>} Map Seiten-Schlüssel → ISO-Zeitstempel.
  */
 function getVisitedPages() {
+  var api = getApiClient();
+  if (api && typeof api.getVisitedPages === 'function') return api.getVisitedPages();
   return safeReadJSON(VISITED_PAGES_KEY, {});
 }
 
