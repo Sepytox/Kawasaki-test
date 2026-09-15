@@ -186,7 +186,7 @@ section('6. Deutsche Titel & Überschriften (Mängelliste 6.1–6.5)');
     const html = read(file);
     assert(!html.includes(oldText), `${file} enthält die alte englische Überschrift "${oldText}" nicht mehr`);
     assert(html.includes(newText), `${file} enthält die deutsche Überschrift "${newText}"`);
-    assert(/<title>[^<]*\|\s*Vrooooom<\/title>/.test(html), `${file} hat einen Titel mit Vrooooom-Suffix`);
+    assert(/<title>[^<]*\|\s*Kawasaki<\/title>/.test(html), `${file} hat einen Titel mit Kawasaki-Suffix`);
   });
 }
 

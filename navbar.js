@@ -119,7 +119,7 @@
         var badgeHiddenAttr = favCount > 0 ? '' : ' hidden';
 
         return (
-            '<a class="brand" href="index.html">🏍️ Vrooooom</a>' +
+            '<a class="brand" href="index.html">🏍️ Kawasaki</a>' +
             '<button type="button" class="nav-burger" id="navBurger" aria-label="Menü öffnen" aria-expanded="false" aria-controls="siteNavLinks">' +
                 '<span></span><span></span><span></span>' +
             '</button>' +
