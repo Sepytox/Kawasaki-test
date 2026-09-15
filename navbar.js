@@ -74,12 +74,20 @@
     }
 
     /**
-     * Liest die aktuelle Favoriten-Anzahl rein lesend aus localStorage.
+     * Liest die aktuelle Favoriten-Anzahl rein lesend aus localStorage
+     * (via api-client.js ApiClient.getFavorites(), sofern auf der Seite
+     * geladen — auf den 6 bearbeitbaren Seiten der Fall; fällt sonst auf
+     * den rohen localStorage-Zugriff zurück, z. B. für den dynamischen
+     * Nachlade-Pfad auf soundcheck.html, das kein api-client.js einbindet).
      * Wirft nie einen Fehler (defensiv gegen fehlendes/korruptes Storage).
      * @returns {number} Anzahl gespeicherter Favoriten.
      */
     function readFavoritesCount() {
         try {
+            if (global.ApiClient && typeof global.ApiClient.getFavorites === 'function') {
+                var favs = global.ApiClient.getFavorites();
+                return Array.isArray(favs) ? favs.length : 0;
+            }
             var raw = global.localStorage.getItem(FAVORITES_KEY);
             var arr = raw ? JSON.parse(raw) : [];
             return Array.isArray(arr) ? arr.length : 0;
