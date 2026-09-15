@@ -225,10 +225,28 @@ function safeWriteJSON(key, value) {
 }
 
 /**
+ * Liefert die api-client.js-Bridge, falls verfügbar (window.ApiClient im
+ * Browser, sonst per require() im Node-Testkontext) — siehe api-client.js
+ * für die Begründung dieser Bridge. Liefert null, falls beides fehlschlägt
+ * (dann greift der rohe safeReadJSON/safeWriteJSON-Fallback).
+ * @returns {Object|null} ApiClient-API oder null.
+ */
+function getApiClient() {
+  if (typeof window !== 'undefined' && window.ApiClient) return window.ApiClient;
+  if (typeof globalThis !== 'undefined' && globalThis.ApiClient) return globalThis.ApiClient;
+  try {
+    if (typeof require === 'function') return require('./api-client.js');
+  } catch (e) { /* kein api-client.js verfügbar — Fallback greift */ }
+  return null;
+}
+
+/**
  * Liest die aktuelle Menge freigeschalteter Achievements.
  * @returns {Object<string, {at: string}>} Map Achievement-ID → Freischalt-Info.
  */
 function getUnlocked() {
+  var api = getApiClient();
+  if (api && typeof api.getAchievements === 'function') return api.getAchievements();
   return safeReadJSON(ACHIEVEMENTS_KEY, {});
 }
 
@@ -251,6 +269,8 @@ function isUnlocked(id) {
 function unlock(id) {
   var exists = ACHIEVEMENTS.some(function (a) { return a.id === id; });
   if (!exists) return false;
+  var api = getApiClient();
+  if (api && typeof api.unlockAchievement === 'function') return api.unlockAchievement(id);
   var unlocked = getUnlocked();
   if (Object.prototype.hasOwnProperty.call(unlocked, id)) return false;
   unlocked[id] = { at: new Date().toISOString() };
@@ -312,17 +332,21 @@ function buildContext(overrides) {
     visitedPageCount = globalThis.VroooomStats.getVisitedPageCount();
   }
 
+  var api = getApiClient();
+
   var favorites = [];
   try {
-    var rawFav = (typeof localStorage !== 'undefined' && localStorage) ? localStorage.getItem('vroooom_favorites') : null;
-    favorites = rawFav ? JSON.parse(rawFav) : [];
+    favorites = (api && typeof api.getFavorites === 'function')
+      ? api.getFavorites()
+      : ((typeof localStorage !== 'undefined' && localStorage) ? JSON.parse(localStorage.getItem('vroooom_favorites') || '[]') : []);
     if (!Array.isArray(favorites)) favorites = [];
   } catch (e) { favorites = []; }
 
   var reviews = {};
   try {
-    var rawRev = (typeof localStorage !== 'undefined' && localStorage) ? localStorage.getItem('vroooom_reviews') : null;
-    reviews = rawRev ? JSON.parse(rawRev) : {};
+    reviews = (api && typeof api.getAllReviews === 'function')
+      ? api.getAllReviews()
+      : ((typeof localStorage !== 'undefined' && localStorage) ? JSON.parse(localStorage.getItem('vroooom_reviews') || '{}') : {});
     if (!reviews || typeof reviews !== 'object') reviews = {};
   } catch (e) { reviews = {}; }
   var reviewsWritten = 0;
