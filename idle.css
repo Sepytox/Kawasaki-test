@@ -132,6 +132,55 @@
   opacity: 1;
 }
 
+/* ── Sparschwein (MECHANIK B) — feat(idle-piggybanks) ───────────────
+   DOM-Overlay über der Strecke (identisches Muster zu .idle-handover),
+   erscheint kurz an zufälliger Position (idle.js setzt left/top inline).
+   Rund + weicher Schatten + dezenter Akzent-Rahmen, passend zur übrigen
+   Karten-/Button-Optik (.idle-gas-btn, .idle-combo-badge). */
+.idle-piggy {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  margin-left: -26px;
+  margin-top: -26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 1.5em;
+  line-height: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full, 999px);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  z-index: 5;
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+  transition: opacity var(--dur-base, 0.25s) var(--ease-spring, ease),
+              transform var(--dur-base, 0.25s) var(--ease-spring, ease),
+              box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.idle-piggy.is-visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+.idle-piggy:hover {
+  box-shadow: var(--shadow-glow, var(--shadow-md));
+  transform: scale(1.06);
+}
+/* Kurzer, dezenter "Zerschlagen"-Effekt beim Klick — kein Comic-Overkill,
+   nur ein sanftes Ausblenden/Skalieren, bevor idle.js das Overlay despawnt. */
+.idle-piggy.is-smashed {
+  opacity: 0;
+  transform: scale(1.35) rotate(10deg);
+  pointer-events: none;
+  transition: opacity 220ms var(--ease-standard, ease),
+              transform 220ms var(--ease-standard, ease);
+}
+
 /* ── Tacho (Canvas) ──────────────────────────────────────────────── */
 .idle-tacho-wrap {
   aspect-ratio: 16 / 5;
@@ -903,4 +952,6 @@
   .idle-bill-progress-fill,
   .idle-bill-paid-stamp,
   .idle-insolvency-notice { transition: none; }
+  .idle-piggy,
+  .idle-piggy.is-smashed { transition: none; transform: none; }
 }

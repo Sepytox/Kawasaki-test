@@ -42,6 +42,11 @@
                     <div class="idle-track-wrap" id="idleTrackWrap">
                         <canvas id="idleTrackCanvas" class="idle-track-canvas" aria-label="Animierte Renn-Strecke"></canvas>
                         <div class="idle-handover" id="idleHandover" aria-live="polite"></div>
+
+                        <!-- Sparschwein (MECHANIK B, feat(idle-piggybanks)): erscheint kurz an
+                             zufälliger Position, Klick zerschlägt es (km-Bonus + Gear-Drop-Chance),
+                             unbeklickt verschwindet es wieder — keine Strafe. -->
+                        <button type="button" class="idle-piggy" id="idlePiggy" aria-hidden="true" tabindex="-1" aria-label="Sparschwein zerschlagen">🐷</button>
                     </div>
 
                     <!-- Tacho (Canvas): Halbkreis-Gauge, Nadel folgt der aktuellen Bike-Geschwindigkeit. -->
@@ -204,6 +209,7 @@
     <script src="theme-toggle.js"></script>
     <script src="settings.js"></script>
     <script src="scroll-reveal.js"></script>
+    <script src="achievements.js"></script>
     <script src="idle.js"></script>
 </body>
 </html>

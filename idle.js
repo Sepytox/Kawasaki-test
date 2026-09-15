@@ -93,6 +93,12 @@
   /** Anzeigedauer (ms) des Insolvenz-Hinweises, bevor er automatisch ausblendet. */
   var BILL_INSOLVENCY_NOTICE_MS = 5200;
 
+  /* ── Sparschweine zerschlagen (MECHANIK B) — feat(idle-piggybanks) ── */
+  /** Anzeigedauer (ms) des kurzen "Zerschlagen"-Effekts, bevor das Sparschwein despawnt. */
+  var PIGGY_SMASH_ANIM_MS = 220;
+  /** Rand-Puffer (% der Streckenbreite/-höhe), innerhalb dessen die zufällige Sparschwein-Position NICHT liegen darf (verhindert Anklebe-Positionen am Rand). */
+  var PIGGY_POSITION_MARGIN_PCT = 12;
+
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = IdleCore.loadState();
 
@@ -192,6 +198,13 @@
   /** Sekunden bis zur nächsten Schaltpunkt-Leiste (zufällig 15–30s, siehe idle-core.js). */
   var shiftTimerSeconds = IdleCore.nextShiftIntervalSeconds();
 
+  /* ── Sparschweine zerschlagen (MECHANIK B): Laufzeit-Zustand — NICHT
+     persistiert (mirrors shiftState), nur der Lebenszeit-Zähler
+     state.piggy.smashedCount lebt im persistierten Zustand. ── */
+  var piggyState = { active: false, elapsedSeconds: 0, visibleSeconds: 0 };
+  /** Sekunden bis zum nächsten erscheinenden Sparschwein (flach 20–40s, siehe idle-core.js). */
+  var piggyTimerSeconds = IdleCore.nextPiggyIntervalSeconds(Math.random);
+
   /**
    * Formatiert eine km-Zahl für die Anzeige (deutsches Zahlenformat,
    * abgerundet auf ganze km).
@@ -242,6 +255,26 @@
     var parts = IdleCore.setBonuses(state).totalBonusMultiplier;
     var gear = IdleCore.gearBonuses(state).totalBonusMultiplier;
     return combo * contract * parts * gear;
+  }
+
+  /**
+   * Ruft (falls achievements.js geladen ist, siehe idle.html) VroooomAchievements.
+   * checkNow() mit den aktuellen Idle-Racer-Zählerständen als Overrides auf —
+   * achievements.js selbst bleibt dabei bewusst idle-frei (siehe dessen
+   * buildContext()-Docblock), ALLE idle-spezifischen Werte kommen von hier.
+   * No-op, falls achievements.js nicht eingebunden ist.
+   * @returns {void}
+   */
+  function checkIdleAchievements() {
+    if (!window.VroooomAchievements) return;
+    window.VroooomAchievements.checkNow({
+      billsPaidOnTime: state.finance.billsPaidOnTime,
+      billsPaidLastSecond: state.finance.billsPaidLastSecond,
+      insolvenciesSurvived: state.finance.insolvencies,
+      piggybanksSmashed: state.piggy.smashedCount,
+      gearCompletedSets: IdleCore.gearBonuses(state).completedSets.length,
+      seasonsInsolvencyFree: state.finance.seasonsInsolvencyFree,
+    });
   }
 
   /**
@@ -1094,6 +1127,7 @@
       state = IdleCore.finishSeason(state);
       IdleCore.saveState(state);
       renderAll();
+      checkIdleAchievements();
     });
   }
 
@@ -1430,6 +1464,7 @@
     IdleCore.saveState(state);
     showInsolvencyNotice();
     renderAll();
+    checkIdleAchievements();
   }
 
   /**
@@ -1455,6 +1490,7 @@
       endBill();
       renderAll();
       IdleCore.saveState(state);
+      checkIdleAchievements();
     });
   }
 
@@ -1479,6 +1515,141 @@
     renderBillCountdown();
     if (billState.secondsRemaining <= 0) {
       handleInsolvency();
+    }
+  }
+
+  /* ============================================================
+     SPARSCHWEINE ZERSCHLAGEN (MECHANIK B) — feat(idle-piggybanks)
+     ============================================================ */
+
+  /**
+   * Zeigt einen kurzen Toast für ein zerschlagenes Sparschwein (km-Bonus).
+   * Nutzt denselben Toast-Container/dieselbe CSS-Klasse wie showPartToast()/
+   * showGearToast().
+   * @param {{kmBonus: number}} result - Ergebnis von IdleCore.smashPiggybank().
+   * @returns {void}
+   */
+  function showPiggyToast(result) {
+    var container = document.getElementById('idleToastContainer');
+    if (!container || !result) return;
+
+    var toast = document.createElement('div');
+    toast.className = 'idle-toast';
+    toast.textContent = '🐷 Sparschwein zerschlagen — +' + formatKm(result.kmBonus) + ' km';
+    container.appendChild(toast);
+
+    window.requestAnimationFrame(function () { toast.classList.add('is-visible'); });
+    setTimeout(function () {
+      toast.classList.remove('is-visible');
+      setTimeout(function () {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 400);
+    }, PART_TOAST_VISIBLE_MS);
+  }
+
+  /**
+   * Lässt ein neues Sparschwein an einer zufälligen Position innerhalb der
+   * Renn-Strecke erscheinen, für piggyVisibleSeconds() Sekunden klickbar.
+   * @returns {void}
+   */
+  function spawnPiggy() {
+    var el = document.getElementById('idlePiggy');
+    if (!el) return;
+
+    piggyState.active = true;
+    piggyState.elapsedSeconds = 0;
+    piggyState.visibleSeconds = IdleCore.piggyVisibleSeconds(Math.random);
+
+    var leftPct = PIGGY_POSITION_MARGIN_PCT + Math.random() * (100 - 2 * PIGGY_POSITION_MARGIN_PCT);
+    var topPct = PIGGY_POSITION_MARGIN_PCT + Math.random() * (100 - 2 * PIGGY_POSITION_MARGIN_PCT);
+    el.style.left = leftPct + '%';
+    el.style.top = topPct + '%';
+
+    el.classList.remove('is-smashed');
+    el.classList.add('is-visible');
+    el.setAttribute('aria-hidden', 'false');
+    el.tabIndex = 0;
+  }
+
+  /**
+   * Lässt das aktuell sichtbare Sparschwein wieder verschwinden (unbeklickt
+   * abgelaufen ODER kurz nach dem Zerschlagen-Effekt) und würfelt das
+   * Intervall bis zum nächsten Sparschwein neu. Ein unbeklickt despawntes
+   * Sparschwein ist KEINE Strafe — identisches Muster wie eine ignorierte
+   * Schaltpunkt-Leiste (endShift(..., true)).
+   * @returns {void}
+   */
+  function despawnPiggy() {
+    var el = document.getElementById('idlePiggy');
+    if (el) {
+      el.classList.remove('is-visible');
+      el.setAttribute('aria-hidden', 'true');
+      el.tabIndex = -1;
+    }
+    piggyState.active = false;
+    piggyTimerSeconds = IdleCore.nextPiggyIntervalSeconds(Math.random);
+  }
+
+  /**
+   * Zerschlägt das aktuell sichtbare Sparschwein: verbucht km-Bonus +
+   * eventuellen Gear-Drop (IdleCore.smashPiggybank()), zeigt die
+   * entsprechenden Toasts + einen kurzen, dezenten "Zerschlagen"-Effekt
+   * (respektiert prefers-reduced-motion via CSS) und despawnt danach.
+   * @returns {void}
+   */
+  function smashPiggy() {
+    if (!piggyState.active) return;
+    var el = document.getElementById('idlePiggy');
+
+    var result = IdleCore.smashPiggybank(state, Math.random);
+    IdleCore.saveState(state);
+
+    if (el) el.classList.add('is-smashed');
+    showPiggyToast(result);
+    if (result.gearResult && result.gearResult.part) {
+      renderGearPanel();
+      showGearToast(result.gearResult);
+    }
+    renderAll();
+    checkIdleAchievements();
+
+    setTimeout(despawnPiggy, reducedMotion ? 0 : PIGGY_SMASH_ANIM_MS);
+  }
+
+  /**
+   * Verdrahtet die Klick-/Tastatur-Interaktion (Enter/Leertaste) des
+   * Sparschweins.
+   * @returns {void}
+   */
+  function wirePiggyInteraction() {
+    var el = document.getElementById('idlePiggy');
+    if (!el) return;
+    el.addEventListener('click', smashPiggy);
+    el.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        smashPiggy();
+      }
+    });
+  }
+
+  /**
+   * EIN Game-Loop-Tick der Sparschweine: zählt entweder bis zum nächsten
+   * zufälligen Sparschwein herunter (spawnPiggy() bei Ablauf), oder lässt
+   * das sichtbare Sparschwein weiterlaufen und despawnt es unbeklickt
+   * (keine Strafe), sobald piggyVisibleSeconds() erreicht ist.
+   * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
+   * @returns {void}
+   */
+  function tickPiggy(dtSeconds) {
+    if (!piggyState.active) {
+      piggyTimerSeconds -= dtSeconds;
+      if (piggyTimerSeconds <= 0) spawnPiggy();
+      return;
+    }
+    piggyState.elapsedSeconds += dtSeconds;
+    if (piggyState.elapsedSeconds >= piggyState.visibleSeconds) {
+      despawnPiggy();
     }
   }
 
@@ -1592,6 +1763,7 @@
     updateEngineSound(info.stats.geschwindigkeitPct);
     tickShift(clampedDt);
     tickBill(clampedDt);
+    tickPiggy(clampedDt);
     updateComboBadge();
 
     window.requestAnimationFrame(tick);
@@ -1644,6 +1816,7 @@
     wireSoundControls();
     wireSeasonControls();
     wireBillPayButton();
+    wirePiggyInteraction();
     wireLifecycleSave();
     window.requestAnimationFrame(tick);
   }
