@@ -128,14 +128,29 @@ body {
   transition: background var(--dur-base) var(--ease-standard), color var(--dur-base) var(--ease-standard);
 }
 
-/* Display typography hierarchy: serif display stack, tight tracking, bold
-   weight for headlines (hero/section/card titles); body copy keeps the
-   readable sans stack set on <body> above. */
+/* Display typography hierarchy: geometrischer System-Sans-Stack (kein
+   Serif, Vercel-Stil), enge Laufweite, fette Schrift für Überschriften
+   (Hero/Section/Card-Titel); Fliesstext nutzt denselben Sans-Stack über
+   <body> oben. */
 h1, h2, h3, h4 {
   font-family: var(--font-display);
   font-weight: var(--fw-bold);
   letter-spacing: var(--ls-tight);
   line-height: var(--line-height-tight);
+}
+
+/* Monospace-Token für numerische Anzeigen (km-Zähler, PS/RPM, Preise) —
+   ein technisch anmutender, gut lesbarer Zahlen-Stil (Vercel-Signature).
+   Attribut-Selektoren decken die bestehenden Klassennamen quer über alle
+   Seiten ab, ohne dass jede Seite einzeln angefasst werden muss. */
+[class*="price"],
+[class*="stat-value"],
+[class*="km-value"],
+[class*="km-display"],
+.idle-km-value,
+.gallery-counter {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Visible keyboard focus for every interactive element (touch users are
