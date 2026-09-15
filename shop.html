@@ -918,9 +918,12 @@ const SHOP_BIKES = buildShopBikes(SHOP_BIKE_KEYS);
 
 // ==========================================
 // PARTS DATA
+// Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
+// (gilt für alle Preise in diesem PARTS-Array, inkl. der Auspuff-Einträge unten)
 // ==========================================
 const PARTS = [
     // EXHAUST
+    // Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
     { id:'akrapovic-slip', cat:'exhaust', name:'Akrapovic Slip-On', brand:'Akrapovic', price:899, psGain:5, weightSave:3, accelGain:0.1, torqueGain:4, desc:'Titan Slip-On mit markanter Sound-Steigerung. E-Prüfzeichen.', rating:5, popular:true, stars:'★★★★★' },
     { id:'yoshimura-race', cat:'exhaust', name:'Yoshimura Race', brand:'Yoshimura', price:1200, psGain:8, weightSave:5, accelGain:0.15, torqueGain:6, desc:'Volle Rennauspuff-Anlage aus Edelstahl. Nur für Trackday.', rating:4.5, stars:'★★★★½' },
     { id:'arrow-full', cat:'exhaust', name:'Arrow Full Exhaust', brand:'Arrow', price:1400, psGain:10, weightSave:6, accelGain:0.2, torqueGain:8, desc:'Komplettanlage mit Titan-Collector und Carbon-Endtopf.', rating:5, stars:'★★★★★' },
@@ -1252,6 +1255,8 @@ updateLiveSpecs();
 
 // ---- Extend SHOP_BIKES with color options ----
 // Standard colors for all bikes (3 included free, 2 metallic = +500 EUR each)
+// Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
+// (gilt für alle priceAdd-Werte in BIKE_COLORS_DEFAULT und BIKE_COLORS_OVERRIDE unten)
 const BIKE_COLORS_DEFAULT = [
     { name: 'Metallic Black',  hex: '#1a1a1a', priceAdd: 0 },
     { name: 'Pearl White',     hex: '#f8f8f8', priceAdd: 0 },
@@ -1315,6 +1320,7 @@ function getBikeColors(bikeKey) {
 }
 
 // Addon definitions (matches HTML checkboxes)
+// Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
 const MC_ADDONS = [
     { id: 'abs',         label: 'ABS',              emoji: '\ud83d\uded1', price: 800 },
     { id: 'quickshifter',label: 'Quickshifter',     emoji: '\u26a1',      price: 1200 },
