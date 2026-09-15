@@ -118,6 +118,12 @@
         var garageActiveClass = page === 'garage.html' ? ' active' : '';
         var badgeHiddenAttr = favCount > 0 ? '' : ' hidden';
 
+        // Rechter Aktions-Cluster: Warenkorb (reiner Platzhalter, siehe
+        // GOLDEN_PRINCIPLES/Recon — kein echter Warenkorb-State vorhanden),
+        // Login-Platzhalter ("Login folgt bald"-Dialog, siehe wireLogin())
+        // und der bestehende Theme-Toggle. Bleibt auf Mobile sichtbar neben
+        // Logo/Burger (kollabiert NICHT ins Burger-Menü, siehe design.css
+        // .nav-actions).
         return (
             '<a class="brand" href="index.html">🏍️ Kawasaki</a>' +
             '<button type="button" class="nav-burger" id="navBurger" aria-label="Menü öffnen" aria-expanded="false" aria-controls="siteNavLinks">' +
@@ -137,7 +143,12 @@
                     '<span class="garage-nav-badge" id="garageNavFavCount"' + badgeHiddenAttr + '>' + favCount + '</span>' +
                 '</a>' +
             '</div>' +
-            '<button type="button" class="theme-toggle" id="themeToggle" aria-label="Theme umschalten">☀️</button>'
+            '<div class="nav-actions" id="navActions">' +
+                '<a href="shop.html" class="nav-cart-link" id="navCartLink" aria-label="Warenkorb">' +
+                    '<span aria-hidden="true">🛒</span>' +
+                '</a>' +
+                '<button type="button" class="theme-toggle" id="themeToggle" aria-label="Theme umschalten">☀️</button>' +
+            '</div>'
         );
     }
 

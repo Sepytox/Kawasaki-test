@@ -278,7 +278,7 @@ summary:focus-visible,
 @media (max-width: 768px) {
   .nav-burger { display: flex; }
   .site-nav .brand { order: 1; }
-  .theme-toggle { order: 2; margin-left: 0.5rem; }
+  .nav-actions { order: 2; margin-left: 0.5rem; }
   .site-nav-links {
     order: 4;
     flex-basis: 100%;
@@ -462,9 +462,39 @@ summary:focus-visible,
   .nav-dropdown-trigger { width: 100%; padding: 0.65rem 0.6rem; }
 }
 
+/* ── Rechter Aktions-Cluster (Cart/Login/Theme-Toggle) ──────────
+   Full-Width-Bar: Logo links, Nav-Links mittig verteilt, dieser Cluster
+   immer rechtsbündig und (anders als .site-nav-links) NICHT ins
+   Burger-Menü kollabiert — bleibt auch auf Mobile sichtbar. */
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.nav-cart-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 1rem;
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard);
+}
+.nav-cart-link:hover,
+.nav-cart-link:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Theme toggle button in nav */
 .theme-toggle {
-  margin-left: auto;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
