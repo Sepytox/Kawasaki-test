@@ -10,6 +10,7 @@
     <script>(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
     <script src="bikes-data.js"></script>
     <script src="bike-image.js"></script>
+    <script src="api-client.js"></script>
     <style>
 /* PAGE */
         .shop-page { max-width:1200px;margin:0 auto;padding:1.5rem 1rem 4rem; }
@@ -1182,7 +1183,7 @@ function saveConfig() {
         savedAt: new Date().toISOString(),
         summary: { parts: selected.length, totalPS, totalCost }
     };
-    localStorage.setItem('kawasaki_shop_config', JSON.stringify(config));
+    window.ApiClient.setShopConfig(config);
     const btn = event.target;
     btn.textContent = '✅ Gespeichert!';
     setTimeout(() => { btn.textContent = '💾 Konfiguration speichern'; }, 2000);
@@ -1194,9 +1195,8 @@ function saveConfig() {
 }
 
 function loadConfig() {
-    const saved = localStorage.getItem('kawasaki_shop_config');
-    if (!saved) { alert('Keine gespeicherte Konfiguration gefunden.'); return; }
-    const config = JSON.parse(saved);
+    const config = window.ApiClient.getShopConfig();
+    if (!config) { alert('Keine gespeicherte Konfiguration gefunden.'); return; }
     currentBike = config.bike || 'zx10r';
     document.getElementById('bikeSelect').value = currentBike;
     selectedParts = new Set(config.parts || []);
@@ -1345,9 +1345,8 @@ function mcInit() {
 
     // Restore last configuration from localStorage
     try {
-        const saved = localStorage.getItem('vroooom_config_state');
-        if (saved) {
-            const state = JSON.parse(saved);
+        const state = window.ApiClient.getConfiguratorState();
+        if (state) {
             if (state.bikeKey && SHOP_BIKES[state.bikeKey]) {
                 mcCurrentBike = state.bikeKey;
                 sel.value = state.bikeKey;
@@ -1519,12 +1518,12 @@ function mcUpdatePrice() {
 
     // -- Persist config to localStorage --
     try {
-        localStorage.setItem('vroooom_config_state', JSON.stringify({
+        window.ApiClient.setConfiguratorState({
             bike: mcCurrentBike,
             color: mcSelectedColor ? mcSelectedColor.name : null,
             addons: [...mcSelectedAddons],
             total: totalPrice
-        }));
+        });
     } catch(e) {}
 }
 
