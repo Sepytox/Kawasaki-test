@@ -900,6 +900,93 @@ section('15 · MECHANIK A — Werkstattrechnungen + Insolvenz (nextBillIntervalS
   assert(afterVoluntary.finance.seasonsInsolvencyFree === 1, 'finishSeason() (freiwillig, ohne vorherige Insolvenz) erhöht finance.seasonsInsolvencyFree um 1');
 })();
 
+section('16 · MECHANIK B — Sparschweine zerschlagen (nextPiggyIntervalSeconds/piggyVisibleSeconds/piggybankReward/smashPiggybank)');
+(function () {
+  // nextPiggyIntervalSeconds(): liegt im konfigurierten Bereich, FLACH (kein Schrumpfen mit Saison-Fortschritt).
+  assert(IdleCore.nextPiggyIntervalSeconds(() => 0) === IdleCore.IDLE_BALANCE.PIGGY_INTERVAL_MIN_SECONDS, 'nextPiggyIntervalSeconds(random=0) === Untergrenze');
+  assert(IdleCore.nextPiggyIntervalSeconds(() => 1) === IdleCore.IDLE_BALANCE.PIGGY_INTERVAL_MAX_SECONDS, 'nextPiggyIntervalSeconds(random=1) === Obergrenze');
+  const piggyMid = IdleCore.nextPiggyIntervalSeconds(() => 0.5);
+  assert(piggyMid > IdleCore.IDLE_BALANCE.PIGGY_INTERVAL_MIN_SECONDS && piggyMid < IdleCore.IDLE_BALANCE.PIGGY_INTERVAL_MAX_SECONDS, 'nextPiggyIntervalSeconds(random=0.5) liegt strikt zwischen den Grenzen');
+
+  // piggyVisibleSeconds(): liegt im konfigurierten Sichtbarkeitsfenster.
+  for (let i = 0; i <= 10; i++) {
+    const visible = IdleCore.piggyVisibleSeconds(() => i / 10);
+    assert(
+      visible >= IdleCore.IDLE_BALANCE.PIGGY_VISIBLE_MIN_SECONDS && visible <= IdleCore.IDLE_BALANCE.PIGGY_VISIBLE_MAX_SECONDS,
+      `piggyVisibleSeconds() liegt im Bereich [${IdleCore.IDLE_BALANCE.PIGGY_VISIBLE_MIN_SECONDS}, ${IdleCore.IDLE_BALANCE.PIGGY_VISIBLE_MAX_SECONDS}] (gefunden: ${visible.toFixed(2)})`
+    );
+  }
+
+  // piggybankReward(): km-Bonus entspricht exakt activeEarn(state) × PIGGY_KM_BONUS_MULTIPLIER, unabhängig vom rng-Aufruf.
+  const rewardState = IdleCore.createInitialState();
+  const expectedKmBonus = Math.round(IdleCore.activeEarn(rewardState) * IdleCore.IDLE_BALANCE.PIGGY_KM_BONUS_MULTIPLIER);
+  const rewardNoDrop = IdleCore.piggybankReward(rewardState, () => 0.999); // über der Drop-Chance → kein Gear-Drop
+  assert(rewardNoDrop.kmBonus === expectedKmBonus, `piggybankReward() liefert exakt activeEarn(state) × PIGGY_KM_BONUS_MULTIPLIER als kmBonus (${rewardNoDrop.kmBonus} === ${expectedKmBonus})`);
+  assert(rewardNoDrop.gearId === null, 'piggybankReward() mit einer über der Drop-Chance liegenden Zufallszahl liefert keinen Gear-Drop');
+
+  const rewardWithDrop = IdleCore.piggybankReward(rewardState, () => 0); // garantiert unter der Drop-Chance
+  assert(typeof rewardWithDrop.gearId === 'string' && !!IdleCore.getGearItemById(rewardWithDrop.gearId), 'piggybankReward() mit einer garantiert unter der Drop-Chance liegenden Zufallszahl liefert eine gültige Gear-id');
+
+  // Ein höheres Bike/Tuning erhöht den kmBonus (skaliert automatisch, wie billAmount() über passiveEarn()).
+  const tunedRewardState = IdleCore.createInitialState();
+  tunedRewardState.bikeLevels[tunedRewardState.currentBikeId] = 10;
+  const tunedReward = IdleCore.piggybankReward(tunedRewardState, () => 0.999);
+  assert(tunedReward.kmBonus > rewardNoDrop.kmBonus, `piggybankReward() kmBonus steigt mit Tuning-Level (${tunedReward.kmBonus} > ${rewardNoDrop.kmBonus})`);
+
+  // smashPiggybank(): mutiert state (km-Gutschrift + smashedCount-Zähler), verbucht einen Gear-Drop, wenn gewürfelt.
+  const smashState = IdleCore.createInitialState();
+  assert(smashState.piggy && smashState.piggy.smashedCount === 0, 'createInitialState() liefert ein leeres, gültiges piggy-Objekt (smashedCount 0)');
+
+  const kmBefore = smashState.km;
+  const smashResultNoGear = IdleCore.smashPiggybank(smashState, () => 0.999);
+  assert(smashState.km === kmBefore + smashResultNoGear.kmBonus, 'smashPiggybank() bucht den kmBonus korrekt auf state.km');
+  assert(smashState.piggy.smashedCount === 1, 'smashPiggybank() erhöht state.piggy.smashedCount um 1');
+  assert(smashResultNoGear.smashedCount === 1, 'smashPiggybank() gibt den aktualisierten smashedCount-Zähler im Ergebnis zurück');
+  assert(smashResultNoGear.gearResult === null, 'smashPiggybank() ohne Drop-Treffer liefert gearResult:null');
+
+  const smashResultWithGear = IdleCore.smashPiggybank(smashState, () => 0); // garantierter Gear-Drop
+  assert(smashState.piggy.smashedCount === 2, 'smashPiggybank() zählt bei jedem Aufruf weiter hoch (Lebenszeit-Zähler)');
+  assert(smashResultWithGear.gearResult !== null && smashResultWithGear.gearResult.isNew === true, 'smashPiggybank() mit einer garantiert unter der Drop-Chance liegenden Zufallszahl verbucht einen neuen Gear-Drop');
+  assert(smashState.gear.collected.length === 1, 'smashPiggybank() bucht einen Gear-Drop-Treffer in state.gear.collected (dieselbe Sammlung wie payBill())');
+
+  // piggy.smashedCount ist ein Lebenszeit-Zähler und übersteht finishSeason()/triggerInsolvency() (wie finance-Zähler).
+  const preSeasonSmashState = IdleCore.createInitialState();
+  preSeasonSmashState.piggy.smashedCount = 7;
+  const afterInsolvencyPiggy = IdleCore.triggerInsolvency(preSeasonSmashState);
+  assert(afterInsolvencyPiggy.piggy.smashedCount === 7, 'triggerInsolvency(): piggy.smashedCount (Lebenszeit-Zähler) bleibt erhalten');
+
+  // Verteilung über viele geseedete Rolls: die Gear-Drop-Rate liegt nahe GEAR_DROP_CHANCE_ON_PIGGY_SMASH.
+  let piggySeed = 7;
+  function seededPiggyRandom() {
+    piggySeed = (piggySeed * 1103515245 + 12345) & 0x7fffffff;
+    return piggySeed / 0x7fffffff;
+  }
+  const PIGGY_ROLL_COUNT = 20000;
+  let piggyDropCount = 0;
+  const distState = IdleCore.createInitialState();
+  for (let i = 0; i < PIGGY_ROLL_COUNT; i++) {
+    const reward = IdleCore.piggybankReward(distState, seededPiggyRandom);
+    if (reward.gearId) piggyDropCount++;
+  }
+  const expectedPiggyDrops = PIGGY_ROLL_COUNT * IdleCore.IDLE_BALANCE.GEAR_DROP_CHANCE_ON_PIGGY_SMASH;
+  assert(
+    Math.abs(piggyDropCount - expectedPiggyDrops) / expectedPiggyDrops < 0.2,
+    `Gear-Drop-Rate von piggybankReward() über ${PIGGY_ROLL_COUNT} geseedete Rolls (${piggyDropCount}) liegt nahe der erwarteten ~${Math.round(expectedPiggyDrops)} (GEAR_DROP_CHANCE_ON_PIGGY_SMASH)`
+  );
+
+  // migrateState() füllt ein fehlendes piggy-Feld defensiv auf (altes Save vor feat(idle-piggybanks)).
+  const prePiggyRaw = { version: 2, km: 10, finance: { billsPaidOnTime: 1 }, gear: { collected: ['helm_gewoehnlich'] } };
+  const migratedPiggy = IdleCore.migrateState(prePiggyRaw);
+  assert(migratedPiggy.piggy && migratedPiggy.piggy.smashedCount === 0, 'migrateState(): fehlendes piggy-Feld (Save vor feat(idle-piggybanks)) wird defensiv mit smashedCount:0 aufgefüllt');
+  assert(migratedPiggy.gear.collected.indexOf('helm_gewoehnlich') !== -1, 'migrateState(): bestehende gear-Sammlung bleibt bei der piggy-Migration unangetastet');
+  assert(migratedPiggy.finance.billsPaidOnTime === 1, 'migrateState(): bestehende finance-Zähler bleiben bei der piggy-Migration unangetastet');
+
+  // migrateState() übernimmt einen bereits vorhandenen, gültigen piggy-Zähler unverändert (kein Reset bei erneutem Speichern).
+  const withPiggyRaw = { version: 2, km: 5, piggy: { smashedCount: 42 } };
+  const migratedWithPiggy = IdleCore.migrateState(withPiggyRaw);
+  assert(migratedWithPiggy.piggy.smashedCount === 42, 'migrateState(): ein bereits vorhandener piggy.smashedCount-Zähler bleibt exakt erhalten');
+})();
+
 // ============================================================
 // Results
 // ============================================================
