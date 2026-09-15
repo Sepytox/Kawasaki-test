@@ -668,6 +668,7 @@
     </div>
 
     <script src="bike-image.js"></script>
+    <script src="api-client.js"></script>
     <script>
         'use strict';
 
@@ -1170,23 +1171,16 @@
 
         /**
          * Trägt ein Bike als "zuletzt angesehen" in vroooom_garage_recentlyViewed
-         * ein (dedupliziert, neueste zuerst, auf 8 Einträge gekappt). Spiegelt
-         * die Capping-Logik aus garage.js (VroooomGarage.addToRecentlyViewed),
-         * hier dupliziert, damit index.html kein zusätzliches Skript laden muss.
+         * ein (dedupliziert, neueste zuerst, auf 8 Einträge gekappt). Nutzt
+         * ApiClient.addRecentlyViewed() (api-client.js) — identische
+         * Capping-Logik wie garage.js (VroooomGarage.addToRecentlyViewed),
+         * damit index.html und garage.js synchron auf demselben Key bleiben.
          * @param {string} bikeKey - Bike-ID des geöffneten Motorrads.
          * @returns {void}
          */
         function recordGarageRecentlyView(bikeKey) {
             try {
-                var KEY = 'vroooom_garage_recentlyViewed';
-                var raw = localStorage.getItem(KEY);
-                var list = [];
-                try { list = raw ? JSON.parse(raw) : []; } catch (e) { list = []; }
-                if (!Array.isArray(list)) list = [];
-                list = list.filter(function(entry) { return entry && entry.bikeKey !== bikeKey; });
-                list.unshift({ bikeKey: bikeKey, viewedAt: new Date().toISOString() });
-                if (list.length > 8) list = list.slice(0, 8);
-                localStorage.setItem(KEY, JSON.stringify(list));
+                window.ApiClient.addRecentlyViewed(bikeKey);
             } catch (e) { /* darf Modal.open nie blockieren */ }
         }
 
@@ -1194,10 +1188,9 @@
            Favorites System
            ========================================== */
         var Favorites = (function() {
-            var KEY = 'vroooom_favorites';
-            var favs = Store.get(KEY, []);
+            var favs = window.ApiClient.getFavorites();
 
-            function save() { Store.set(KEY, favs); }
+            function save() { window.ApiClient.setFavorites(favs); }
             function isFav(bikeKey) { return favs.indexOf(bikeKey) !== -1; }
 
             function toggle(bikeKey) {
@@ -1270,15 +1263,12 @@
            Reviews / Ratings System
            ========================================== */
         var Reviews = (function() {
-            var KEY = 'vroooom_reviews';
-            var data = Store.get(KEY, {});
-
-            function save() { Store.set(KEY, data); }
+            var data = window.ApiClient.getAllReviews();
 
             function add(bikeKey, rating, text) {
+                var entry = window.ApiClient.addReview(bikeKey, rating, text);
                 if (!data[bikeKey]) data[bikeKey] = [];
-                data[bikeKey].push({ rating: rating, text: text, date: new Date().toLocaleDateString('de-DE') });
-                save();
+                data[bikeKey].push(entry);
                 updateCardBadge(bikeKey);
                 try {
                     if (typeof window.VroooomStats !== 'undefined') window.VroooomStats.recordReview();
@@ -2249,9 +2239,8 @@
 
             // Restore last configuration from localStorage
             try {
-                var saved = localStorage.getItem('vroooom_maint_state');
-                if (saved) {
-                    var state = JSON.parse(saved);
+                var state = window.ApiClient.getMaintenanceState();
+                if (state) {
                     if (state.bikeKey && document.getElementById('maintBikeSelect').querySelector('[value="' + state.bikeKey + '"]')) {
                         document.getElementById('maintBikeSelect').value = state.bikeKey;
                     }
@@ -2317,7 +2306,7 @@
 
         // Persist last config in localStorage (optional UX improvement)
         try {
-            localStorage.setItem('vroooom_maint_state', JSON.stringify({ bikeKey: bikeKey, year: year, km: km }));
+            window.ApiClient.setMaintenanceState({ bikeKey: bikeKey, year: year, km: km });
         } catch(e) {}
     }
     </script>
