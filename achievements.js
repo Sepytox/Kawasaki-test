@@ -33,7 +33,12 @@ var ACHIEVEMENTS_KEY = 'vroooom_achievements';
  *   raceFinishes, raceBestT100, raceEndlessRuns, raceBestEndlessTime,
  *   quizCompletions, quizBestMatchPct, wheelSpins, bikeViewCount,
  *   maxSingleBikeViews, reviewsWritten, favoritesCount, shopConfigsSaved,
- *   shopConfigPartsCount, visitedPageCount.
+ *   shopConfigPartsCount, visitedPageCount, billsPaidOnTime,
+ *   billsPaidLastSecond, insolvenciesSurvived, piggybanksSmashed,
+ *   gearCompletedSets, seasonsInsolvencyFree (die letzten 6 stammen aus dem
+ *   Idle Racer/idle.js, siehe dessen checkIdleAchievements()-Overrides —
+ *   buildContext() selbst bleibt bewusst idle-frei und liefert dafür nur
+ *   0-Standardwerte).
  */
 var ACHIEVEMENTS = [
   {
@@ -140,6 +145,48 @@ var ACHIEVEMENTS = [
     beschreibung: 'Du hast eine Konfiguration mit mindestens 5 Tuning-Teilen gespeichert.',
     icon: '🏆',
     check: function (ctx) { return ctx.shopConfigPartsCount >= 5; }
+  },
+  {
+    id: 'RECHNUNG_PUENKTLICH',
+    titel: 'Erste Rechnung pünktlich bezahlt',
+    beschreibung: 'Du hast im Idle Racer deine erste Werkstattrechnung fristgerecht bezahlt.',
+    icon: '🧾',
+    check: function (ctx) { return ctx.billsPaidOnTime >= 1; }
+  },
+  {
+    id: 'RECHNUNG_LETZTE_SEKUNDE',
+    titel: 'Rechnung in letzter Sekunde bezahlt',
+    beschreibung: 'Du hast im Idle Racer eine Werkstattrechnung erst in den letzten Sekunden vor Ablauf bezahlt.',
+    icon: '⏳',
+    check: function (ctx) { return ctx.billsPaidLastSecond >= 1; }
+  },
+  {
+    id: 'ERSTE_INSOLVENZ_UEBERSTANDEN',
+    titel: 'Erste Insolvenz überstanden',
+    beschreibung: 'Du hast im Idle Racer deine erste Insolvenz überstanden — ein frischer Neustart der Saison.',
+    icon: '🔁',
+    check: function (ctx) { return ctx.insolvenciesSurvived >= 1; }
+  },
+  {
+    id: 'ZEHN_SPARSCHWEINE',
+    titel: '10 Sparschweine zerschlagen',
+    beschreibung: 'Du hast im Idle Racer 10 Sparschweine zerschlagen.',
+    icon: '🐷',
+    check: function (ctx) { return ctx.piggybanksSmashed >= 10; }
+  },
+  {
+    id: 'KOMPLETTES_AUSRUESTUNGS_SET',
+    titel: 'Komplettes Ausrüstungs-Set',
+    beschreibung: 'Du hast im Idle Racer ein komplettes Ausrüstungs-Set gesammelt.',
+    icon: '🎽',
+    check: function (ctx) { return ctx.gearCompletedSets >= 1; }
+  },
+  {
+    id: 'SAISON_OHNE_INSOLVENZ',
+    titel: 'Ganze Saison ohne Insolvenz',
+    beschreibung: 'Du hast im Idle Racer eine ganze Saison freiwillig abgeschlossen, ohne zwischenzeitlich insolvent zu gehen.',
+    icon: '🏅',
+    check: function (ctx) { return ctx.seasonsInsolvencyFree >= 1; }
   }
 ];
 
@@ -297,7 +344,16 @@ function buildContext(overrides) {
     shopConfigPartsCount: 0,
     reviewsWritten: reviewsWritten,
     favoritesCount: favorites.length,
-    visitedPageCount: visitedPageCount
+    visitedPageCount: visitedPageCount,
+    // Idle-Racer-Felder (siehe Docblock oben): buildContext() selbst liest
+    // dafür NICHTS Idle-Spezifisches — Standardwert 0, vom Aufrufer
+    // (idle.js checkIdleAchievements()) per overrides überschrieben.
+    billsPaidOnTime: 0,
+    billsPaidLastSecond: 0,
+    insolvenciesSurvived: 0,
+    piggybanksSmashed: 0,
+    gearCompletedSets: 0,
+    seasonsInsolvencyFree: 0
   };
   return Object.assign(ctx, overrides || {});
 }
@@ -337,6 +393,14 @@ function prefersReducedMotion() {
  * sind. Nutzt bestehende Design-Tokens (--card-bg, --border, --accent,
  * --text etc. aus design.css), damit der Toast automatisch zu Dark-/
  * Light-Mode passt, ohne eigene Farblogik.
+ *
+ * Position bewusst OBEN rechts (statt unten rechts): mehrere Seiten
+ * (u. a. idle.html mit .idle-toast-container UND global settings.js mit
+ * .settings-trigger) belegen bereits unten rechts eigene fixierte
+ * UI-Elemente. Da achievements.js absichtlich seitenagnostisch bleibt
+ * (keine Kenntnis von idle-spezifischem Markup), ist eine grundsätzlich
+ * andere Ecke die robustere, generische Lösung gegenüber einer
+ * seitenspezifischen Verschiebung.
  * @returns {void}
  */
 function ensureToastStyles() {
@@ -344,12 +408,12 @@ function ensureToastStyles() {
   var style = document.createElement('style');
   style.id = 'vroooom-achievement-toast-style';
   style.textContent =
-    '.vroooom-ach-toast{position:fixed;right:18px;bottom:18px;z-index:9999;' +
+    '.vroooom-ach-toast{position:fixed;right:18px;top:18px;z-index:9999;' +
     'display:flex;align-items:center;gap:12px;max-width:320px;padding:12px 16px;' +
     'background:var(--card-bg,#111);border:1px solid var(--border,#333);' +
     'border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.35);' +
     'color:var(--text,#eee);font-family:inherit;' +
-    'opacity:0;transform:translateY(12px);' +
+    'opacity:0;transform:translateY(-12px);' +
     'transition:opacity .35s ease,transform .35s ease;}' +
     '.vroooom-ach-toast.vroooom-ach-toast-visible{opacity:1;transform:translateY(0);}' +
     '.vroooom-ach-toast-icon{font-size:1.6em;line-height:1;flex-shrink:0;}' +

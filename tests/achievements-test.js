@@ -81,7 +81,13 @@ function emptyCtx(overrides) {
     shopConfigPartsCount: 0,
     reviewsWritten: 0,
     favoritesCount: 0,
-    visitedPageCount: 0
+    visitedPageCount: 0,
+    billsPaidOnTime: 0,
+    billsPaidLastSecond: 0,
+    insolvenciesSurvived: 0,
+    piggybanksSmashed: 0,
+    gearCompletedSets: 0,
+    seasonsInsolvencyFree: 0
   };
   return Object.assign(base, overrides || {});
 }
@@ -239,7 +245,78 @@ section('10 · buildContext() liest bestehende Keys nur lesend (nie Mutation)');
   assert(global.localStorage.getItem('vroooom_favorites') === before, 'vroooom_favorites wurde durch buildContext() NICHT verändert');
 })();
 
-section('11 · getAllWithStatus() liefert erreicht/offen für die Garage-Übersicht');
+section('12 · RECHNUNG_PUENKTLICH (Idle Racer) — locked → unlocked');
+(function () {
+  var a = findAch('RECHNUNG_PUENKTLICH');
+  assert(a.check(emptyCtx({ billsPaidOnTime: 0 })) === false, 'Keine pünktlich bezahlte Rechnung → locked');
+  assert(a.check(emptyCtx({ billsPaidOnTime: 1 })) === true, '1 pünktlich bezahlte Rechnung → unlocked');
+})();
+
+section('13 · RECHNUNG_LETZTE_SEKUNDE (Idle Racer) — locked → unlocked');
+(function () {
+  var a = findAch('RECHNUNG_LETZTE_SEKUNDE');
+  assert(a.check(emptyCtx({ billsPaidLastSecond: 0 })) === false, 'Keine Last-Second-Zahlung → locked');
+  assert(a.check(emptyCtx({ billsPaidLastSecond: 1 })) === true, '1 Last-Second-Zahlung → unlocked');
+})();
+
+section('14 · ERSTE_INSOLVENZ_UEBERSTANDEN (Idle Racer) — locked → unlocked');
+(function () {
+  var a = findAch('ERSTE_INSOLVENZ_UEBERSTANDEN');
+  assert(a.check(emptyCtx({ insolvenciesSurvived: 0 })) === false, 'Keine Insolvenz überstanden → locked');
+  assert(a.check(emptyCtx({ insolvenciesSurvived: 1 })) === true, '1 Insolvenz überstanden → unlocked');
+})();
+
+section('15 · ZEHN_SPARSCHWEINE (Idle Racer) — locked → unlocked');
+(function () {
+  var a = findAch('ZEHN_SPARSCHWEINE');
+  assert(a.check(emptyCtx({ piggybanksSmashed: 9 })) === false, '9 zerschlagene Sparschweine → locked');
+  assert(a.check(emptyCtx({ piggybanksSmashed: 10 })) === true, '10 zerschlagene Sparschweine → unlocked');
+})();
+
+section('16 · KOMPLETTES_AUSRUESTUNGS_SET (Idle Racer) — locked → unlocked');
+(function () {
+  var a = findAch('KOMPLETTES_AUSRUESTUNGS_SET');
+  assert(a.check(emptyCtx({ gearCompletedSets: 0 })) === false, 'Kein komplettes Set → locked');
+  assert(a.check(emptyCtx({ gearCompletedSets: 1 })) === true, '1 komplettes Set → unlocked');
+})();
+
+section('17 · SAISON_OHNE_INSOLVENZ (Idle Racer) — locked → unlocked');
+(function () {
+  var a = findAch('SAISON_OHNE_INSOLVENZ');
+  assert(a.check(emptyCtx({ seasonsInsolvencyFree: 0 })) === false, 'Noch keine insolvenzfreie Saison → locked');
+  assert(a.check(emptyCtx({ seasonsInsolvencyFree: 1 })) === true, '1 insolvenzfreie Saison → unlocked');
+})();
+
+section('18 · Idle-Racer-Achievements — Engine: idempotent + permanent (evaluateAchievements())');
+(function () {
+  global.localStorage.clear();
+  var idleIds = [
+    'RECHNUNG_PUENKTLICH', 'RECHNUNG_LETZTE_SEKUNDE', 'ERSTE_INSOLVENZ_UEBERSTANDEN',
+    'ZEHN_SPARSCHWEINE', 'KOMPLETTES_AUSRUESTUNGS_SET', 'SAISON_OHNE_INSOLVENZ'
+  ];
+  var ctxAllUnlocked = emptyCtx({
+    billsPaidOnTime: 1, billsPaidLastSecond: 1, insolvenciesSurvived: 1,
+    piggybanksSmashed: 10, gearCompletedSets: 1, seasonsInsolvencyFree: 1
+  });
+
+  var newly1 = Achievements.evaluateAchievements(ctxAllUnlocked);
+  var newly1Ids = newly1.map(function (a) { return a.id; });
+  idleIds.forEach(function (id) {
+    assert(newly1Ids.indexOf(id) !== -1, `Erster Durchlauf schaltet ${id} frei`);
+  });
+
+  var newly2 = Achievements.evaluateAchievements(ctxAllUnlocked);
+  assert(newly2.length === 0, 'Zweiter Durchlauf mit identischem ctx schaltet nichts erneut frei (idempotent)');
+
+  var ctxRegress = emptyCtx(); // alle Idle-Felder wieder auf 0
+  var newly3 = Achievements.evaluateAchievements(ctxRegress);
+  assert(newly3.length === 0, 'Dritter Durchlauf mit auf 0 "zurückgesetztem" ctx schaltet nichts frei');
+  idleIds.forEach(function (id) {
+    assert(Achievements.isUnlocked(id) === true, `${id} bleibt permanent freigeschaltet, obwohl ctx wieder 0 zeigt`);
+  });
+})();
+
+section('19 · getAllWithStatus() liefert erreicht/offen für die Garage-Übersicht');
 (function () {
   global.localStorage.clear();
   Achievements.unlock('GLUECKSPILZ');
