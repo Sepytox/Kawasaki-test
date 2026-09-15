@@ -89,41 +89,68 @@ function addToRecentlyViewed(list, bikeKey, maxLen, viewedAt) {
 }
 
 /**
- * Liest die aktuelle "Zuletzt angesehen"-Liste aus localStorage.
+ * Liefert die api-client.js-Bridge, falls verfügbar (window.ApiClient im
+ * Browser, sonst per require() im Node-Testkontext) — siehe api-client.js
+ * für die Begründung dieser Bridge. Liefert null, falls beides fehlschlägt
+ * (dann greift der rohe safeReadJSON/safeWriteJSON-Fallback unten).
+ * @returns {Object|null} ApiClient-API oder null.
+ */
+function getApiClient() {
+  if (typeof window !== 'undefined' && window.ApiClient) return window.ApiClient;
+  if (typeof globalThis !== 'undefined' && globalThis.ApiClient) return globalThis.ApiClient;
+  try {
+    if (typeof require === 'function') return require('./api-client.js');
+  } catch (e) { /* kein api-client.js verfügbar — Fallback greift */ }
+  return null;
+}
+
+/**
+ * Liest die aktuelle "Zuletzt angesehen"-Liste aus localStorage (via
+ * api-client.js, sofern verfügbar — identische Daten/Key wie zuvor).
  * @returns {Array<{bikeKey: string, viewedAt: string}>} Liste (leer, falls keine Daten/korrupt).
  */
 function getRecentlyViewed() {
+  var api = getApiClient();
+  if (api && typeof api.getRecentlyViewed === 'function') return api.getRecentlyViewed();
   var list = safeReadJSON(RECENTLY_VIEWED_KEY, []);
   return Array.isArray(list) ? list : [];
 }
 
 /**
  * Trägt ein Bike als "zuletzt angesehen" ein (liest, dedupliziert/kappt,
- * schreibt zurück). Für den Modal.open()-Hook in index.html gedacht.
+ * schreibt zurück, via api-client.js sofern verfügbar). Für den
+ * Modal.open()-Hook in index.html gedacht.
  * @param {string} bikeKey - Bike-ID des angesehenen Motorrads.
  * @returns {Array<{bikeKey: string, viewedAt: string}>} Aktualisierte Liste.
  */
 function recordRecentlyViewed(bikeKey) {
+  var api = getApiClient();
+  if (api && typeof api.addRecentlyViewed === 'function') return api.addRecentlyViewed(bikeKey, MAX_RECENTLY_VIEWED);
   var updated = addToRecentlyViewed(getRecentlyViewed(), bikeKey, MAX_RECENTLY_VIEWED);
   safeWriteJSON(RECENTLY_VIEWED_KEY, updated);
   return updated;
 }
 
 /**
- * Liest die aktuell gewählte Traum-Bike-ID.
+ * Liest die aktuell gewählte Traum-Bike-ID (via api-client.js, sofern
+ * verfügbar).
  * @returns {string|null} Bike-ID oder null, falls keins gewählt ist.
  */
 function getDreamBikeKey() {
+  var api = getApiClient();
+  if (api && typeof api.getDreamBike === 'function') return api.getDreamBike();
   var v = safeReadJSON(DREAM_BIKE_KEY, null);
   return (typeof v === 'string' && v) ? v : null;
 }
 
 /**
- * Setzt (oder löscht) das Traum-Bike.
+ * Setzt (oder löscht) das Traum-Bike (via api-client.js, sofern verfügbar).
  * @param {string|null} bikeKey - Neue Bike-ID, oder null/leer zum Löschen.
  * @returns {string|null} Der gespeicherte Wert (normalisiert).
  */
 function setDreamBikeKey(bikeKey) {
+  var api = getApiClient();
+  if (api && typeof api.setDreamBike === 'function') return api.setDreamBike(bikeKey);
   var normalized = (typeof bikeKey === 'string' && bikeKey) ? bikeKey : null;
   safeWriteJSON(DREAM_BIKE_KEY, normalized);
   return normalized;
@@ -489,9 +516,10 @@ function renderStats(statsVM) {
  * @returns {Object} Zustandsobjekt für buildGarageViewModel().
  */
 function loadGarageState() {
-  var favorites = safeReadJSON('vroooom_favorites', []);
+  var api = getApiClient();
+  var favorites = (api && typeof api.getFavorites === 'function') ? api.getFavorites() : safeReadJSON('vroooom_favorites', []);
   if (!Array.isArray(favorites)) favorites = [];
-  var reviews = safeReadJSON('vroooom_reviews', {});
+  var reviews = (api && typeof api.getAllReviews === 'function') ? api.getAllReviews() : safeReadJSON('vroooom_reviews', {});
   if (!reviews || typeof reviews !== 'object') reviews = {};
 
   var bikes = (typeof window !== 'undefined' && window.SHARED_BIKES) ? window.SHARED_BIKES : {};
@@ -528,7 +556,9 @@ function renderGarage() {
   try {
     if (typeof document === 'undefined') return;
     if (typeof window !== 'undefined' && window.VroooomAchievements && typeof window.VroooomAchievements.checkNow === 'function') {
-      window.VroooomAchievements.checkNow({ favoritesCount: (safeReadJSON('vroooom_favorites', []) || []).length });
+      var api = getApiClient();
+      var favs = (api && typeof api.getFavorites === 'function') ? api.getFavorites() : safeReadJSON('vroooom_favorites', []);
+      window.VroooomAchievements.checkNow({ favoritesCount: (favs || []).length });
     }
     var state = loadGarageState();
     var vm = buildGarageViewModel(state);
