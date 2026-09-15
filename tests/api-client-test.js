@@ -34,7 +34,7 @@ global.localStorage = makeMockLocalStorage();
 
 // api-client.js liest/schreibt `localStorage` als globale Variable (wie im
 // Browser) — daher erst NACH dem Setzen von global.localStorage laden.
-const ApiClient = require('../api-client.js');
+const ApiClient = require('../js/api-client.js');
 
 // ============================================================
 // Test harness (Stil analog zu tests/stats-test.js)

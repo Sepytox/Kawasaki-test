@@ -87,7 +87,7 @@ function getApiClient() {
   if (typeof window !== 'undefined' && window.ApiClient) return window.ApiClient;
   if (typeof globalThis !== 'undefined' && globalThis.ApiClient) return globalThis.ApiClient;
   try {
-    if (typeof require === 'function') return require('./api-client.js');
+    if (typeof require === 'function') return require('./js/api-client.js');
   } catch (e) { /* kein api-client.js verfügbar — Fallback greift */ }
   return null;
 }
