@@ -784,40 +784,130 @@
   }
 
   /**
-   * EIN Game-Loop-Tick des Endless-Runners (Teil 1 + Teil 2): bestimmt den
-   * Aktivitäts-Zustand (aktiv/Auto-Run, siehe IdleCore.runnerActivityState())
-   * und den rein visuellen Kollisions-Malus (siehe IdleCore.
-   * collisionSpeedMalus()), rückt alle Hindernisse entsprechend der
-   * daraus abgeleiteten Scroll-Geschwindigkeit vor, wertet Kollisionen
-   * NUR im aktiven Modus aus (Auto-Pilot "sieht" Hindernisse und weicht
-   * ihnen zuverlässig aus — siehe RUNNER_AUTO_RUN_SPEED_CAP_PCT), spawnt
-   * neue Hindernisse (Dichte/Intervall skaliert mit der Geschwindigkeit,
-   * siehe IdleCore.obstacleDensity()/nextObstacleSpawnIntervalSeconds())
-   * und löst Distanz-Meilensteine aus. Der passive km-Ertrag
-   * (IdleCore.passiveEarn(), siehe tick()) läuft davon UNABHÄNGIG weiter
-   * (nur der Runner-Ertrags-MULTIPLIKATOR ist gekoppelt, siehe
-   * IdleCore.runnerEarnMultiplier() in tick()) — eine Kollision ist
-   * NIEMALS ein Reset/Fail-State.
+   * Behandelt einen tatsächlichen Crash (Teil 3, feat(crash)) — beendet
+   * den laufenden Run (IdleCore.endRun(), der EINZIGE Punkt, an dem
+   * gesammelte Run-Coins der PROGRESS-Schicht gutgeschrieben werden),
+   * speichert sofort, löst den bestehenden Kollisions-Flash aus,
+   * aktualisiert die Anzeige (km/Shop-Freischaltungen können sich durch
+   * die Gutschrift ändern) und zeigt die Crash-Zusammenfassung mit
+   * Score/Coins/ggf. neuem Highscore samt "Nochmal fahren"-Button.
+   * @param {number} nowMs - Zeitstempel "jetzt" in ms.
+   * @returns {void}
+   */
+  function handleRunCrash(nowMs) {
+    var summary = IdleCore.endRun(state, nowMs);
+    ApiClient.saveIdleState(state);
+    triggerCollisionFeedback();
+    renderAll();
+    checkIdleAchievements();
+    showCrashSummary(summary);
+  }
+
+  /**
+   * Zeigt die Crash-Zusammenfassung-Dialog (Teil 3, feat(crash)): Score,
+   * gesammelte Coins (bereits über IdleCore.endRun() in km umgewandelt)
+   * und — falls erreicht — den "Neuer Highscore!"-Hinweis.
+   * @param {{score: number, coins: number, newHighscore: boolean}} summary - Ergebnis von IdleCore.endRun().
+   * @returns {void}
+   */
+  function showCrashSummary(summary) {
+    var overlay = document.getElementById('idleRunSummary');
+    if (!overlay) return;
+    var scoreEl = document.getElementById('idleRunSummaryScore');
+    var coinsEl = document.getElementById('idleRunSummaryCoins');
+    var highscoreEl = document.getElementById('idleRunSummaryHighscore');
+    if (scoreEl) scoreEl.textContent = String(Math.floor(summary.score));
+    if (coinsEl) coinsEl.textContent = String(Math.floor(summary.coins));
+    if (highscoreEl) highscoreEl.hidden = !summary.newHighscore;
+    overlay.hidden = false;
+    window.requestAnimationFrame(function () { overlay.classList.add('is-visible'); });
+  }
+
+  /**
+   * Blendet die Crash-Zusammenfassung wieder aus (nach "Nochmal fahren").
+   * @returns {void}
+   */
+  function hideCrashSummary() {
+    var overlay = document.getElementById('idleRunSummary');
+    if (!overlay) return;
+    overlay.classList.remove('is-visible');
+    overlay.hidden = true;
+  }
+
+  /**
+   * Startet einen neuen Run nach einer angezeigten Crash-Zusammenfassung
+   * ("Nochmal fahren", Teil 3, feat(crash)): IdleCore.restartRun() setzt
+   * die Run-Schicht zurück, die transiente Laufzeit-Hindernisliste (mirrors
+   * runnerObstacles-Reset bei jedem Seitenaufruf) wird ebenfalls geleert,
+   * damit der neue Run auf einer leeren Strecke beginnt.
+   * @returns {void}
+   */
+  function restartRunAndResume() {
+    IdleCore.restartRun(state, Date.now());
+    runnerObstacles = [];
+    runnerSpawnTimerSeconds = IdleCore.nextObstacleSpawnIntervalSeconds(0, Math.random);
+    runnerLapProgressUnits = 0;
+    runnerBikeDisplayLane = state.runner.lane;
+    hideCrashSummary();
+    ApiClient.saveIdleState(state);
+  }
+
+  /**
+   * Verdrahtet den "Nochmal fahren"-Button der Crash-Zusammenfassung.
+   * @returns {void}
+   */
+  function wireRunSummaryButtons() {
+    var btn = document.getElementById('idleRunSummaryRestartBtn');
+    if (!btn) return;
+    btn.addEventListener('click', restartRunAndResume);
+  }
+
+  /**
+   * EIN Game-Loop-Tick des Endless-Runners (Teil 1 + Teil 2 + Teil 3):
+   * bestimmt den Aktivitäts-Zustand (aktiv/Auto-Run, siehe IdleCore.
+   * runnerActivityState()) und den rein visuellen Kollisions-Malus (siehe
+   * IdleCore.collisionSpeedMalus()), rückt alle Hindernisse entsprechend
+   * der daraus abgeleiteten Scroll-Geschwindigkeit vor, wertet Kollisionen
+   * NUR im aktiven Modus aus (Auto-Pilot "sieht" Hindernisse NIE — dieselbe
+   * Prüfung wird für den Auto-Piloten schlicht nie ausgeführt, wodurch er
+   * PROVABLY nie crashen kann), spawnt neue Hindernisse (Dichte/Intervall
+   * skaliert mit der Geschwindigkeit) und löst Distanz-Meilensteine aus.
    *
-   * Teil 2 (feat(powerups)/balance(tuning)) ergänzt: Turbo hebt die
+   * Teil 3 (feat(crash)) ersetzt den früheren, niemals scheiternden
+   * applyCollisionMalus()-Pfad: ein Treffer eines 'side'/'lowBar'/
+   * 'highBarrier'-Hindernisses OHNE die passende Ausweich-Aktion (Lane-
+   * Wechsel/Sprung/Ducken) UND ohne aktiven Schild beendet über
+   * handleRunCrash() den Run (siehe IdleCore.detectRunCollision()).
+   * Solange KEIN Run läuft (state.run.phase !== 'running' — z. B. während
+   * die Crash-Zusammenfassung angezeigt wird), wird die gesamte Strecke
+   * EINGEFROREN (kein Vorrücken/Spawn/Wirtschaft) und 0 zurückgegeben.
+   * Der frühere kontinuierliche km-Drip ist entfernt — die Run-Wirtschaft
+   * (Score/Coins) läuft jetzt über IdleCore.tickRunEconomy() (siehe dessen
+   * Docblock: aktiv sammelt NUR in state.run, Auto-Pilot bankt reduziert
+   * kontinuierlich in km).
+   *
+   * Teil 2 (feat(powerups)/balance(tuning)) unverändert: Turbo hebt die
    * effektive Geschwindigkeit temporär an (POWERUP_TURBO_SPEED_BOOST_PCT,
    * NIEMALS die globale RUNNER_SPEED_CAP_PCT-Konstante selbst mutiert);
    * Magnet zieht Hindernisse ab IdleCore.powerupMagnetRangeT() weich
    * Richtung Bike-Lane (nur `displayLane`, NICHT die für die Kollision
    * massgebliche `lane`) und lässt sie dadurch die Kollisionsprüfung
-   * überspringen; ein aktiver Schild konsumiert GENAU EINE Kollision
-   * (IdleCore.consumeShield()) statt eines applyCollisionMalus(); die
-   * Tuning-PERK-Reaktionszeit (IdleCore.tuningReactionTimeFactor())
-   * verlangsamt den Hindernis-FORTSCHRITT (nicht die Strassen-Scroll-
-   * Geschwindigkeit selbst).
+   * überspringen; die Tuning-PERK-Reaktionszeit (IdleCore.
+   * tuningReactionTimeFactor()) verlangsamt den Hindernis-FORTSCHRITT
+   * (nicht die Strassen-Scroll-Geschwindigkeit selbst).
    * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
    * @param {number} speedPct - Aktuelle (reale) Geschwindigkeit des Bikes (0–100%).
-   * @returns {number} Die für die Strecken-Darstellung zu nutzende visuelle Geschwindigkeit (0–100%, idle-gedeckelt + Kollisions-Malus).
+   * @returns {number} Die für die Strecken-Darstellung zu nutzende visuelle Geschwindigkeit (0–100%, idle-gedeckelt + Kollisions-Malus, 0 falls kein Run läuft).
    */
   function tickRunner(dtSeconds, speedPct) {
     var now = Date.now();
+    IdleCore.ensureRunState(state);
     var activity = IdleCore.runnerActivityState(state, now);
     updateRunnerModeBadge(activity);
+
+    if (state.run.phase !== 'running') {
+      return 0;
+    }
 
     var turboOn = IdleCore.turboActive(state, now);
     var boostedSpeedPct = turboOn ? Math.min(100, speedPct + IdleCore.IDLE_BALANCE.POWERUP_TURBO_SPEED_BOOST_PCT) : speedPct;
@@ -831,6 +921,8 @@
     var magnetOn = IdleCore.magnetActive(state, now);
     var magnetRangeT = magnetOn ? IdleCore.powerupMagnetRangeT(state) : null;
     var pullEase = Math.min(1, RUNNER_LANE_EASE_PER_SECOND * dtSeconds);
+
+    var crashedThisTick = false;
 
     // Hindernisse vorrücken, im aktiven Modus einmalig auf Kollision prüfen, vorbeigefahrene entfernen.
     for (var i = runnerObstacles.length - 1; i >= 0; i--) {
@@ -850,17 +942,26 @@
 
       if (!obstacle.resolved && obstacle.t >= RUNNER_HIT_ZONE_T) {
         obstacle.resolved = true;
-        if (activity === 'active' && !magnetSaved && obstacle.lane === state.runner.lane) {
-          if (IdleCore.consumeShield(state, now)) {
+        if (!crashedThisTick && activity === 'active' && !magnetSaved && obstacle.lane === state.runner.lane) {
+          var collisionResult = IdleCore.detectRunCollision(state, obstacle.type, now);
+          if (collisionResult.shielded) {
             triggerShieldFeedback();
-          } else {
-            IdleCore.applyCollisionMalus(state, now);
-            triggerCollisionFeedback();
+          } else if (collisionResult.crashed) {
+            crashedThisTick = true;
+            handleRunCrash(now);
           }
         }
       }
       if (obstacle.t >= RUNNER_OBSTACLE_REMOVE_T) runnerObstacles.splice(i, 1);
     }
+
+    if (crashedThisTick) {
+      return visualSpeedPct;
+    }
+
+    // Run-Wirtschaft (Teil 3, feat(run)): bankt Score/Coins für die in
+    // diesem Tick zurückgelegte Distanz (siehe IdleCore.tickRunEconomy()).
+    IdleCore.tickRunEconomy(state, scrollSpeed * dtSeconds, activity);
 
     // Spawn-Timer (mit Restzeit-Übertrag, falls ein einzelner Tick mehrere Intervalle überspringt).
     if (dtSeconds > 0) {
@@ -2364,11 +2465,21 @@
 
   /**
    * EIN Game-Loop-Frame: berechnet die (auf IDLE_BALANCE.MAX_TICK_DELTA_
-   * SECONDS gedeckelte) verstrichene Zeit seit dem letzten Frame,
-   * schreibt den passiven Ertrag für dieses Delta gut und aktualisiert
-   * die weich nachlaufende km-Anzeige. Die Wirtschaft (Erträge) tickt
-   * damit von der Bildwiederholrate entkoppelt — verstrichene Echtzeit
-   * wird akkumuliert, nicht die Anzahl der Frames gezählt.
+   * SECONDS gedeckelte) verstrichene Zeit seit dem letzten Frame und
+   * aktualisiert die weich nachlaufende km-Anzeige. Die Wirtschaft
+   * (Erträge) tickt damit von der Bildwiederholrate entkoppelt —
+   * verstrichene Echtzeit wird akkumuliert, nicht die Anzahl der Frames
+   * gezählt.
+   *
+   * Teil 3 (feat(crash)): der frühere KONTINUIERLICHE passive km-Drip
+   * (IdleCore.passiveEarn() × IdleCore.runnerEarnMultiplier(), jeden
+   * Frame direkt in km) ist entfernt — der laufende RUN sammelt Score/
+   * Run-Coins jetzt nur noch in state.run (siehe IdleCore.
+   * tickRunEconomy(), aufgerufen aus tickRunner()) und bankt sie ERST
+   * bei einem Crash (IdleCore.endRun(), siehe handleRunCrash()) bzw.
+   * kontinuierlich-reduziert im Auto-Pilot (der laut Teil-1-Invariante
+   * NIE crasht). activeEarn() ("Gas geben", siehe wireGasButton()) bleibt
+   * davon unberührt.
    * @param {number} timestamp - Von requestAnimationFrame übergebener High-Res-Zeitstempel.
    * @returns {void}
    */
@@ -2382,14 +2493,6 @@
     // einen riesigen Sprung, wenn ein hintergründiger Tab zurückkehrt).
     var clampedDt = Math.min(Math.max(dtSeconds, 0), IdleCore.IDLE_BALANCE.MAX_TICK_DELTA_SECONDS);
 
-    var now = Date.now();
-    // balance(economy): koppelt NUR den passiven Ertrag an den Runner-
-    // Zustand (aktiv=1x unverändert, Idle-Auto-Run=reduziert-aber-positiv,
-    // Kollision=kurzer Dip, Turbo=Boost) — siehe IdleCore.runnerEarnMultiplier().
-    // activeEarn() ("Gas geben", siehe wireGasButton()) bleibt davon bewusst
-    // unberührt.
-    var earned = IdleCore.passiveEarn(state, clampedDt) * totalEarnMultiplier(now) * IdleCore.runnerEarnMultiplier(state, now);
-    IdleCore.creditKm(state, earned);
     IdleCore.addPlayTime(state, clampedDt);
 
     updateKmDisplay();
@@ -2397,8 +2500,8 @@
     // Strecke/Tacho/Runner teilen sich denselben Game-Loop-Tick (kein zweiter rAF-Loop).
     // tickRunner() liefert die visuelle (idle-gedeckelte + Kollisions-Malus-behaftete)
     // Geschwindigkeit NUR für die Strecken-Darstellung — Tacho/Sound/kmh bleiben an der
-    // realen Bike-Geschwindigkeit, die Wirtschaft (passiveEarn oben) ist ohnehin komplett
-    // unabhängig davon.
+    // realen Bike-Geschwindigkeit; tickRunner() bankt/bucht dort auch die Run-Wirtschaft
+    // (siehe IdleCore.tickRunEconomy()) für genau dieses Delta.
     var info = getCurrentBikeInfo();
     var kmh = (info.bike.topspeed * info.stats.geschwindigkeitPct) / 100;
     var runnerVisualSpeedPct = tickRunner(clampedDt, info.stats.geschwindigkeitPct);
@@ -2449,6 +2552,14 @@
    * @returns {void}
    */
   function initIdlePage() {
+    // Teil 3 (feat(run)): jeder Seitenaufruf beginnt einen frischen Run
+    // (startRun() setzt Score/Coins/Combo/Distanz zurück und leitet die
+    // Basis-Geschwindigkeit aus dem aktuellen Bike/Tuning ab) — ein evtl.
+    // aus einer vorherigen Sitzung als 'crashed' persistierter Run wird
+    // dadurch bewusst NICHT als noch offene Zusammenfassung fortgeführt.
+    IdleCore.startRun(state, Date.now());
+    runnerBikeDisplayLane = state.runner.lane;
+
     renderAll();
     updateKmDisplay();
     initCanvases();
@@ -2464,6 +2575,7 @@
     wireBillPayButton();
     wirePiggyInteraction();
     wirePowerupInteraction();
+    wireRunSummaryButtons();
     wireLifecycleSave();
     window.requestAnimationFrame(tick);
   }
