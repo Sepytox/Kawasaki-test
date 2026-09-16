@@ -1174,13 +1174,13 @@ section('18 · TEIL 2 — balance(economy): runnerEarnMultiplier() koppelt den P
   assert(idleCredited < activeCredited, 'Der Idle-Ertrag ist reduziert ggü. dem aktiven Ertrag, aber niemals 0');
 })();
 
-section('19 · TEIL 2 — feat(powerups): Magnet/Schild/Turbo/Münzregen (rollPowerupType/rollPowerupDrop/activatePowerupEffect) + Tuning-Perks + v3→v4-Migration');
+section('19 · TEIL 2/4 — feat(powerups): Magnet/Schild/Turbo/Score-x2 (rollPowerupType/rollPowerupDrop/activatePowerupEffect) + Tuning-Perks + v3→v4-Migration');
 (function () {
   // rollPowerupType(): Verteilung über viele geseedete Rolls liegt nahe POWERUP_TYPE_WEIGHTS.
   let powerupSeed = 11;
   function seededPowerupRandom() { powerupSeed = (powerupSeed * 1103515245 + 12345) & 0x7fffffff; return powerupSeed / 0x7fffffff; }
   const POWERUP_ROLL_COUNT = 20000;
-  const counts = { magnet: 0, schild: 0, turbo: 0, muenzregen: 0 };
+  const counts = { magnet: 0, schild: 0, turbo: 0, scoreX2: 0 };
   for (let i = 0; i < POWERUP_ROLL_COUNT; i++) {
     const type = IdleCore.rollPowerupType(seededPowerupRandom);
     assert(Object.prototype.hasOwnProperty.call(counts, type), `rollPowerupType() liefert einen gültigen Typ (${type})`);
@@ -1239,22 +1239,26 @@ section('19 · TEIL 2 — feat(powerups): Magnet/Schild/Turbo/Münzregen (rollPo
   assert(IdleCore.shieldActive(unusedShieldState, shieldDurationMs - 1), 'shieldActive() bleibt für die volle Wirkdauer bereit');
   assert(!IdleCore.shieldActive(unusedShieldState, shieldDurationMs), 'shieldActive() erlischt nach Ablauf der Wirkdauer, falls unbenutzt (KEINE Strafe)');
 
-  // Münzregen: sofortiger km-Bonus (powerupCoinRainReward(), analog piggybankReward()), skaliert mit Bike/Tuning.
+  // Score-x2 (Teil 4, ersetzt 'muenzregen' im selben Gewichtungs-Slot): setzt scoreX2ExpiresAt, KEIN sofortiger km-Bonus mehr.
   const coinState = IdleCore.createInitialState();
   const kmBeforeCoin = coinState.km;
-  const expectedCoinBonus = Math.round(IdleCore.activeEarn(coinState) * IdleCore.IDLE_BALANCE.POWERUP_COINRAIN_KM_MULTIPLIER);
-  const coinResult = IdleCore.activatePowerupEffect(coinState, 'muenzregen', 0);
-  assert(coinResult.kmBonus === expectedCoinBonus, 'activatePowerupEffect(\'muenzregen\') liefert exakt activeEarn(state) × POWERUP_COINRAIN_KM_MULTIPLIER als kmBonus');
-  assert(coinState.km === kmBeforeCoin + expectedCoinBonus, 'activatePowerupEffect(\'muenzregen\') bucht den kmBonus korrekt auf state.km');
+  assert(!IdleCore.scoreX2Active(coinState, 0), 'Frischer Zustand hat KEINEN aktiven Score-x2-Effekt');
+  const coinResult = IdleCore.activatePowerupEffect(coinState, 'scoreX2', 0);
+  assert(coinResult.type === 'scoreX2', 'activatePowerupEffect(\'scoreX2\') liefert den aktivierten Typ zurück');
+  assert(coinState.km === kmBeforeCoin, 'activatePowerupEffect(\'scoreX2\') ändert km NICHT (wirkt nur auf state.run.score)');
+  assert(IdleCore.scoreX2Active(coinState, 0), 'scoreX2Active() ist direkt nach activatePowerupEffect(\'scoreX2\') aktiv');
+  const scoreX2DurationMs = IdleCore.powerupScoreX2DurationSeconds(coinState) * 1000;
+  assert(IdleCore.scoreX2Active(coinState, scoreX2DurationMs - 1), 'scoreX2Active() bleibt für die volle Wirkdauer aktiv');
+  assert(!IdleCore.scoreX2Active(coinState, scoreX2DurationMs), 'scoreX2Active() erlischt nach Ablauf der Wirkdauer');
 
-  // state.powerups.collected ist ein Lebenszeit-Zähler (jeder Typ, auch Münzregen, zählt).
+  // state.powerups.collected ist ein Lebenszeit-Zähler (jeder Typ, auch Score-x2, zählt).
   assert(coinState.powerups.collected === 1, 'activatePowerupEffect() erhöht state.powerups.collected um 1');
   IdleCore.activatePowerupEffect(coinState, 'magnet', 0);
   assert(coinState.powerups.collected === 2, 'activatePowerupEffect() zählt state.powerups.collected bei jedem weiteren Aufruf hoch');
 
-  // TUNING-PERKS: Magnet-Reichweite/Dauer, Schild-/Turbo-Dauer steigen (bzw. die Reichweiten-SCHWELLE sinkt = grössere Reichweite) monoton mit dem Tuning-Level.
+  // TUNING-PERKS: Magnet-Reichweite/Dauer, Schild-/Turbo-/Score-x2-Dauer steigen (bzw. die Reichweiten-SCHWELLE sinkt = grössere Reichweite) monoton mit dem Tuning-Level.
   const perkBikeId = IdleCore.createInitialState().currentBikeId;
-  let prevMagnetDuration = -Infinity, prevMagnetRange = Infinity, prevShieldDuration = -Infinity, prevTurboDuration = -Infinity;
+  let prevMagnetDuration = -Infinity, prevMagnetRange = Infinity, prevShieldDuration = -Infinity, prevTurboDuration = -Infinity, prevScoreX2Duration = -Infinity;
   for (let level = 0; level <= IdleCore.IDLE_BALANCE.TUNING_LEVEL_CAP; level += 5) {
     const perkState = IdleCore.createInitialState();
     perkState.bikeLevels[perkBikeId] = level;
@@ -1262,12 +1266,14 @@ section('19 · TEIL 2 — feat(powerups): Magnet/Schild/Turbo/Münzregen (rollPo
     const magnetRange = IdleCore.powerupMagnetRangeT(perkState);
     const shieldDuration = IdleCore.powerupShieldDurationSeconds(perkState);
     const turboDuration = IdleCore.powerupTurboDurationSeconds(perkState);
+    const scoreX2Duration = IdleCore.powerupScoreX2DurationSeconds(perkState);
     assert(magnetDuration >= prevMagnetDuration, `powerupMagnetDurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
     assert(magnetRange <= prevMagnetRange, `powerupMagnetRangeT() (Reichweiten-Schwelle) ist bei Level ${level} monoton nicht-steigend (= wachsende Reichweite)`);
     assert(magnetRange >= IdleCore.IDLE_BALANCE.POWERUP_MAGNET_MIN_RANGE_T - 1e-9, `powerupMagnetRangeT() bei Level ${level} respektiert POWERUP_MAGNET_MIN_RANGE_T`);
     assert(shieldDuration >= prevShieldDuration, `powerupShieldDurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
     assert(turboDuration >= prevTurboDuration, `powerupTurboDurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
-    prevMagnetDuration = magnetDuration; prevMagnetRange = magnetRange; prevShieldDuration = shieldDuration; prevTurboDuration = turboDuration;
+    assert(scoreX2Duration >= prevScoreX2Duration, `powerupScoreX2DurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
+    prevMagnetDuration = magnetDuration; prevMagnetRange = magnetRange; prevShieldDuration = shieldDuration; prevTurboDuration = turboDuration; prevScoreX2Duration = scoreX2Duration;
   }
 
   // v3→v4-Migration: ein v3-Save OHNE powerups-Feld (vor feat(powerups)) bekommt defensiv einen gültigen powerups-Zustand.
@@ -1279,6 +1285,7 @@ section('19 · TEIL 2 — feat(powerups): Magnet/Schild/Turbo/Münzregen (rollPo
     migratedNoPowerups.powerups.magnetExpiresAt === null && migratedNoPowerups.powerups.turboExpiresAt === null && migratedNoPowerups.powerups.shieldExpiresAt === null,
     'migrateState(): fehlendes powerups-Feld wird defensiv mit inaktiven (null) *ExpiresAt-Zeitstempeln aufgefüllt'
   );
+  assert(migratedNoPowerups.powerups.scoreX2ExpiresAt === null, 'migrateState(): fehlendes powerups-Feld wird defensiv MIT dem neuen (Teil 4) scoreX2ExpiresAt:null aufgefüllt');
   assert(migratedNoPowerups.km === 42, 'migrateState(): bestehende km bleiben bei der powerups-Migration unangetastet');
   assert(migratedNoPowerups.runner.lane === 1, 'migrateState(): bestehendes runner-Feld bleibt bei der powerups-Migration unangetastet');
 
@@ -1292,6 +1299,13 @@ section('19 · TEIL 2 — feat(powerups): Magnet/Schild/Turbo/Münzregen (rollPo
     migratedWithPowerups.powerups.shieldExpiresAt === 333,
     'migrateState(): ein bereits vorhandener gültiger powerups-Zustand bleibt exakt erhalten'
   );
+  assert(migratedWithPowerups.powerups.scoreX2ExpiresAt === null, 'migrateState(): ein v4-Save OHNE scoreX2ExpiresAt (vor Teil 4) bekommt es defensiv auf null aufgefüllt, ohne die übrigen Felder zu berühren');
+
+  // v5→v6-Migration (Teil 4): ein v5-Save MIT bereits vorhandenem scoreX2ExpiresAt übernimmt es unverändert.
+  const withScoreX2Raw = { version: 5, km: 5, powerups: { collected: 1, magnetExpiresAt: null, turboExpiresAt: null, shieldExpiresAt: null, scoreX2ExpiresAt: 999 } };
+  const migratedWithScoreX2 = IdleCore.migrateState(withScoreX2Raw);
+  assert(migratedWithScoreX2.version === IdleCore.IDLE_STATE_VERSION, 'migrateState(v5): hebt ein v5-Save (vor Teil 4) auf die aktuelle Version (6) an');
+  assert(migratedWithScoreX2.powerups.scoreX2ExpiresAt === 999, 'migrateState(): ein bereits vorhandener gültiger scoreX2ExpiresAt-Wert bleibt exakt erhalten');
 })();
 
 section('20 · TEIL 2 — balance(tuning): TUNING-GATE für den nächsten Bike-Kauf (getNextBikeToBuy/buyNextBike) + tuningReactionTimeFactor()');
@@ -1577,7 +1591,7 @@ section('21 · v4→v5 STATE-MIGRATION — alte Saves gewinnen die neue Run-Schi
     bikeLevels: { z125pro: 2, klx300: 5 },
   };
   const migratedFromV3 = IdleCore.migrateState(v3Raw);
-  assert(migratedFromV3.version === IdleCore.IDLE_STATE_VERSION, 'migrateState(v3): hebt die version auf die aktuelle IDLE_STATE_VERSION (5)');
+  assert(migratedFromV3.version === IdleCore.IDLE_STATE_VERSION, 'migrateState(v3): hebt die version auf die aktuelle IDLE_STATE_VERSION an');
   assert(migratedFromV3.km === 4321 && migratedFromV3.totalKmEarned === 9999, 'migrateState(v3): bestehende km/totalKmEarned bleiben byte-für-byte erhalten');
   assert(JSON.stringify(migratedFromV3.ownedBikeIds) === JSON.stringify(['z125pro', 'klx300']), 'migrateState(v3): ownedBikeIds bleibt erhalten');
   assert(migratedFromV3.bikeLevels.klx300 === 5, 'migrateState(v3): bikeLevels (Tuning) bleibt erhalten');
@@ -1646,6 +1660,233 @@ section('22 · Regression: runnerLeadSeconds()-Boden bleibt unabhängig von Teil
     Math.abs(IdleCore.runnerLeadSeconds(IdleCore.IDLE_BALANCE.RUNNER_SPEED_CAP_PCT) - IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS) < 1e-9,
     'runnerLeadSeconds(RUNNER_SPEED_CAP_PCT) trifft den Boden exakt'
   );
+})();
+
+section('23 · TEIL 4 — feat(nearmiss): isNearMiss()/registerNearMiss()/runComboMultiplier() — Bonus, Combo-Cap, Reset-bei-Crash');
+(function () {
+  // runComboMultiplier(): identische Formel wie comboMultiplier() (2x Basis, +0.5x/Punkt, Deckel 5x), aber eigene Konstanten.
+  assert(IdleCore.runComboMultiplier(0) === 1, 'runComboMultiplier(0) liefert 1 (kein Bonus)');
+  assert(
+    Math.abs(IdleCore.runComboMultiplier(1) - IdleCore.IDLE_BALANCE.RUN_COMBO_MULTIPLIER_BASE) < 1e-9,
+    'runComboMultiplier(1) entspricht exakt RUN_COMBO_MULTIPLIER_BASE'
+  );
+  let prevCombo = -Infinity;
+  for (let combo = 0; combo <= 30; combo++) {
+    const mult = IdleCore.runComboMultiplier(combo);
+    assert(mult >= prevCombo - 1e-9, `runComboMultiplier(${combo}) ist monoton nicht-fallend`);
+    assert(mult <= IdleCore.IDLE_BALANCE.RUN_COMBO_MULTIPLIER_MAX + 1e-9, `runComboMultiplier(${combo}) respektiert den Deckel RUN_COMBO_MULTIPLIER_MAX (5)`);
+    prevCombo = mult;
+  }
+  assert(
+    Math.abs(IdleCore.runComboMultiplier(30) - IdleCore.IDLE_BALANCE.RUN_COMBO_MULTIPLIER_MAX) < 1e-9,
+    'runComboMultiplier() erreicht bei hoher Combo exakt den Deckel (5x)'
+  );
+
+  // isNearMiss(): 'side' in einer BENACHBARTEN Lane ist ein Near-Miss, in der EIGENEN oder einer ferneren Lane NICHT.
+  const nmState = IdleCore.createInitialState();
+  IdleCore.startRun(nmState, 1000);
+  nmState.runner.lane = 1; // mittig bei RUNNER_LANE_COUNT=3
+  assert(IdleCore.isNearMiss(nmState, { lane: 0, type: 'side' }, 1000) === true, "isNearMiss(): 'side' in einer Lane daneben ist ein Near-Miss");
+  assert(IdleCore.isNearMiss(nmState, { lane: 2, type: 'side' }, 1000) === true, "isNearMiss(): 'side' auf der ANDEREN Nachbar-Lane ist ebenfalls ein Near-Miss");
+  assert(IdleCore.isNearMiss(nmState, { lane: 1, type: 'side' }, 1000) === false, "isNearMiss(): 'side' in der EIGENEN Lane ist KEIN Near-Miss (das ist ein Crash, kein knapper Vorbeigang)");
+
+  // isNearMiss(): 'lowBar'/'highBarrier' in der EIGENEN Lane, SAUBER pariert (Sprung/Ducken), ist ein Near-Miss.
+  assert(IdleCore.isNearMiss(nmState, { lane: 1, type: 'lowBar' }, 1000) === false, "isNearMiss(): 'lowBar' in der eigenen Lane OHNE Sprung ist KEIN Near-Miss (das ist ein Crash)");
+  IdleCore.jumpRunner(nmState, 1000);
+  assert(IdleCore.isNearMiss(nmState, { lane: 1, type: 'lowBar' }, 1200) === true, "isNearMiss(): 'lowBar' in der eigenen Lane MIT aktivem Sprung ist ein Near-Miss");
+  assert(IdleCore.isNearMiss(nmState, { lane: 0, type: 'lowBar' }, 1200) === false, "isNearMiss(): 'lowBar' in einer FREMDEN Lane ist KEIN Near-Miss (schlicht irrelevant)");
+
+  // registerNearMiss(): erhöht combo, aktualisiert comboMult (runComboMultiplier()), schreibt den fixen Score-Bonus gut.
+  const regState = IdleCore.createInitialState();
+  IdleCore.startRun(regState, 1000);
+  const scoreBefore = regState.run.score;
+  const firstResult = IdleCore.registerNearMiss(regState, 1000);
+  assert(regState.run.combo === 1, 'registerNearMiss(): erhöht state.run.combo um 1');
+  assert(
+    Math.abs(regState.run.comboMult - IdleCore.runComboMultiplier(1)) < 1e-9,
+    'registerNearMiss(): aktualisiert state.run.comboMult exakt auf runComboMultiplier(combo)'
+  );
+  assert(firstResult.bonus === IdleCore.IDLE_BALANCE.RUN_NEAR_MISS_SCORE_BONUS, 'registerNearMiss(): liefert den konfigurierten Score-Bonus zurück');
+  assert(
+    Math.abs(regState.run.score - (scoreBefore + IdleCore.IDLE_BALANCE.RUN_NEAR_MISS_SCORE_BONUS)) < 1e-9,
+    'registerNearMiss(): schreibt den Score-Bonus sofort auf state.run.score gut'
+  );
+  IdleCore.registerNearMiss(regState, 1000);
+  assert(regState.run.combo === 2, 'registerNearMiss(): jeder weitere Near-Miss erhöht die Combo weiter');
+
+  // Ein echter Crash (endRun()) setzt die Combo zurück — ein Near-Miss selbst NIE.
+  regState.run.score = 500;
+  const summary = IdleCore.endRun(regState, 2000);
+  assert(summary.score === 500, 'endRun(): die Zusammenfassung zeigt den finalen Score inkl. aller Near-Miss-Boni');
+  assert(regState.run.combo === 0 && regState.run.comboMult === 1, 'endRun() (echter Crash): setzt combo/comboMult auf 0/1 zurück');
+})();
+
+section('24 · TEIL 4 — feat(score): runScoreForDistance()-Multiplikator (Combo × Score-x2) + tickRunEconomy()-Verdrahtung');
+(function () {
+  // runScoreForDistance(): ohne Multiplikator identisch zu Phase A; mit Multiplikator strikt höher.
+  const base = IdleCore.runScoreForDistance(100);
+  assert(base === 100 * IdleCore.IDLE_BALANCE.RUN_SCORE_PER_DISTANCE_UNIT, 'runScoreForDistance(distance) ohne Multiplikator bleibt unverändert (Rückwärtskompatibilität)');
+  const boosted = IdleCore.runScoreForDistance(100, 3);
+  assert(Math.abs(boosted - base * 3) < 1e-9, 'runScoreForDistance(distance, mult) skaliert den Score-Zuwachs exakt mit dem Multiplikator');
+  assert(IdleCore.runScoreForDistance(100, 0) === base, 'runScoreForDistance(): ein Multiplikator <= 0 fällt defensiv auf 1 zurück');
+
+  // tickRunEconomy(): der aktuelle comboMult fliesst automatisch in den Score-Zuwachs ein.
+  const comboState = IdleCore.createInitialState();
+  IdleCore.startRun(comboState, 1000);
+  comboState.run.comboMult = 4;
+  const comboResult = IdleCore.tickRunEconomy(comboState, 100, 'active', 1000);
+  assert(
+    Math.abs(comboResult.scoreGained - IdleCore.runScoreForDistance(100, 4)) < 1e-9,
+    'tickRunEconomy(): der Score-Zuwachs eines Ticks berücksichtigt state.run.comboMult'
+  );
+
+  // tickRunEconomy(): ein aktiver Score-x2-Effekt verdoppelt den Score-Zuwachs zusätzlich zur Combo — OHNE km/state.run.coins zu beeinflussen.
+  const scoreX2State = IdleCore.createInitialState();
+  IdleCore.startRun(scoreX2State, 1000);
+  IdleCore.activatePowerupEffect(scoreX2State, 'scoreX2', 1000);
+  const kmBefore = scoreX2State.km;
+  const withoutBoostState = IdleCore.createInitialState();
+  IdleCore.startRun(withoutBoostState, 1000);
+  const boostedResult = IdleCore.tickRunEconomy(scoreX2State, 100, 'active', 1000);
+  const plainResult = IdleCore.tickRunEconomy(withoutBoostState, 100, 'active', 1000);
+  assert(
+    Math.abs(boostedResult.scoreGained - plainResult.scoreGained * IdleCore.IDLE_BALANCE.POWERUP_SCORE_X2_MULTIPLIER) < 1e-9,
+    'tickRunEconomy(): ein aktiver Score-x2-Effekt verdoppelt den Score-Zuwachs (POWERUP_SCORE_X2_MULTIPLIER) ggü. demselben Tick ohne Effekt'
+  );
+  assert(boostedResult.coinsGained === plainResult.coinsGained, 'tickRunEconomy(): Score-x2 beeinflusst den Coin-Zuwachs NICHT');
+  assert(scoreX2State.km === kmBefore, 'tickRunEconomy(): Score-x2 beeinflusst km NICHT (wirkt nur auf state.run.score)');
+
+  // Score steigt monoton mit der Distanz (bei gleichem Multiplikator).
+  let prevScore = -Infinity;
+  for (let distance = 0; distance <= 1000; distance += 100) {
+    const s = IdleCore.runScoreForDistance(distance, 2);
+    assert(s >= prevScore - 1e-9, `runScoreForDistance(${distance}, 2) ist monoton nicht-fallend`);
+    prevScore = s;
+  }
+})();
+
+section('25 · TEIL 4 — feat(coins): collectRunCoin()/generateCoinTrail()/nextCoinTrailIntervalSeconds()');
+(function () {
+  // collectRunCoin(): bankt in DENSELBEN state.run.coins-Pool wie der distanzbasierte Zuwachs, No-op ohne laufenden Run.
+  const coinState = IdleCore.createInitialState();
+  IdleCore.startRun(coinState, 1000);
+  const coinsBefore = coinState.run.coins;
+  const gained = IdleCore.collectRunCoin(coinState, 1000);
+  assert(gained === IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_PICKUP_VALUE, 'collectRunCoin() liefert den konfigurierten Pickup-Wert zurück');
+  assert(coinState.run.coins === coinsBefore + gained, 'collectRunCoin() bankt den Pickup-Wert in state.run.coins');
+
+  const notRunningState = IdleCore.createInitialState();
+  assert(IdleCore.collectRunCoin(notRunningState, 1000) === 0, 'collectRunCoin(): No-op (liefert 0), solange kein Run läuft (phase !== "running")');
+  assert(notRunningState.run.coins === 0, 'collectRunCoin(): ändert state.run.coins NICHT, solange kein Run läuft');
+
+  // generateCoinTrail(): liefert RUN_COIN_TRAIL_LENGTH Münzen, alle mit gültiger Lane, streng steigendem offsetT.
+  const trail = IdleCore.generateCoinTrail(Math.random, 3);
+  assert(trail.length === IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH, 'generateCoinTrail() liefert genau RUN_COIN_TRAIL_LENGTH Münzen');
+  let prevOffset = -Infinity;
+  trail.forEach((coin, i) => {
+    assert(coin.lane >= 0 && coin.lane < 3, `generateCoinTrail(): Münze ${i} hat eine gültige Lane (0..2)`);
+    assert(coin.offsetT > prevOffset, `generateCoinTrail(): offsetT steigt streng monoton (Münze ${i})`);
+    prevOffset = coin.offsetT;
+  });
+
+  // Über viele Trails hinweg: mindestens EIN Bogen-Trail (Lane wechselt innerhalb des Trails) taucht auf (ARC_CHANCE > 0).
+  let sawLaneChange = false;
+  let trailSeed = 7;
+  function seededTrailRandom() { trailSeed = (trailSeed * 1103515245 + 12345) & 0x7fffffff; return trailSeed / 0x7fffffff; }
+  for (let i = 0; i < 200; i++) {
+    const t = IdleCore.generateCoinTrail(seededTrailRandom, 3);
+    const lanes = new Set(t.map((c) => c.lane));
+    if (lanes.size > 1) sawLaneChange = true;
+  }
+  assert(sawLaneChange, 'generateCoinTrail(): erzeugt über viele Spawns hinweg auch über Lanes wandernde BOGEN-Trails (nicht nur gerade Linien)');
+
+  // nextCoinTrailIntervalSeconds(): liegt innerhalb der konfigurierten Grenzen.
+  for (let i = 0; i < 50; i++) {
+    const interval = IdleCore.nextCoinTrailIntervalSeconds(Math.random);
+    assert(
+      interval >= IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_INTERVAL_MIN_SECONDS - 1e-9 && interval <= IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_INTERVAL_MAX_SECONDS + 1e-9,
+      `nextCoinTrailIntervalSeconds() (${interval.toFixed(2)}s) liegt innerhalb der konfigurierten Grenzen`
+    );
+  }
+})();
+
+section('26 · TEIL 4 — feat(powerups): Turbo lässt \'lowBar\' OHNE Sprung passieren + Drop-Rarität Powerups vs. Münz-Trails');
+(function () {
+  // Turbo (Teil 4): 'lowBar' verursacht WÄHREND eines aktiven Turbo-Effekts KEINEN Treffer, auch ohne Sprung.
+  const turboState = IdleCore.createInitialState();
+  IdleCore.startRun(turboState, 1000);
+  assert(IdleCore.obstacleCausesCrash('lowBar', turboState, 1000) === true, "obstacleCausesCrash('lowBar') ohne Sprung/Turbo bleibt ein Treffer");
+  IdleCore.activatePowerupEffect(turboState, 'turbo', 1000);
+  assert(IdleCore.obstacleCausesCrash('lowBar', turboState, 1000) === false, "obstacleCausesCrash('lowBar') ist WÄHREND eines aktiven Turbo-Effekts KEIN Treffer (auch ohne Sprung)");
+  assert(IdleCore.obstacleCausesCrash('highBarrier', turboState, 1000) === true, "obstacleCausesCrash('highBarrier') bleibt trotz Turbo ein Treffer OHNE Ducken (Turbo hilft nur bei 'lowBar')");
+  const turboDetect = IdleCore.detectRunCollision(turboState, 'lowBar', 1000);
+  assert(turboDetect.crashed === false && turboDetect.shielded === false, "detectRunCollision('lowBar') während Turbo: kein Crash, KEIN Schild-Verbrauch (Turbo alleine reicht)");
+
+  // Drop-Rarität: Powerups sind SELTENER als Münz-Trails — beide Spawn-Intervalle vergleichen (grösseres Intervall = seltener).
+  let sumPowerupInterval = 0, sumCoinInterval = 0;
+  const SAMPLE = 2000;
+  let raritySeed = 21;
+  function seededRarityRandom() { raritySeed = (raritySeed * 1103515245 + 12345) & 0x7fffffff; return raritySeed / 0x7fffffff; }
+  for (let i = 0; i < SAMPLE; i++) {
+    sumPowerupInterval += IdleCore.nextPowerupIntervalSeconds(seededRarityRandom);
+    sumCoinInterval += IdleCore.nextCoinTrailIntervalSeconds(seededRarityRandom);
+  }
+  assert(sumPowerupInterval > sumCoinInterval, 'Powerup-Spawn-Intervalle sind im Mittel deutlich länger als Münz-Trail-Spawn-Intervalle (Powerups sind seltener als Münzen)');
+  // Zusätzlich: EIN Münz-Trail (mehrere Münzen) erscheint bei jedem Spawn-Versuch garantiert, ein Powerup nur mit powerupSpawnChance() (< 1).
+  const chanceState = IdleCore.createInitialState();
+  assert(IdleCore.powerupSpawnChance(chanceState) < 1, 'powerupSpawnChance() liegt strikt unter 1 — nicht jeder Powerup-Spawn-Versuch liefert tatsächlich ein Powerup, ein Münz-Trail-Versuch hingegen immer RUN_COIN_TRAIL_LENGTH Münzen');
+
+  // Roster-Bestätigung: 'scoreX2' ist im Gewichtungs-Objekt, 'muenzregen' ist es NICHT mehr.
+  const weights = IdleCore.IDLE_BALANCE.POWERUP_TYPE_WEIGHTS;
+  assert(Object.prototype.hasOwnProperty.call(weights, 'scoreX2'), 'POWERUP_TYPE_WEIGHTS enthält den neuen Typ "scoreX2"');
+  assert(!Object.prototype.hasOwnProperty.call(weights, 'muenzregen'), 'POWERUP_TYPE_WEIGHTS enthält "muenzregen" NICHT mehr (durch scoreX2 ersetzt)');
+  assert(Object.keys(weights).length === 4, 'POWERUP_TYPE_WEIGHTS bleibt bei genau 4 Einträgen (1:1-Ersatz, kein 5. Slot)');
+})();
+
+section('27 · TEIL 4 — feat(difficulty): runDifficultyDensity()/runDifficultyPatternTier()/runDifficultyWaveSize() + 0.6s-Boden bei JEDER Distanz');
+(function () {
+  // runDifficultyDensity(): startet bei 1 (Distanz 0), steigt monoton, gedeckelt auf RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER.
+  assert(IdleCore.runDifficultyDensity(0) === 1, 'runDifficultyDensity(0) liefert 1 (keine Verstärkung am Run-Anfang)');
+  let prevDensity = -Infinity;
+  for (let distance = 0; distance <= 10000; distance += 250) {
+    const density = IdleCore.runDifficultyDensity(distance);
+    assert(density >= prevDensity - 1e-9, `runDifficultyDensity(${distance}) ist monoton nicht-fallend`);
+    assert(density <= IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER + 1e-9, `runDifficultyDensity(${distance}) respektiert den Deckel RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER`);
+    prevDensity = density;
+  }
+  assert(
+    Math.abs(IdleCore.runDifficultyDensity(IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DISTANCE_SCALE_UNITS) - IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER) < 1e-9,
+    'runDifficultyDensity() erreicht bei RUN_DIFFICULTY_DISTANCE_SCALE_UNITS exakt den Deckel'
+  );
+  assert(
+    IdleCore.runDifficultyDensity(IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DISTANCE_SCALE_UNITS * 5) === IdleCore.runDifficultyDensity(IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DISTANCE_SCALE_UNITS),
+    'runDifficultyDensity() steigt NICHT über den Deckel hinaus, auch bei sehr grosser Distanz'
+  );
+
+  // runDifficultyPatternTier()/runDifficultyWaveSize(): steigt in Stufen, bleibt aber IMMER mindestens eine Lane frei.
+  assert(IdleCore.runDifficultyPatternTier(0) === 0, 'runDifficultyPatternTier(0) ist Stufe 0 (nur einzelne Hindernisse)');
+  assert(IdleCore.runDifficultyPatternTier(IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_PATTERN_TIER1_UNITS) === 1, 'runDifficultyPatternTier() erreicht Stufe 1 bei RUN_DIFFICULTY_PATTERN_TIER1_UNITS');
+  assert(IdleCore.runDifficultyPatternTier(IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_PATTERN_TIER2_UNITS) === 2, 'runDifficultyPatternTier() erreicht Stufe 2 bei RUN_DIFFICULTY_PATTERN_TIER2_UNITS');
+  for (let distance = 0; distance <= 8000; distance += 200) {
+    const waveSize = IdleCore.runDifficultyWaveSize(distance, 3);
+    assert(waveSize >= 1 && waveSize <= 2, `runDifficultyWaveSize(${distance}, 3 Lanes) lässt bei 3 Lanes IMMER mindestens eine Lane frei (max. 2 gleichzeitige Hindernisse)`);
+  }
+  assert(IdleCore.runDifficultyWaveSize(0, 1) === 1, 'runDifficultyWaveSize() liefert bei nur 1 Lane trotzdem mindestens 1 (kein 0/negativer Wert)');
+
+  // Kern-Invariante (Teil 4 darf sie NIE verletzen): runnerLeadSeconds() bleibt bei JEDER Kombination aus speedPct UND in-run distanceUnits über dem 0.6s-Boden,
+  // weil runDifficultyDensity() NUR in nextObstacleSpawnIntervalSeconds() (Spawn-Häufigkeit) einfliesst, NIEMALS in runnerLeadSeconds() selbst.
+  for (let speedPct = 0; speedPct <= 100; speedPct += 10) {
+    const lead = IdleCore.runnerLeadSeconds(speedPct);
+    assert(lead >= IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS - 1e-9, `runnerLeadSeconds(${speedPct}) hält den 0.6s-Boden (Teil 4 nimmt keinen Parameter für distanceUnits an)`);
+    for (let distance = 0; distance <= 8000; distance += 2000) {
+      const interval = IdleCore.nextObstacleSpawnIntervalSeconds(speedPct, () => 0.5, distance);
+      assert(interval > 0, `nextObstacleSpawnIntervalSeconds(${speedPct}, ..., ${distance}) bleibt strikt positiv (nie ein Endlos-Spawn-Stau)`);
+    }
+  }
+  // Explizit: höhere Distanz liefert (bei gleichem speedPct/rng) ein KÜRZERES ODER GLEICHES Intervall, NIE ein längeres.
+  const lowDistanceInterval = IdleCore.nextObstacleSpawnIntervalSeconds(50, () => 0.5, 0);
+  const highDistanceInterval = IdleCore.nextObstacleSpawnIntervalSeconds(50, () => 0.5, IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DISTANCE_SCALE_UNITS);
+  assert(highDistanceInterval <= lowDistanceInterval + 1e-9, 'nextObstacleSpawnIntervalSeconds(): höhere In-Run-Distanz verkürzt das Spawn-Intervall (mehr Dichte), nie umgekehrt');
 })();
 
 // ============================================================
