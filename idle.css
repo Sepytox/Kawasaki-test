@@ -462,7 +462,9 @@
 .idle-shop-item-action {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem 0.5rem;
   flex-shrink: 0;
 }
 .idle-shop-item-badge {
@@ -470,10 +472,21 @@
   color: var(--text-subtle);
   white-space: nowrap;
 }
+/* balance(tuning) — TUNING-GATE: Hinweistext unter dem (deaktivierten)
+   Kaufen-Button, solange das zuletzt besessene Bike das erforderliche
+   Tuning-Level noch nicht erreicht hat (siehe idle.js renderShopList()). */
+.idle-shop-item-tuning-hint {
+  flex: 1 1 100%;
+  text-align: right;
+  font-size: 0.78em;
+  color: var(--accent);
+  white-space: nowrap;
+}
 
 @media (max-width: 600px) {
   .idle-shop-item { flex-direction: column; align-items: stretch; text-align: center; }
   .idle-shop-item-action { justify-content: center; }
+  .idle-shop-item-tuning-hint { text-align: center; }
 }
 
 /* ── Schaltpunkt-Combo (MECHANIK A) ─────────────────────────────── */

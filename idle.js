@@ -431,11 +431,15 @@
           action.appendChild(selectBtn);
         }
       } else if (isNextToBuy) {
+        // balance(tuning) — TUNING-GATE: getNextBikeToBuy() liefert zusätzlich
+        // zum km-Preis, ob das zuletzt besessene Bike das erforderliche
+        // Tuning-Level erreicht hat (tuningMet/tuningRequirement/tuningLevel).
+        var nextInfo = IdleCore.getNextBikeToBuy(state);
         var buyBtn = document.createElement('button');
         buyBtn.type = 'button';
         buyBtn.className = 'btn idle-buy-btn';
         buyBtn.textContent = 'Kaufen — ' + formatKm(bike.kaufpreisKm) + ' km';
-        buyBtn.disabled = state.km < bike.kaufpreisKm;
+        buyBtn.disabled = !nextInfo.affordable;
         buyBtn.addEventListener('click', function () {
           var result = IdleCore.buyNextBike(state);
           if (result.success) {
@@ -446,6 +450,13 @@
           }
         });
         action.appendChild(buyBtn);
+
+        if (!nextInfo.tuningMet) {
+          var tuningHint = document.createElement('span');
+          tuningHint.className = 'idle-shop-item-tuning-hint';
+          tuningHint.textContent = '🔧 Benötigt Tuning-Stufe ' + nextInfo.tuningRequirement + ' (aktuell ' + nextInfo.tuningLevel + ')';
+          action.appendChild(tuningHint);
+        }
       } else {
         var lockedBadge = document.createElement('span');
         lockedBadge.className = 'idle-shop-item-badge';
