@@ -3,7 +3,7 @@
  * Headless Test — Geteiltes Bild-System (bike-image.js)
  *
  * Prüft die reinen Helper-Funktionen: Foto-Pfad-Konvention
- * (images/bikes/<id>.jpg), Kategorie-Normalisierung auf die sechs
+ * (images/bikes/<id>.png), Kategorie-Normalisierung auf die sechs
  * Silhouette-Buckets, dass die generierte Kategorie-SVG ein gültiges
  * data:-URI ist und je Kategorie unterschiedlich aussieht, sowie dass
  * markup() sauberes, in sich geschlossenes HTML liefert (kein Bruch von
@@ -38,10 +38,10 @@ function section(title) {
   console.log('═'.repeat(60));
 }
 
-section('1 · photoPath() folgt der images/bikes/<id>.jpg-Konvention');
+section('1 · photoPath() folgt der images/bikes/<id>.png-Konvention');
 (function() {
-  assert(BikeImage.photoPath('z900') === 'images/bikes/z900.jpg', 'photoPath("z900") ist korrekt');
-  assert(BikeImage.photoPath('versys650') === 'images/bikes/versys650.jpg', 'photoPath("versys650") ist korrekt');
+  assert(BikeImage.photoPath('z900') === 'images/bikes/z900.png', 'photoPath("z900") ist korrekt');
+  assert(BikeImage.photoPath('versys650') === 'images/bikes/versys650.png', 'photoPath("versys650") ist korrekt');
 })();
 
 section('2 · categoryKey() normalisiert bekannte Kategorien auf die 6 Buckets');
@@ -90,10 +90,10 @@ section('4 · buildCategorySvg() nutzt bike-eigenes g1/g2, falls vorhanden');
 section('5 · markup() lädt kein Foto ohne BIKE_PHOTO_MANIFEST-Eintrag (kein 404)');
 (function() {
   // images/bikes/ ist aktuell absichtlich leer — z900 ist NICHT im Manifest,
-  // markup() darf daher keinen Ladeversuch für images/bikes/z900.jpg machen.
+  // markup() darf daher keinen Ladeversuch für images/bikes/z900.png machen.
   const html = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' }, { className: 'fact-card-image' });
   assert(html.indexOf('bike-photo-wrap fact-card-image') !== -1, 'Custom className wird angehängt');
-  assert(html.indexOf('src="images/bikes/z900.jpg"') === -1, 'Ohne Manifest-Eintrag wird KEIN Foto-Pfad referenziert (kein 404-Request)');
+  assert(html.indexOf('src="images/bikes/z900.png"') === -1, 'Ohne Manifest-Eintrag wird KEIN Foto-Pfad referenziert (kein 404-Request)');
   assert(html.indexOf('src="data:image/svg+xml,') === 0 || html.indexOf('src="data:image/svg+xml,') > -1, 'src zeigt direkt auf die generierte SVG-Illustration');
   assert(html.indexOf('bike-photo-fallback') !== -1, 'bike-photo-fallback-Klasse ist von Anfang an gesetzt (identisches Endergebnis wie beim alten onerror-Pfad)');
   assert(html.indexOf('onload=') !== -1, 'onload-Handler ist gesetzt');
@@ -114,7 +114,7 @@ section('6 · markup() referenziert das echte Foto, sobald eine ID im BIKE_PHOTO
   try {
     assert(BikeImage.hasPhoto('z900') === true, 'hasPhoto() erkennt den simulierten Manifest-Eintrag');
     const html = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' });
-    assert(html.indexOf('src="images/bikes/z900.jpg"') !== -1, 'Mit Manifest-Eintrag wird das Foto zuerst referenziert');
+    assert(html.indexOf('src="images/bikes/z900.png"') !== -1, 'Mit Manifest-Eintrag wird das Foto zuerst referenziert');
     assert(html.indexOf('onerror=') !== -1, 'Mit Manifest-Eintrag bleibt der onerror-Fallback auf die SVG erhalten');
     // Nur das class-Attribut selbst prüfen (nicht den onerror-Handler-Text,
     // der die Klasse "bike-photo-fallback" als String-Literal enthält).

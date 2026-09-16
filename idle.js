@@ -100,7 +100,7 @@
   var PIGGY_POSITION_MARGIN_PCT = 12;
 
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
-  var state = IdleCore.loadState();
+  var state = ApiClient.loadIdleState();
 
   /** In km gutgeschriebener Offline-Ertrag beim Laden (0, falls keine/zu kurze Abwesenheit). Siehe showOfflineBanner() in initIdlePage(). */
   var offlineEarnedKm = 0;
@@ -115,7 +115,7 @@
       // Sofort speichern (aktualisiert auch offline.lastSeenAt, siehe
       // idle-core.js saveState()) — verhindert Doppel-Gutschrift, falls
       // die Seite vor dem nächsten Auto-Save/beforeunload erneut geladen wird.
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
     }
   })();
 
@@ -152,7 +152,7 @@
       // Sofort speichern (analog zur Offline-Ertrags-Gutschrift oben) — die
       // "Verziehen"-Entscheidung soll dauerhaft in localStorage stehen und
       // nicht erst auf den nächsten Auto-Save (bis zu 5s) warten müssen.
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
     }
   })();
 
@@ -369,7 +369,7 @@
           selectBtn.textContent = 'Fahren';
           selectBtn.addEventListener('click', function () {
             IdleCore.selectBike(state, bike.id);
-            IdleCore.saveState(state);
+            ApiClient.saveIdleState(state);
             renderAll();
           });
           action.appendChild(selectBtn);
@@ -384,7 +384,7 @@
           var result = IdleCore.buyNextBike(state);
           if (result.success) {
             IdleCore.selectBike(state, result.bike.id);
-            IdleCore.saveState(state);
+            ApiClient.saveIdleState(state);
             renderAll();
             triggerBikeHandover(result.bike);
           }
@@ -467,7 +467,7 @@
     btn.addEventListener('click', function () {
       var result = IdleCore.upgradeBike(state, state.currentBikeId);
       if (result.success) {
-        IdleCore.saveState(state);
+        ApiClient.saveIdleState(state);
         renderAll();
       }
     });
@@ -837,7 +837,7 @@
     toggleBtn.addEventListener('click', function () {
       ensureAudioEngine();
       state.sound.enabled = !state.sound.enabled;
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
       refreshToggleLabel();
       updateEngineSound(getCurrentBikeInfo().stats.geschwindigkeitPct);
     });
@@ -847,7 +847,7 @@
       updateEngineSound(getCurrentBikeInfo().stats.geschwindigkeitPct);
     });
     volumeInput.addEventListener('change', function () {
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
     });
   }
 
@@ -942,7 +942,7 @@
     if (!isIgnore) {
       IdleCore.applyShiftResult(state, hit, Date.now());
       IdleCore.recordComboPeak(state, state.combo.count);
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
       if (trackEl) trackEl.classList.add(hit ? 'is-hit' : 'is-miss');
       renderAll();
       updateComboBadge();
@@ -1090,7 +1090,7 @@
         buyBtn.addEventListener('click', function () {
           var result = IdleCore.buyContract(state, contract.id);
           if (result.success) {
-            IdleCore.saveState(state);
+            ApiClient.saveIdleState(state);
             renderAll();
           }
         });
@@ -1125,7 +1125,7 @@
       );
       if (!confirmed) return;
       state = IdleCore.finishSeason(state);
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
       renderAll();
       checkIdleAchievements();
     });
@@ -1231,7 +1231,7 @@
     var partId = IdleCore.rollPartDrop(Math.random);
     if (partId) {
       var result = IdleCore.addPart(state, partId);
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
       renderPartsPanel();
       renderBikeCard();
       showPartToast(result);
@@ -1393,7 +1393,7 @@
     state.finance.activeBillDueAt = Date.now() + grace * 1000;
     billState = { active: true, amount: amount, totalSeconds: grace, secondsRemaining: grace };
     renderBillPanel();
-    IdleCore.saveState(state);
+    ApiClient.saveIdleState(state);
   }
 
   /**
@@ -1461,7 +1461,7 @@
     billTimerSeconds = IdleCore.nextBillIntervalSeconds(state);
     var panel = document.getElementById('idleBillPanel');
     if (panel) panel.hidden = true;
-    IdleCore.saveState(state);
+    ApiClient.saveIdleState(state);
     showInsolvencyNotice();
     renderAll();
     checkIdleAchievements();
@@ -1489,7 +1489,7 @@
       }
       endBill();
       renderAll();
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
       checkIdleAchievements();
     });
   }
@@ -1602,7 +1602,7 @@
     var el = document.getElementById('idlePiggy');
 
     var result = IdleCore.smashPiggybank(state, Math.random);
-    IdleCore.saveState(state);
+    ApiClient.saveIdleState(state);
 
     if (el) el.classList.add('is-smashed');
     showPiggyToast(result);
@@ -1718,14 +1718,14 @@
    */
   function wireLifecycleSave() {
     setInterval(function () {
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
     }, AUTO_SAVE_INTERVAL_MS);
 
     window.addEventListener('beforeunload', function () {
-      IdleCore.saveState(state);
+      ApiClient.saveIdleState(state);
     });
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden') IdleCore.saveState(state);
+      if (document.visibilityState === 'hidden') ApiClient.saveIdleState(state);
     });
   }
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kawasaki Rennsimulator — Realistische Physik | Vrooooom</title>
+    <title>Kawasaki Rennsimulator — Realistische Physik | Kawasaki</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23080808'/%3E%3Ctext x='50' y='68' font-size='58' font-family='sans-serif' font-weight='800' text-anchor='middle' fill='%23ff6600'%3EK%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="design.css">
@@ -495,6 +495,7 @@
      data-theme-toggle="external": theme-toggle.js verdrahtet den Button
      weiter unten, navbar.js darf hier NICHT selbst verdrahten. -->
 <nav id="siteNavRoot" class="site-nav" data-theme-toggle="external"></nav>
+<script src="js/api-client.js"></script>
 <script src="navbar.js"></script>
 
 <div class="race-page">
@@ -803,8 +804,8 @@ let currentBike1 = 'zx10r';
 let currentBike2 = 'z900';
 let raceMode = 'single';
 
-// Records from localStorage
-let records = JSON.parse(localStorage.getItem('kawasaki_records') || '{}');
+// Records from localStorage (via api-client.js)
+let records = window.ApiClient.getRaceRecords();
 
 // ==========================================
 // POPULATE SELECTS
@@ -1569,7 +1570,7 @@ function saveRecord(state, bike) {
     const best = records[bikeKey];
     if (!best || state.t100 < best) {
         records[bikeKey] = state.t100;
-        localStorage.setItem('kawasaki_records', JSON.stringify(records));
+        window.ApiClient.saveRaceRecord(records);
         updateRecordDisplay();
     }
 }
@@ -1629,7 +1630,7 @@ function updateHighscoreDisplay() {
     const el = document.getElementById('highscoreReadout');
     if (!el) return;
     let hs = null;
-    try { hs = JSON.parse(localStorage.getItem('raceHighscore') || 'null'); } catch (e) { hs = null; }
+    try { hs = window.ApiClient.getRaceHighscore(); } catch (e) { hs = null; }
     if (hs && typeof hs.time === 'number') {
         el.textContent = '🏁 Highscore: ' + hs.time.toFixed(2) + 's'
             + (hs.bike ? ' — ' + hs.bike : '')
@@ -1644,13 +1645,13 @@ function saveHighscore(state, bike) {
     if (isEndlessMode) return;
     if (!state || typeof state.time !== 'number' || state.time <= 0) return;
     let hs = null;
-    try { hs = JSON.parse(localStorage.getItem('raceHighscore') || 'null'); } catch (e) { hs = null; }
+    try { hs = window.ApiClient.getRaceHighscore(); } catch (e) { hs = null; }
     if (!hs || typeof hs.time !== 'number' || state.time < hs.time) {
         const distLabel = state.dist >= 1000
             ? (state.dist / 1000).toFixed(2) + ' km'
             : state.dist.toFixed(0) + ' m';
         hs = { time: state.time, bike: bike ? bike.name : '', dist: distLabel };
-        localStorage.setItem('raceHighscore', JSON.stringify(hs));
+        window.ApiClient.saveRaceHighscore(hs);
     }
     updateHighscoreDisplay();
 }

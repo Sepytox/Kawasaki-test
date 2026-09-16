@@ -2,7 +2,7 @@
  * bike-image.js — Geteiltes Bild-System für Motorrad-Visuals.
  *
  * Konvention: für jedes Motorrad wird zuerst ein echtes Foto unter
- * `images/bikes/<id>.jpg` versucht (siehe images/bikes/README.md). Schlägt
+ * `images/bikes/<id>.png` versucht (siehe images/bikes/README.md). Schlägt
  * das Laden fehl (Foto fehlt), wird automatisch auf eine selbst erzeugte,
  * kategorie-spezifische SVG-Illustration zurückgefallen (Sport, Naked,
  * Touring/Adventure, Retro, Offroad, Cruiser) — keinerlei externe
@@ -19,15 +19,15 @@
   var VIEWBOX_H = 200;
 
   /**
-   * Manifest der Bike-IDs, für die unter images/bikes/<id>.jpg TATSÄCHLICH
+   * Manifest der Bike-IDs, für die unter images/bikes/<id>.png TATSÄCHLICH
    * eine Foto-Datei im Repo liegt. Nur diese IDs lösen einen
-   * <img src="images/bikes/<id>.jpg">-Ladeversuch aus — alle anderen
+   * <img src="images/bikes/<id>.png">-Ladeversuch aus — alle anderen
    * springen direkt zur generierten SVG-Illustration (siehe markup()),
    * damit für (noch) nicht vorhandene Fotos KEIN 404-Request entsteht.
    *
    * Aktuell leer, weil images/bikes/ absichtlich noch keine echten Fotos
    * enthält (siehe images/bikes/README.md). Um ein Foto zu aktivieren:
-   * Datei unter images/bikes/<id>.jpg ablegen UND die ID hier eintragen,
+   * Datei unter images/bikes/<id>.png ablegen UND die ID hier eintragen,
    * z. B. `{ z900: true }`.
    * @type {Object<string, boolean>}
    */
@@ -137,7 +137,7 @@
   /**
    * Baut eine kategorie-spezifische SVG-Illustration (Gradient-Hintergrund +
    * Linien-Silhouette + Modellname) als data:-URI. Dient als Fallback, wenn
-   * unter images/bikes/<id>.jpg kein echtes Foto vorhanden ist.
+   * unter images/bikes/<id>.png kein echtes Foto vorhanden ist.
    * @param {Object} bike - Bike-Datensatz mit mind. name, category. Optional g1/g2 (Hex ohne '#') für eine bike-eigene Gradientfarbe statt der Kategorie-Standardfarbe.
    * @returns {string} data:image/svg+xml,... Data-URI.
    */
@@ -168,10 +168,10 @@
   /**
    * Pfad zum bevorzugten echten Foto eines Motorrads.
    * @param {string} id - Bike-ID (z. B. "z900").
-   * @returns {string} Relativer Pfad, z. B. "images/bikes/z900.jpg".
+   * @returns {string} Relativer Pfad, z. B. "images/bikes/z900.png".
    */
   function photoPath(id) {
-    return 'images/bikes/' + id + '.jpg';
+    return 'images/bikes/' + id + '.png';
   }
 
   /**

@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kawasaki Tuning-Shop — Teile & Zubehör | Vrooooom</title>
+    <title>Kawasaki Tuning-Shop — Teile & Zubehör | Kawasaki</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23080808'/%3E%3Ctext x='50' y='68' font-size='58' font-family='sans-serif' font-weight='800' text-anchor='middle' fill='%23ff6600'%3EK%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="design.css">
     <script>(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
     <script src="bikes-data.js"></script>
     <script src="bike-image.js"></script>
+    <script src="js/api-client.js"></script>
     <style>
 /* PAGE */
         .shop-page { max-width:1200px;margin:0 auto;padding:1.5rem 1rem 4rem; }
@@ -918,9 +919,12 @@ const SHOP_BIKES = buildShopBikes(SHOP_BIKE_KEYS);
 
 // ==========================================
 // PARTS DATA
+// Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
+// (gilt für alle Preise in diesem PARTS-Array, inkl. der Auspuff-Einträge unten)
 // ==========================================
 const PARTS = [
     // EXHAUST
+    // Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
     { id:'akrapovic-slip', cat:'exhaust', name:'Akrapovic Slip-On', brand:'Akrapovic', price:899, psGain:5, weightSave:3, accelGain:0.1, torqueGain:4, desc:'Titan Slip-On mit markanter Sound-Steigerung. E-Prüfzeichen.', rating:5, popular:true, stars:'★★★★★' },
     { id:'yoshimura-race', cat:'exhaust', name:'Yoshimura Race', brand:'Yoshimura', price:1200, psGain:8, weightSave:5, accelGain:0.15, torqueGain:6, desc:'Volle Rennauspuff-Anlage aus Edelstahl. Nur für Trackday.', rating:4.5, stars:'★★★★½' },
     { id:'arrow-full', cat:'exhaust', name:'Arrow Full Exhaust', brand:'Arrow', price:1400, psGain:10, weightSave:6, accelGain:0.2, torqueGain:8, desc:'Komplettanlage mit Titan-Collector und Carbon-Endtopf.', rating:5, stars:'★★★★★' },
@@ -1179,7 +1183,7 @@ function saveConfig() {
         savedAt: new Date().toISOString(),
         summary: { parts: selected.length, totalPS, totalCost }
     };
-    localStorage.setItem('kawasaki_shop_config', JSON.stringify(config));
+    window.ApiClient.setShopConfig(config);
     const btn = event.target;
     btn.textContent = '✅ Gespeichert!';
     setTimeout(() => { btn.textContent = '💾 Konfiguration speichern'; }, 2000);
@@ -1191,9 +1195,8 @@ function saveConfig() {
 }
 
 function loadConfig() {
-    const saved = localStorage.getItem('kawasaki_shop_config');
-    if (!saved) { alert('Keine gespeicherte Konfiguration gefunden.'); return; }
-    const config = JSON.parse(saved);
+    const config = window.ApiClient.getShopConfig();
+    if (!config) { alert('Keine gespeicherte Konfiguration gefunden.'); return; }
     currentBike = config.bike || 'zx10r';
     document.getElementById('bikeSelect').value = currentBike;
     selectedParts = new Set(config.parts || []);
@@ -1252,6 +1255,8 @@ updateLiveSpecs();
 
 // ---- Extend SHOP_BIKES with color options ----
 // Standard colors for all bikes (3 included free, 2 metallic = +500 EUR each)
+// Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
+// (gilt für alle priceAdd-Werte in BIKE_COLORS_DEFAULT und BIKE_COLORS_OVERRIDE unten)
 const BIKE_COLORS_DEFAULT = [
     { name: 'Metallic Black',  hex: '#1a1a1a', priceAdd: 0 },
     { name: 'Pearl White',     hex: '#f8f8f8', priceAdd: 0 },
@@ -1315,6 +1320,7 @@ function getBikeColors(bikeKey) {
 }
 
 // Addon definitions (matches HTML checkboxes)
+// Preis geschätzt, nicht verifiziert — bitte mit Fachhändler abgleichen.
 const MC_ADDONS = [
     { id: 'abs',         label: 'ABS',              emoji: '\ud83d\uded1', price: 800 },
     { id: 'quickshifter',label: 'Quickshifter',     emoji: '\u26a1',      price: 1200 },
@@ -1339,9 +1345,8 @@ function mcInit() {
 
     // Restore last configuration from localStorage
     try {
-        const saved = localStorage.getItem('vroooom_config_state');
-        if (saved) {
-            const state = JSON.parse(saved);
+        const state = window.ApiClient.getConfiguratorState();
+        if (state) {
             if (state.bikeKey && SHOP_BIKES[state.bikeKey]) {
                 mcCurrentBike = state.bikeKey;
                 sel.value = state.bikeKey;
@@ -1513,12 +1518,12 @@ function mcUpdatePrice() {
 
     // -- Persist config to localStorage --
     try {
-        localStorage.setItem('vroooom_config_state', JSON.stringify({
+        window.ApiClient.setConfiguratorState({
             bike: mcCurrentBike,
             color: mcSelectedColor ? mcSelectedColor.name : null,
             addons: [...mcSelectedAddons],
             total: totalPrice
-        }));
+        });
     } catch(e) {}
 }
 

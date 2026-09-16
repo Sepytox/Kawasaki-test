@@ -74,12 +74,20 @@
     }
 
     /**
-     * Liest die aktuelle Favoriten-Anzahl rein lesend aus localStorage.
+     * Liest die aktuelle Favoriten-Anzahl rein lesend aus localStorage
+     * (via api-client.js ApiClient.getFavorites(), sofern auf der Seite
+     * geladen — auf den 6 bearbeitbaren Seiten der Fall; fällt sonst auf
+     * den rohen localStorage-Zugriff zurück, z. B. für den dynamischen
+     * Nachlade-Pfad auf soundcheck.html, das kein api-client.js einbindet).
      * Wirft nie einen Fehler (defensiv gegen fehlendes/korruptes Storage).
      * @returns {number} Anzahl gespeicherter Favoriten.
      */
     function readFavoritesCount() {
         try {
+            if (global.ApiClient && typeof global.ApiClient.getFavorites === 'function') {
+                var favs = global.ApiClient.getFavorites();
+                return Array.isArray(favs) ? favs.length : 0;
+            }
             var raw = global.localStorage.getItem(FAVORITES_KEY);
             var arr = raw ? JSON.parse(raw) : [];
             return Array.isArray(arr) ? arr.length : 0;
@@ -118,8 +126,14 @@
         var garageActiveClass = page === 'garage.html' ? ' active' : '';
         var badgeHiddenAttr = favCount > 0 ? '' : ' hidden';
 
+        // Rechter Aktions-Cluster: Warenkorb (reiner Platzhalter, siehe
+        // GOLDEN_PRINCIPLES/Recon — kein echter Warenkorb-State vorhanden),
+        // Login-Platzhalter ("Login folgt bald"-Dialog, siehe wireLogin())
+        // und der bestehende Theme-Toggle. Bleibt auf Mobile sichtbar neben
+        // Logo/Burger (kollabiert NICHT ins Burger-Menü, siehe design.css
+        // .nav-actions).
         return (
-            '<a class="brand" href="index.html">🏍️ Vrooooom</a>' +
+            '<a class="brand" href="index.html">🏍️ Kawasaki</a>' +
             '<button type="button" class="nav-burger" id="navBurger" aria-label="Menü öffnen" aria-expanded="false" aria-controls="siteNavLinks">' +
                 '<span></span><span></span><span></span>' +
             '</button>' +
@@ -137,7 +151,13 @@
                     '<span class="garage-nav-badge" id="garageNavFavCount"' + badgeHiddenAttr + '>' + favCount + '</span>' +
                 '</a>' +
             '</div>' +
-            '<button type="button" class="theme-toggle" id="themeToggle" aria-label="Theme umschalten">☀️</button>'
+            '<div class="nav-actions" id="navActions">' +
+                '<a href="shop.html" class="nav-cart-link" id="navCartLink" aria-label="Warenkorb">' +
+                    '<span aria-hidden="true">🛒</span>' +
+                '</a>' +
+                '<button type="button" class="nav-login-btn" id="navLoginBtn">Anmelden</button>' +
+                '<button type="button" class="theme-toggle" id="themeToggle" aria-label="Theme umschalten">☀️</button>' +
+            '</div>'
         );
     }
 
@@ -308,6 +328,70 @@
         });
     }
 
+    /** ID des einmalig in den Body eingehängten Login-Platzhalter-Dialogs. */
+    var LOGIN_DIALOG_ID = 'navLoginDialog';
+
+    /**
+     * Erstellt (falls noch nicht vorhanden) den "Login folgt bald"-Dialog
+     * und hängt ihn einmalig an document.body an. Rein additiv/idempotent —
+     * ein zweiter mount()-Aufruf (z.B. erneutes Rendern) erzeugt keinen
+     * doppelten Dialog.
+     * @returns {HTMLElement} Das Dialog-Root-Element.
+     */
+    function ensureLoginDialog() {
+        var existing = global.document.getElementById(LOGIN_DIALOG_ID);
+        if (existing) return existing;
+
+        var overlay = global.document.createElement('div');
+        overlay.id = LOGIN_DIALOG_ID;
+        overlay.className = 'nav-login-dialog-overlay';
+        overlay.hidden = true;
+        overlay.innerHTML =
+            '<div class="nav-login-dialog" role="dialog" aria-modal="true" aria-labelledby="navLoginDialogTitle" tabindex="-1">' +
+                '<h2 id="navLoginDialogTitle">Anmeldung</h2>' +
+                '<p>Login folgt bald.</p>' +
+                '<button type="button" class="btn btn-outline nav-login-dialog-close" id="navLoginDialogClose">Schließen</button>' +
+            '</div>';
+        global.document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    /**
+     * Verdrahtet den Login-Platzhalter-Button: öffnet einen einfachen
+     * "Login folgt bald"-Dialog (keine echte Authentifizierung, reine UI).
+     * Schliesst per Klick auf den Schliessen-Button, Klick ausserhalb des
+     * Dialogs oder Escape.
+     * @param {HTMLElement} nav - Das Navbar-Wurzelelement.
+     * @returns {void}
+     */
+    function wireLogin(nav) {
+        var loginBtn = nav.querySelector('#navLoginBtn');
+        if (!loginBtn) return;
+        var dialog = ensureLoginDialog();
+        var closeBtn = dialog.querySelector('#navLoginDialogClose');
+        var panel = dialog.querySelector('.nav-login-dialog');
+
+        function open() {
+            dialog.hidden = false;
+            if (panel) panel.focus();
+        }
+        function close() {
+            dialog.hidden = true;
+            loginBtn.focus();
+        }
+
+        loginBtn.addEventListener('click', open);
+        if (closeBtn) closeBtn.addEventListener('click', close);
+
+        dialog.addEventListener('click', function (e) {
+            if (e.target === dialog) close();
+        });
+
+        global.document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !dialog.hidden) close();
+        });
+    }
+
     /**
      * Rendert die Navbar in den übergebenen Container und verdrahtet
      * alle interaktiven Elemente.
@@ -320,6 +404,7 @@
         wireScrollState(nav);
         wireBurger(nav);
         wireDropdown(nav);
+        wireLogin(nav);
         if (nav.getAttribute('data-theme-toggle') !== 'external') {
             wireThemeToggleFallback();
         }
