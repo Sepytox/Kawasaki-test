@@ -710,12 +710,17 @@
    * hinzu (siehe tickRunner()). `lane` ist die für die Kollisionsprüfung
    * massgebliche (unveränderliche) Lane, `displayLane` die für das
    * Zeichnen genutzte, ggf. vom Magnet-Effekt weich Richtung Bike-Lane
-   * gezogene Lane (siehe tickRunner()/renderTrack()).
+   * gezogene Lane (siehe tickRunner()/renderTrack()). `type` (Teil 3,
+   * feat(obstacles)) bestimmt die passende Ausweich-Aktion: 'side'
+   * (Lane wechseln), 'lowBar' (springen, IdleCore.jumpRunner()) oder
+   * 'highBarrier' (ducken, IdleCore.duckRunner()) — siehe
+   * IdleCore.rollObstacleType()/detectRunCollision().
    * @returns {void}
    */
   function spawnRunnerObstacle() {
     var lane = Math.floor(Math.random() * IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
-    runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false });
+    var type = IdleCore.rollObstacleType(Math.random);
+    runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false, type: type });
   }
 
   /**
@@ -938,6 +943,11 @@
     }
 
     // Hindernisse: weiter entfernte zuerst zeichnen, damit näherliegende oben liegen.
+    // Teil 3 (feat(obstacles)): DREI Typen, jeweils eine eigene Form/Position
+    // innerhalb derselben Lane-Geometrie (laneCenterX()/laneRowY() unverändert) —
+    // 'side' (Lane wechseln, wie bisher ein zentriertes Quadrat), 'lowBar'
+    // (springen — flacher Balken UNTEN, man springt darüber) und 'highBarrier'
+    // (ducken — flacher Balken OBEN, man duckt darunter).
     var sortedObstacles = runnerObstacles.slice().sort(function (a, b) { return a.t - b.t; });
     sortedObstacles.forEach(function (obstacle) {
       var t = Math.min(1, Math.max(0, obstacle.t));
@@ -947,10 +957,24 @@
       var x = laneCenterX(w, obstacle.displayLane, t);
       var y = laneRowY(h, t);
       var size = lerpValue(RUNNER_OBSTACLE_MIN_SIZE_PX, RUNNER_OBSTACLE_MAX_SIZE_PX, t);
+      var type = obstacle.type || 'side';
+
       trackCtx.beginPath();
-      trackCtx.rect(x - size / 2, y - size / 2, size, size);
-      trackCtx.fillStyle = 'rgba(241,241,239,0.85)';
-      trackCtx.strokeStyle = 'rgba(150,150,150,0.5)';
+      if (type === 'lowBar') {
+        var barW = size * 1.7, barH = size * 0.55;
+        trackCtx.rect(x - barW / 2, y + size / 2 - barH, barW, barH);
+        trackCtx.fillStyle = 'rgba(0,112,243,0.55)';
+        trackCtx.strokeStyle = 'rgba(0,112,243,0.85)';
+      } else if (type === 'highBarrier') {
+        var topW = size * 1.7, topH = size * 0.55;
+        trackCtx.rect(x - topW / 2, y - size / 2, topW, topH);
+        trackCtx.fillStyle = 'rgba(120,120,120,0.75)';
+        trackCtx.strokeStyle = 'rgba(90,90,90,0.9)';
+      } else {
+        trackCtx.rect(x - size / 2, y - size / 2, size, size);
+        trackCtx.fillStyle = 'rgba(241,241,239,0.85)';
+        trackCtx.strokeStyle = 'rgba(150,150,150,0.5)';
+      }
       trackCtx.lineWidth = 1;
       trackCtx.fill();
       trackCtx.stroke();
