@@ -1376,6 +1376,278 @@ section('20 · TEIL 2 — balance(tuning): TUNING-GATE für den nächsten Bike-K
   );
 })();
 
+section('16 · CRASH-BASED RUN (Teil 3) — Lifecycle: startRun/endRun/restartRun');
+(function () {
+  // startRun(): setzt phase='running', leitet speedPct aus dem aktuellen Bike/Tuning ab, resettet Steuerung.
+  const state = IdleCore.createInitialState();
+  state.runner.lane = 2;
+  state.runner.jumpUntil = 12345;
+  state.runner.duckUntil = 67890;
+  state.runner.collisionMalusExpiresAt = 99999;
+  const now = 1_700_000_000_000;
+  const runResult = IdleCore.startRun(state, now);
+
+  assert(state.run.phase === 'running', 'startRun(): setzt phase auf "running"');
+  assert(state.run.score === 0 && state.run.coins === 0 && state.run.combo === 0, 'startRun(): score/coins/combo starten bei 0');
+  assert(state.run.distanceUnits === 0, 'startRun(): distanceUnits startet bei 0');
+  assert(state.run.startedAt === now, 'startRun(): startedAt = übergebener Zeitstempel');
+  assert(runResult === state.run, 'startRun(): gibt das state.run-Objekt zurück');
+
+  const bike = IdleCore.getBikeById(state.currentBikeId);
+  const level = IdleCore.getBikeLevel(state, state.currentBikeId);
+  const expectedSpeedPct = IdleCore.deriveBikeStats(bike, level).geschwindigkeitPct;
+  assert(Math.abs(state.run.speedPct - expectedSpeedPct) < 1e-9, 'startRun(): speedPct kommt exakt aus deriveBikeStats().geschwindigkeitPct des aktuellen Bikes');
+
+  assert(state.runner.lane === Math.floor(IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT / 2), 'startRun(): Lane wird auf die Mitte zurückgesetzt');
+  assert(state.runner.jumpUntil === null && state.runner.duckUntil === null, 'startRun(): Sprung/Ducken-Fenster werden zurückgesetzt');
+  assert(state.runner.collisionMalusExpiresAt === null, 'startRun(): Kollisions-Malus wird zurückgesetzt');
+
+  // restartRun() ist ein Alias für startRun() — identisches Verhalten nach einem simulierten Lauf.
+  state.run.score = 500;
+  state.run.coins = 20;
+  const restartResult = IdleCore.restartRun(state, now + 1000);
+  assert(state.run.score === 0 && state.run.coins === 0, 'restartRun(): resettet score/coins wie startRun()');
+  assert(restartResult.phase === 'running', 'restartRun(): liefert einen frischen, laufenden state.run');
+})();
+
+section('17 · CRASH-BASED RUN — endRun() kreditiert Run-Coins GENAU EINMAL zu km');
+(function () {
+  const state = IdleCore.createInitialState();
+  IdleCore.startRun(state, 1000);
+  state.run.score = 1234;
+  state.run.coins = 50;
+  state.run.combo = 3;
+
+  // Snapshot der PROGRESS-Schicht VOR endRun() — muss byte-für-byte unverändert bleiben
+  // (ausser km/totalKmEarned selbst, die über die EINE creditKm()-Stelle steigen).
+  const beforeOwned = state.ownedBikeIds.slice();
+  const beforeLevels = JSON.stringify(state.bikeLevels);
+  const beforePrestige = JSON.stringify(state.prestige);
+  const beforeGear = JSON.stringify(state.gear);
+  const beforeParts = JSON.stringify(state.parts);
+  const beforeFinance = JSON.stringify(state.finance);
+  const beforeKm = state.km;
+
+  const expectedKmCredit = IdleCore.runCoinsToKm(50);
+  assert(expectedKmCredit > 0, 'runCoinsToKm(50) liefert einen positiven km-Betrag (Testvoraussetzung)');
+
+  const summary = IdleCore.endRun(state, 2000);
+
+  assert(summary.score === 1234 && summary.coins === 50, 'endRun(): Zusammenfassung enthält den finalen Score/Coins-Stand');
+  assert(state.run.phase === 'crashed', 'endRun(): setzt phase auf "crashed"');
+  assert(Math.abs(state.km - (beforeKm + expectedKmCredit)) < 1e-9, 'endRun(): km steigt um EXAKT runCoinsToKm(coins) — keine andere/doppelte Gutschrift');
+  assert(Math.abs(state.totalKmEarned - (beforeKm + expectedKmCredit)) < 1e-9, 'endRun(): totalKmEarned steigt exakt im gleichen Umfang wie km (über dieselbe creditKm()-Stelle)');
+
+  // PROGRESS-Schicht: bikes/tuning/Saison/Gear/Teile/Finanzen dürfen NICHT berührt worden sein.
+  assert(JSON.stringify(state.ownedBikeIds) === JSON.stringify(beforeOwned), 'endRun(): ownedBikeIds unverändert');
+  assert(JSON.stringify(state.bikeLevels) === beforeLevels, 'endRun(): bikeLevels (Tuning) unverändert');
+  assert(JSON.stringify(state.prestige) === beforePrestige, 'endRun(): prestige/Saison unverändert');
+  assert(JSON.stringify(state.gear) === beforeGear, 'endRun(): gear-Sammlung unverändert');
+  assert(JSON.stringify(state.parts) === beforeParts, 'endRun(): parts-Sammlung unverändert');
+  assert(JSON.stringify(state.finance) === beforeFinance, 'endRun(): finance (Rechnungen/Insolvenz) unverändert');
+
+  // Highscore + Lebenszeit-Statistiken.
+  assert(state.runHighscore === 1234, 'endRun(): runHighscore wird auf den ersten Run-Score gesetzt');
+  assert(state.runStats.totalRuns === 1, 'endRun(): runStats.totalRuns wird hochgezählt');
+  assert(state.runStats.totalCoinsCollected === 50, 'endRun(): runStats.totalCoinsCollected wird hochgezählt');
+  assert(state.runStats.totalCrashes === 1, 'endRun(): runStats.totalCrashes wird hochgezählt');
+  assert(state.runStats.bestComboEver === 3, 'endRun(): runStats.bestComboEver übernimmt die höchste Run-Combo');
+
+  // Ein zweiter, schwächerer Run darf runHighscore NICHT verringern.
+  IdleCore.startRun(state, 3000);
+  state.run.score = 10;
+  state.run.coins = 1;
+  const secondSummary = IdleCore.endRun(state, 4000);
+  assert(secondSummary.newHighscore === false, 'endRun(): newHighscore ist false, wenn der Score den Bestwert NICHT übertrifft');
+  assert(state.runHighscore === 1234, 'endRun(): ein schwächerer Run senkt runHighscore NICHT');
+  assert(state.runStats.totalRuns === 2, 'endRun(): totalRuns akkumuliert additiv über mehrere Runs');
+
+  // Ein besserer dritter Run schlägt den Highscore.
+  IdleCore.startRun(state, 5000);
+  state.run.score = 9999;
+  state.run.coins = 0;
+  const thirdSummary = IdleCore.endRun(state, 6000);
+  assert(thirdSummary.newHighscore === true, 'endRun(): newHighscore ist true, sobald der Score den Bestwert übertrifft');
+  assert(state.runHighscore === 9999, 'endRun(): runHighscore wird auf den neuen Bestwert angehoben');
+})();
+
+section('18 · CRASH-BASED RUN — ein Crash allein (ohne endRun()) ändert km NICHT');
+(function () {
+  // detectRunCollision() selbst ist eine reine Abfrage bzgl. km/PROGRESS-Schicht — nur der
+  // Aufrufer (idle.js handleRunCrash()) ruft anschliessend endRun() auf. Diese Trennung wird
+  // hier explizit geprüft: crashed:true darf für sich allein km NICHT verändern.
+  const state = IdleCore.createInitialState();
+  IdleCore.startRun(state, 1000);
+  state.run.coins = 77;
+  const kmBefore = state.km;
+
+  const result = IdleCore.detectRunCollision(state, 'side', 2000);
+  assert(result.crashed === true, 'detectRunCollision(): ein "side"-Hindernis in der Bike-Lane crasht ohne Schild');
+  assert(state.km === kmBefore, 'detectRunCollision() allein (ohne anschliessenden endRun()-Aufruf) ändert km NICHT');
+  assert(state.run.phase === 'running', 'detectRunCollision() allein beendet den Run NICHT selbst (Aufrufer muss endRun() aufrufen)');
+})();
+
+section('19 · CRASH-BASED RUN — Kollisions-Erkennung je Hindernis-Typ (feat(crash))');
+(function () {
+  const state = IdleCore.createInitialState();
+  IdleCore.startRun(state, 1000);
+
+  // 'side': IMMER ein Treffer (die einzige Ausweich-Aktion ist der Lane-Wechsel, den der
+  // Aufrufer bereits vorher prüft — detectRunCollision() selbst kennt keine Lane).
+  assert(IdleCore.detectRunCollision(state, 'side', 1000).crashed === true, "'side'-Hindernis crasht immer (kein Sprung/Ducken hilft)");
+
+  // 'lowBar': crasht, AUSSER das Bike springt gerade.
+  assert(IdleCore.detectRunCollision(state, 'lowBar', 1000).crashed === true, "'lowBar' crasht ohne Sprung");
+  IdleCore.jumpRunner(state, 1000);
+  assert(IdleCore.detectRunCollision(state, 'lowBar', 1200).crashed === false, "'lowBar' crasht NICHT während eines aktiven Sprungs");
+  assert(IdleCore.detectRunCollision(state, 'lowBar', 1200).shielded === false, "'lowBar' während eines Sprungs ist kein Schild-Verbrauch, sondern schlicht kein Treffer");
+  assert(IdleCore.detectRunCollision(state, 'lowBar', 1000 + IdleCore.IDLE_BALANCE.RUNNER_JUMP_DURATION_MS + 50).crashed === true, "'lowBar' crasht wieder, sobald das Sprung-Fenster abgelaufen ist");
+
+  // 'highBarrier': crasht, AUSSER das Bike duckt gerade.
+  assert(IdleCore.detectRunCollision(state, 'highBarrier', 2000).crashed === true, "'highBarrier' crasht ohne Ducken");
+  IdleCore.duckRunner(state, 2000);
+  assert(IdleCore.detectRunCollision(state, 'highBarrier', 2200).crashed === false, "'highBarrier' crasht NICHT während eines aktiven Duckens");
+  assert(IdleCore.detectRunCollision(state, 'highBarrier', 2000 + IdleCore.IDLE_BALANCE.RUNNER_DUCK_DURATION_MS + 50).crashed === true, "'highBarrier' crasht wieder, sobald das Ducken-Fenster abgelaufen ist");
+
+  // Sprung und Ducken schliessen sich gegenseitig aus.
+  IdleCore.jumpRunner(state, 3000);
+  assert(IdleCore.isJumping(state, 3000) === true && IdleCore.isDucking(state, 3000) === false, 'jumpRunner(): hebt ein evtl. aktives Ducken auf');
+  IdleCore.duckRunner(state, 3000);
+  assert(IdleCore.isDucking(state, 3000) === true && IdleCore.isJumping(state, 3000) === false, 'duckRunner(): hebt einen evtl. aktiven Sprung auf');
+
+  // Schild konsumiert GENAU EINE Kollision, egal welchen Typs — kein Crash, aber danach verbraucht.
+  const shieldState = IdleCore.createInitialState();
+  IdleCore.startRun(shieldState, 1000);
+  IdleCore.activatePowerupEffect(shieldState, 'schild', 1000);
+  assert(IdleCore.shieldActive(shieldState, 1000) === true, 'Schild ist nach activatePowerupEffect() aktiv (Testvoraussetzung)');
+  const shieldedResult = IdleCore.detectRunCollision(shieldState, 'side', 1000);
+  assert(shieldedResult.crashed === false && shieldedResult.shielded === true, 'detectRunCollision(): ein aktiver Schild blockt die Kollision (kein Crash), wird dabei aber konsumiert');
+  assert(IdleCore.shieldActive(shieldState, 1000) === false, 'detectRunCollision(): der Schild ist nach dem Blocken verbraucht (nur EINE Kollision)');
+  // Der VERBRAUCHTE Schild schützt eine zweite Kollision nicht mehr.
+  assert(IdleCore.detectRunCollision(shieldState, 'side', 1001).crashed === true, 'Ein bereits verbrauchter Schild schützt keine zweite Kollision');
+
+  // rollObstacleType() liefert ausschliesslich gültige, in RUNNER_OBSTACLE_TYPE_WEIGHTS gelistete Typen.
+  const validTypes = Object.keys(IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_TYPE_WEIGHTS);
+  for (let i = 0; i < 200; i++) {
+    const rolled = IdleCore.rollObstacleType(() => i / 200);
+    assert(validTypes.indexOf(rolled) !== -1, `rollObstacleType() liefert bei rnd=${(i / 200).toFixed(3)} einen gültigen Typ (${rolled})`);
+  }
+})();
+
+section('20 · CRASH-BASED RUN — tickRunEconomy(): aktiv bankt erst bei Crash, Auto-Pilot kontinuierlich reduziert in km');
+(function () {
+  // Aktiver Run: Score/Coins sammeln sich NUR in state.run, km bleibt bis zum Crash unberührt.
+  const activeState = IdleCore.createInitialState();
+  IdleCore.startRun(activeState, 1000);
+  const kmBeforeActive = activeState.km;
+  const activeResult = IdleCore.tickRunEconomy(activeState, 100, 'active');
+  assert(activeResult.kmCredited === 0, "tickRunEconomy(activity='active'): kreditiert km NICHT direkt");
+  assert(activeState.km === kmBeforeActive, "tickRunEconomy(activity='active'): km bleibt unverändert (Coins werden erst bei einem Crash gebankt)");
+  assert(activeState.run.coins > 0, "tickRunEconomy(activity='active'): Coins sammeln sich in state.run.coins");
+  assert(activeState.run.score > 0, 'tickRunEconomy(): score steigt mit der zurückgelegten Distanz');
+  assert(activeState.run.distanceUnits === 100, 'tickRunEconomy(): distanceUnits wird um genau distanceDelta erhöht');
+
+  // Auto-Pilot (activity='idle'): derselbe Distanz-Zuwachs kreditiert SOFORT, aber REDUZIERT km — OHNE state.run.coins zu befüllen.
+  const idleState = IdleCore.createInitialState();
+  IdleCore.startRun(idleState, 1000);
+  const kmBeforeIdle = idleState.km;
+  const idleResult = IdleCore.tickRunEconomy(idleState, 100, 'idle');
+  assert(idleResult.kmCredited > 0, "tickRunEconomy(activity='idle'): kreditiert km sofort (Auto-Pilot crasht nie, siehe Teil 1)");
+  assert(Math.abs(idleState.km - (kmBeforeIdle + idleResult.kmCredited)) < 1e-9, "tickRunEconomy(activity='idle'): km steigt um exakt den zurückgegebenen kmCredited-Betrag");
+  assert(idleState.run.coins === 0, "tickRunEconomy(activity='idle'): state.run.coins bleibt bei 0 (Coins gehen direkt in km, nicht in den Run-Pool)");
+  assert(idleResult.kmCredited < IdleCore.runCoinsToKm(idleResult.coinsGained), 'tickRunEconomy(): der Auto-Pilot-km-Betrag ist REDUZIERT gegenüber dem vollen Coin-Gegenwert (RUN_AUTOPILOT_CREDIT_MULTIPLIER < 1)');
+
+  // Kein Run aktiv (phase !== 'running') → No-op, unabhängig von activity.
+  const readyState = IdleCore.createInitialState();
+  const readyKm = readyState.km;
+  const noopResult = IdleCore.tickRunEconomy(readyState, 100, 'active');
+  assert(noopResult.scoreGained === 0 && noopResult.coinsGained === 0 && noopResult.kmCredited === 0, "tickRunEconomy(): No-op, solange kein Run läuft (phase='ready')");
+  assert(readyState.km === readyKm && readyState.run.score === 0, 'tickRunEconomy(): ändert bei phase!=="running" weder km noch state.run');
+})();
+
+section('21 · v4→v5 STATE-MIGRATION — alte Saves gewinnen die neue Run-Schicht verlustfrei');
+(function () {
+  // v3-artiger Rohzustand: kennt weder runner/powerups (v3→v4) NOCH run/runHighscore/runStats (v4→v5).
+  const v3Raw = {
+    version: 3,
+    km: 4321,
+    totalKmEarned: 9999,
+    ownedBikeIds: ['z125pro', 'klx300'],
+    currentBikeId: 'klx300',
+    bikeLevels: { z125pro: 2, klx300: 5 },
+  };
+  const migratedFromV3 = IdleCore.migrateState(v3Raw);
+  assert(migratedFromV3.version === IdleCore.IDLE_STATE_VERSION, 'migrateState(v3): hebt die version auf die aktuelle IDLE_STATE_VERSION (5)');
+  assert(migratedFromV3.km === 4321 && migratedFromV3.totalKmEarned === 9999, 'migrateState(v3): bestehende km/totalKmEarned bleiben byte-für-byte erhalten');
+  assert(JSON.stringify(migratedFromV3.ownedBikeIds) === JSON.stringify(['z125pro', 'klx300']), 'migrateState(v3): ownedBikeIds bleibt erhalten');
+  assert(migratedFromV3.bikeLevels.klx300 === 5, 'migrateState(v3): bikeLevels (Tuning) bleibt erhalten');
+  assert(migratedFromV3.run && migratedFromV3.run.phase === 'ready', "migrateState(v3): state.run wird additiv mit phase='ready' aufgefüllt (kein runner/powerups im Rohzustand → auch kein run)");
+  assert(migratedFromV3.runHighscore === 0, 'migrateState(v3): runHighscore wird additiv auf 0 aufgefüllt');
+  assert(migratedFromV3.runStats.totalRuns === 0, 'migrateState(v3): runStats wird additiv mit Nullen aufgefüllt');
+  assert(migratedFromV3.runner.jumpUntil === null && migratedFromV3.runner.duckUntil === null, 'migrateState(v3): runner.jumpUntil/duckUntil werden additiv auf null aufgefüllt');
+
+  // v4-artiger Rohzustand: kennt runner/powerups bereits, aber noch KEIN run/runHighscore/runStats/jumpUntil/duckUntil.
+  const v4Raw = {
+    version: 4,
+    km: 111,
+    totalKmEarned: 222,
+    ownedBikeIds: ['z125pro'],
+    currentBikeId: 'z125pro',
+    bikeLevels: { z125pro: 1 },
+    runner: { lane: 2, lastInputAt: 500, collisionMalusExpiresAt: null },
+    powerups: { collected: 7, magnetExpiresAt: null, turboExpiresAt: null, shieldExpiresAt: null },
+    prestige: { level: 1, points: 3, trophies: 2, contracts: [] },
+  };
+  const migratedFromV4 = IdleCore.migrateState(v4Raw);
+  assert(migratedFromV4.km === 111 && migratedFromV4.totalKmEarned === 222, 'migrateState(v4): bestehende km/totalKmEarned bleiben erhalten');
+  assert(migratedFromV4.runner.lane === 2 && migratedFromV4.runner.lastInputAt === 500, 'migrateState(v4): bestehende runner-Felder (lane/lastInputAt) bleiben erhalten');
+  assert(migratedFromV4.runner.jumpUntil === null && migratedFromV4.runner.duckUntil === null, 'migrateState(v4): NEUE runner-Felder (jumpUntil/duckUntil) werden additiv aufgefüllt, OHNE bestehende Felder zu verändern');
+  assert(migratedFromV4.powerups.collected === 7, 'migrateState(v4): bestehendes powerups.collected bleibt erhalten');
+  assert(migratedFromV4.prestige.level === 1 && migratedFromV4.prestige.trophies === 2, 'migrateState(v4): bestehende prestige/Saison-Daten bleiben erhalten');
+  assert(migratedFromV4.run && migratedFromV4.run.phase === 'ready' && migratedFromV4.run.score === 0, 'migrateState(v4): state.run wird additiv mit Standardwerten aufgefüllt');
+  assert(migratedFromV4.runHighscore === 0 && migratedFromV4.runStats.totalCrashes === 0, 'migrateState(v4): runHighscore/runStats werden additiv aufgefüllt');
+
+  // Ein v5-Save mit bereits vorhandenen (z. B. hohen) run-Werten übernimmt diese unverändert.
+  const v5Raw = {
+    version: 5,
+    km: 50,
+    totalKmEarned: 50,
+    ownedBikeIds: ['z125pro'],
+    currentBikeId: 'z125pro',
+    bikeLevels: { z125pro: 0 },
+    run: { phase: 'crashed', score: 777, coins: 12, combo: 4, comboMult: 3, speedPct: 40, distanceUnits: 900, startedAt: 100 },
+    runHighscore: 777,
+    runStats: { totalRuns: 3, totalCoinsCollected: 90, totalCrashes: 3, bestComboEver: 6 },
+  };
+  const migratedFromV5 = IdleCore.migrateState(v5Raw);
+  assert(migratedFromV5.run.phase === 'crashed' && migratedFromV5.run.score === 777, 'migrateState(v5): bestehende gültige run-Werte werden übernommen statt überschrieben');
+  assert(migratedFromV5.runHighscore === 777, 'migrateState(v5): bestehender runHighscore wird übernommen');
+  assert(migratedFromV5.runStats.totalRuns === 3 && migratedFromV5.runStats.bestComboEver === 6, 'migrateState(v5): bestehende runStats werden übernommen');
+
+  // Ein korrupter/ungültiger phase-Wert fällt defensiv auf 'ready' zurück (NIE 'running' aus ungeprüften Rohdaten übernehmen).
+  const corruptPhaseRaw = { version: 5, run: { phase: 'not-a-real-phase', score: -5, coins: 'nope' } };
+  const migratedCorrupt = IdleCore.migrateState(corruptPhaseRaw);
+  assert(migratedCorrupt.run.phase === 'ready', "migrateState(): ein ungültiger run.phase-Wert fällt defensiv auf 'ready' zurück");
+  assert(migratedCorrupt.run.score === 0 && migratedCorrupt.run.coins === 0, 'migrateState(): ungültig getypte run-Felder (negativ/falscher Typ) fallen defensiv auf die Standardwerte zurück');
+})();
+
+section('22 · Regression: runnerLeadSeconds()-Boden bleibt unabhängig von Teil 3 garantiert');
+(function () {
+  // Der 0.6s-Vorlaufzeit-Boden ist eine reine Funktion von speedPct (Teil 1, unverändert) —
+  // Teil 3 fügt NUR eine distanz-/aktivitätsabhängige WIRTSCHAFT hinzu, rührt runnerLeadSeconds()
+  // selbst nicht an. Explizite Sweep-Regression, damit eine künftige Phase-B-Schwierigkeitskurve
+  // (Dichte/Muster nach Distanz) diesen Boden niemals versehentlich unterschreiten kann.
+  for (let speedPct = 0; speedPct <= 100; speedPct += 5) {
+    const lead = IdleCore.runnerLeadSeconds(speedPct);
+    assert(lead >= IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS - 1e-9, `runnerLeadSeconds(${speedPct}) respektiert weiterhin RUNNER_MIN_LEAD_SECONDS`);
+  }
+  // Am/über dem Speed-Cap wird der Boden exakt erreicht (mathematische Garantie, siehe idle-core.js-Docblock).
+  assert(
+    Math.abs(IdleCore.runnerLeadSeconds(IdleCore.IDLE_BALANCE.RUNNER_SPEED_CAP_PCT) - IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS) < 1e-9,
+    'runnerLeadSeconds(RUNNER_SPEED_CAP_PCT) trifft den Boden exakt'
+  );
+})();
+
 // ============================================================
 // Results
 // ============================================================
