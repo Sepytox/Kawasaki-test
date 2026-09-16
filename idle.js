@@ -67,19 +67,29 @@
   /** Anzeigedauer (ms) des Treffer-/Fehlklick-Flashs, bevor die Leiste ausblendet. */
   var SHIFT_RESULT_FLASH_MS = 550;
 
-  /* ── Phase B: Web Audio Motorsound (synthetisiert, standardmässig AUS) ── */
-  /** Motor-Grundfrequenz (Hz) bei Geschwindigkeit 0%. */
-  var ENGINE_BASE_HZ = 52;
-  /** Zusätzliche Frequenz (Hz) bei Geschwindigkeit 100%, addiert auf ENGINE_BASE_HZ. */
-  var ENGINE_RANGE_HZ = 190;
-  /** Zeitkonstante (s) für sanfte Frequenz-/Lautstärke-Übergänge (Web Audio setTargetAtTime). */
-  var ENGINE_SMOOTH_TIME_CONSTANT = 0.12;
-  /** Zusätzlicher Frequenz-Boost (Hz) des kurzen "Rev-up"-Effekts bei "Gas geben". */
-  var ENGINE_REV_UP_BOOST_HZ = 55;
+  /* ── Phase C: Web Audio Motorsound — sanfter, tonaler Synth-Pad (synthetisiert, standardmässig AUS) ── */
+  /** Motor-Grundfrequenz (Hz) bei Geschwindigkeit 0% — musikalisch statt roh, tiefes Sub-Rumpeln vermieden. */
+  var ENGINE_BASE_HZ = 96;
+  /** Zusätzliche Frequenz (Hz) bei Geschwindigkeit 100%, addiert auf ENGINE_BASE_HZ — bewusst klein: Tonhöhe steigt nur SUBTIL mit Speed. */
+  var ENGINE_RANGE_HZ = 60;
+  /** Zeitkonstante (s) für sanfte Frequenz-/Lautstärke-/Filter-Übergänge (Web Audio setTargetAtTime). */
+  var ENGINE_SMOOTH_TIME_CONSTANT = 0.18;
+  /** Verstimmung (Cent) der zweiten Ton-Schicht gegenüber der Grundschicht — mildes Chorus-Schweben statt Dissonanz. */
+  var ENGINE_CHORUS_DETUNE_CENTS = 7;
+  /** Tiefpassfilter-Grenzfrequenz (Hz) bei Geschwindigkeit 0% — nimmt harte obere Anteile, macht den Klang weich statt schneidend. */
+  var ENGINE_FILTER_BASE_HZ = 900;
+  /** Zusätzliche Filter-Grenzfrequenz (Hz) bei 100% Speed — Klang wird bei Tempo dezent "heller", nie grell. */
+  var ENGINE_FILTER_RANGE_HZ = 500;
+  /** Rate (Hz) der langsamen Lautstärke-LFO — das ruhige "Atmen" des Pads. */
+  var ENGINE_TREMOLO_RATE_HZ = 0.18;
+  /** Tiefe (0..1) der Lautstärke-LFO relativ zur Zielamplitude. */
+  var ENGINE_TREMOLO_DEPTH = 0.18;
+  /** Zusätzlicher Frequenz-Boost (Hz) des kurzen "Rev-up"-Effekts bei "Gas geben" — bewusst dezent, kein Aufheulen. */
+  var ENGINE_REV_UP_BOOST_HZ = 18;
   /** Dauer (s) des "Rev-up"-Effekts, bevor er zur Grundfrequenz zurückklingt. */
-  var ENGINE_REV_UP_DECAY_SECONDS = 0.35;
+  var ENGINE_REV_UP_DECAY_SECONDS = 0.45;
   /** Maximale Master-Lautstärke (0..1) bei Lautstärke-Regler = 100%. */
-  var ENGINE_MAX_GAIN = 0.22;
+  var ENGINE_MAX_GAIN = 0.16;
 
   /** Emoji-Zuordnung je Bike-Kategorie, rein dekorativ (kein externes Bildmaterial). */
   var CATEGORY_ICONS = {
@@ -233,8 +243,11 @@
   var audioCtx = null;
   var masterGain = null;
   var engineOsc = null;
+  var chorusOsc = null;
   var subOsc = null;
-  var noiseGain = null;
+  var toneFilter = null;
+  var tremoloGain = null;
+  var lfoOsc = null;
 
   /* ── Schaltpunkt-Combo (MECHANIK A): Laufzeit-Zustand einer Leiste ── */
   var shiftState = {
@@ -1053,29 +1066,15 @@
   }
 
   /**
-   * Erzeugt einen kurzen, in sich geschlossenen Loop aus gefiltertem
-   * weissem Rauschen (Textur für den Motorsound-Untergrund).
-   * @param {AudioContext} ctx - Aktiver AudioContext.
-   * @returns {AudioBufferSourceNode} Startbare, loopende Rauschquelle.
-   */
-  function createNoiseLoop(ctx) {
-    var bufferSeconds = 2;
-    var buffer = ctx.createBuffer(1, ctx.sampleRate * bufferSeconds, ctx.sampleRate);
-    var data = buffer.getChannelData(0);
-    for (var i = 0; i < data.length; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    var source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.loop = true;
-    return source;
-  }
-
-  /**
-   * Erzeugt (einmalig, lazy) den synthetisierten Motorsound-Signalgraph:
-   * zwei Oszillatoren (Grund-/Sub-Frequenz) + gefiltertes Rauschen für
-   * Textur, zusammengeführt in einem Master-Gain (initial stumm). MUSS
-   * erst nach einer Nutzer-Geste aufgerufen werden (Autoplay-Policy).
+   * Erzeugt (einmalig, lazy) den synthetisierten Motorsound-Signalgraph als
+   * angenehmen, tonalen Synth-Pad: zwei leicht verstimmte Dreieck-
+   * Oszillatoren ("Chorus"-Schweben statt harter Sägezahn-Kante) + ein
+   * Sub-Sinus eine Oktave tiefer für Wärme, gemeinsam durch ein sanftes
+   * Tiefpassfilter geführt und mit einer langsamen Lautstärke-LFO
+   * ("Atmen") moduliert, zusammengeführt in einem Master-Gain (initial
+   * stumm). Priorität ist "angenehm zu hören" — der Klang muss nicht nach
+   * Motorrad klingen. MUSS erst nach einer Nutzer-Geste aufgerufen werden
+   * (Autoplay-Policy).
    * @returns {AudioContext|null} Der aktive AudioContext, oder null falls Web Audio fehlt.
    */
   function ensureAudioEngine() {
@@ -1089,11 +1088,37 @@
         masterGain.gain.value = 0;
         masterGain.connect(audioCtx.destination);
 
+        // Langsame Lautstärke-LFO (Tremolo) direkt vor dem Master-Gain —
+        // gibt dem Pad ein ruhiges "Atmen" statt einer statischen Fläche.
+        tremoloGain = audioCtx.createGain();
+        tremoloGain.gain.value = 1;
+        tremoloGain.connect(masterGain);
+
+        // Gemeinsames Tiefpassfilter für alle Ton-Schichten — nimmt harte
+        // obere Frequenzanteile, macht den Klang weich statt schneidend.
+        toneFilter = audioCtx.createBiquadFilter();
+        toneFilter.type = 'lowpass';
+        toneFilter.Q.value = 0.4;
+        toneFilter.frequency.value = ENGINE_FILTER_BASE_HZ;
+        toneFilter.connect(tremoloGain);
+
         engineOsc = audioCtx.createOscillator();
-        engineOsc.type = 'sawtooth';
+        engineOsc.type = 'triangle';
         engineOsc.frequency.value = ENGINE_BASE_HZ;
-        engineOsc.connect(masterGain);
+        engineOsc.connect(toneFilter);
         engineOsc.start();
+
+        // Zweite Ton-Schicht, minimal verstimmt — mildes Chorus-Schweben,
+        // KEINE Dissonanz (nur wenige Cent Abstand).
+        chorusOsc = audioCtx.createOscillator();
+        chorusOsc.type = 'triangle';
+        chorusOsc.frequency.value = ENGINE_BASE_HZ;
+        chorusOsc.detune.value = ENGINE_CHORUS_DETUNE_CENTS;
+        var chorusGain = audioCtx.createGain();
+        chorusGain.gain.value = 0.6;
+        chorusOsc.connect(chorusGain);
+        chorusGain.connect(toneFilter);
+        chorusOsc.start();
 
         subOsc = audioCtx.createOscillator();
         subOsc.type = 'sine';
@@ -1101,19 +1126,19 @@
         var subGain = audioCtx.createGain();
         subGain.gain.value = 0.5;
         subOsc.connect(subGain);
-        subGain.connect(masterGain);
+        subGain.connect(toneFilter);
         subOsc.start();
 
-        var noiseSource = createNoiseLoop(audioCtx);
-        var noiseFilter = audioCtx.createBiquadFilter();
-        noiseFilter.type = 'lowpass';
-        noiseFilter.frequency.value = 400;
-        noiseGain = audioCtx.createGain();
-        noiseGain.gain.value = 0.06;
-        noiseSource.connect(noiseFilter);
-        noiseFilter.connect(noiseGain);
-        noiseGain.connect(masterGain);
-        noiseSource.start();
+        // LFO-Oszillator moduliert die Tremolo-Gain direkt (AudioParam-
+        // Verbindung) — sehr langsam + flach, kein hörbares "Pumpen".
+        lfoOsc = audioCtx.createOscillator();
+        lfoOsc.type = 'sine';
+        lfoOsc.frequency.value = ENGINE_TREMOLO_RATE_HZ;
+        var lfoDepthGain = audioCtx.createGain();
+        lfoDepthGain.gain.value = ENGINE_TREMOLO_DEPTH;
+        lfoOsc.connect(lfoDepthGain);
+        lfoDepthGain.connect(tremoloGain.gain);
+        lfoOsc.start();
       } catch (e) {
         audioCtx = null;
         return null;
@@ -1124,38 +1149,48 @@
   }
 
   /**
-   * Aktualisiert Frequenz + Lautstärke des Motorsounds gemäss der
-   * aktuellen Geschwindigkeit UND dem Sound-EIN/AUS-/Lautstärke-Zustand.
-   * Sanfte Übergänge per setTargetAtTime (kein hörbares Klicken). No-op,
-   * falls der Motor noch nie gestartet wurde (Sound war nie aktiviert).
+   * Aktualisiert Frequenz, Filter-Helligkeit und Lautstärke des
+   * Motorsounds gemäss der aktuellen Geschwindigkeit UND dem
+   * Sound-EIN/AUS-/Lautstärke-Zustand. Tonhöhe UND Filter-Helligkeit
+   * steigen nur SUBTIL mit `speedPct` (schnell soll sich schneller
+   * anfühlen, ohne grell/gehetzt zu klingen). Sanfte Übergänge per
+   * setTargetAtTime (kein hörbares Klicken). No-op, falls der Motor noch
+   * nie gestartet wurde (Sound war nie aktiviert).
    * @param {number} speedPct - Aktuelle Geschwindigkeit des Bikes (0–100%).
    * @returns {void}
    */
   function updateEngineSound(speedPct) {
-    if (!audioCtx || !engineOsc || !subOsc || !masterGain) return;
+    if (!audioCtx || !engineOsc || !chorusOsc || !subOsc || !masterGain || !toneFilter) return;
     var now = audioCtx.currentTime;
     var targetHz = ENGINE_BASE_HZ + (speedPct / 100) * ENGINE_RANGE_HZ;
     engineOsc.frequency.setTargetAtTime(targetHz, now, ENGINE_SMOOTH_TIME_CONSTANT);
+    chorusOsc.frequency.setTargetAtTime(targetHz, now, ENGINE_SMOOTH_TIME_CONSTANT);
     subOsc.frequency.setTargetAtTime(targetHz / 2, now, ENGINE_SMOOTH_TIME_CONSTANT);
+
+    var targetFilterHz = ENGINE_FILTER_BASE_HZ + (speedPct / 100) * ENGINE_FILTER_RANGE_HZ;
+    toneFilter.frequency.setTargetAtTime(targetFilterHz, now, ENGINE_SMOOTH_TIME_CONSTANT);
 
     var targetGain = state.sound.enabled ? state.sound.volume * ENGINE_MAX_GAIN : 0;
     masterGain.gain.setTargetAtTime(targetGain, now, ENGINE_SMOOTH_TIME_CONSTANT);
   }
 
   /**
-   * Löst einen kurzen "Rev-up"-Effekt aus (Frequenz-Spitze, die wieder
-   * zur aktuellen Geschwindigkeit zurückklingt), beim Klick auf
-   * "Gas geben". No-op, falls Sound nicht aktiviert/erzeugt ist.
+   * Löst einen kurzen, dezenten "Rev-up"-Effekt aus (sanfte Frequenz-
+   * Spitze, die wieder zur aktuellen Geschwindigkeit zurückklingt), beim
+   * Klick auf "Gas geben". No-op, falls Sound nicht aktiviert/erzeugt ist.
    * @returns {void}
    */
   function revUpEngineSound() {
-    if (!audioCtx || !engineOsc || !state.sound.enabled) return;
+    if (!audioCtx || !engineOsc || !chorusOsc || !state.sound.enabled) return;
     var now = audioCtx.currentTime;
     var info = getCurrentBikeInfo();
     var baseHz = ENGINE_BASE_HZ + (info.stats.geschwindigkeitPct / 100) * ENGINE_RANGE_HZ;
     engineOsc.frequency.cancelScheduledValues(now);
+    chorusOsc.frequency.cancelScheduledValues(now);
     engineOsc.frequency.setValueAtTime(baseHz + ENGINE_REV_UP_BOOST_HZ, now);
+    chorusOsc.frequency.setValueAtTime(baseHz + ENGINE_REV_UP_BOOST_HZ, now);
     engineOsc.frequency.setTargetAtTime(baseHz, now + 0.02, ENGINE_REV_UP_DECAY_SECONDS);
+    chorusOsc.frequency.setTargetAtTime(baseHz, now + 0.02, ENGINE_REV_UP_DECAY_SECONDS);
   }
 
   /**
