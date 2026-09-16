@@ -2002,7 +2002,13 @@
     // einen riesigen Sprung, wenn ein hintergründiger Tab zurückkehrt).
     var clampedDt = Math.min(Math.max(dtSeconds, 0), IdleCore.IDLE_BALANCE.MAX_TICK_DELTA_SECONDS);
 
-    var earned = IdleCore.passiveEarn(state, clampedDt) * totalEarnMultiplier(Date.now());
+    var now = Date.now();
+    // balance(economy): koppelt NUR den passiven Ertrag an den Runner-
+    // Zustand (aktiv=1x unverändert, Idle-Auto-Run=reduziert-aber-positiv,
+    // Kollision=kurzer Dip, Turbo=Boost) — siehe IdleCore.runnerEarnMultiplier().
+    // activeEarn() ("Gas geben", siehe wireGasButton()) bleibt davon bewusst
+    // unberührt.
+    var earned = IdleCore.passiveEarn(state, clampedDt) * totalEarnMultiplier(now) * IdleCore.runnerEarnMultiplier(state, now);
     IdleCore.creditKm(state, earned);
     IdleCore.addPlayTime(state, clampedDt);
 
