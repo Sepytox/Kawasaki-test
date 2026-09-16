@@ -38,10 +38,15 @@
             <div class="idle-layout">
                 <!-- ===== FAHR-BEREICH ===== -->
                 <section class="idle-drive js-reveal" aria-label="Fahrt">
-                    <!-- Renn-Strecke (Canvas): Bike fährt automatisch eine Runde, Rundenzeit
-                         skaliert mit der aktuellen Geschwindigkeit. -->
+                    <!-- Endless-Runner (Canvas, Teil 1, feat(idle-runner)): 2–3-Lane-Strasse,
+                         Hindernisse rücken Richtung Spieler vor. Lane-Wechsel via ←/→, A/D
+                         oder Touch-Swipe; eine Kollision verursacht nur einen kurzen visuellen
+                         Geschwindigkeits-Einbruch (kein Reset). Ohne Steuerung übernimmt nach
+                         wenigen Sekunden der Auto-Pilot (gedeckelte, aber verlässliche
+                         Geschwindigkeit) — der passive km-Ertrag läuft davon unabhängig weiter. -->
                     <div class="idle-track-wrap" id="idleTrackWrap">
-                        <canvas id="idleTrackCanvas" class="idle-track-canvas" aria-label="Animierte Renn-Strecke"></canvas>
+                        <canvas id="idleTrackCanvas" class="idle-track-canvas" aria-label="Endless-Runner — 2–3-Lane-Strasse mit Hindernissen"></canvas>
+                        <span class="idle-track-mode" id="idleTrackMode" aria-live="polite"></span>
                         <div class="idle-handover" id="idleHandover" aria-live="polite"></div>
 
                         <!-- Sparschwein (MECHANIK B, feat(idle-piggybanks)): erscheint kurz an
@@ -49,6 +54,7 @@
                              unbeklickt verschwindet es wieder — keine Strafe. -->
                         <button type="button" class="idle-piggy" id="idlePiggy" aria-hidden="true" tabindex="-1" aria-label="Sparschwein zerschlagen">🐷</button>
                     </div>
+                    <p class="idle-track-hint">⬅️ ➡️ oder A/D zum Ausweichen · auf Mobilgeräten wischen</p>
 
                     <!-- Tacho (Canvas): Halbkreis-Gauge, Nadel folgt der aktuellen Bike-Geschwindigkeit. -->
                     <div class="idle-tacho-wrap" id="idleTachoWrap">

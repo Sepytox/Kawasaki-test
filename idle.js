@@ -23,14 +23,34 @@
   /** Differenz-Schwelle (km), unterhalb derer die Anzeige direkt auf den Zielwert springt. */
   var KM_DISPLAY_SNAP_THRESHOLD = 0.05;
 
-  /* ── Phase B: Renn-Strecke (Canvas) ─────────────────────────────── */
-  /** Rundenzeit (Sekunden) bei Geschwindigkeit 0% (langsamstes Bike, Level 0). */
-  var TRACK_LAP_SECONDS_SLOW = 16;
-  /** Rundenzeit (Sekunden) bei Geschwindigkeit 100% (schnellstes/getuntestes Bike). */
-  var TRACK_LAP_SECONDS_FAST = 3.5;
-  /** Anzahl der Trail-Punkte hinter dem Bike-Marker (Glow-Trail). */
-  var TRACK_TRAIL_LENGTH = 14;
-  /** Ab dieser Geschwindigkeit (%) werden Speed-Lines gezeichnet. */
+  /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße (Canvas) ────────────
+   * Rein visuelle/geometrische Konstanten (Perspektive, Grössen, Ease-/
+   * Swipe-Schwellen) — die eigentliche Spiel-Balance (Speed-Cap/
+   * Vorlaufzeit/Hindernis-Dichte/Kollisions-Malus/Idle-Timeout) lebt
+   * zentral in IdleCore.IDLE_BALANCE (siehe idle-core.js). */
+  /** Y-Position des Horizonts (Fluchtpunkt-Bereich) als Anteil der Canvas-Höhe. */
+  var RUNNER_HORIZON_Y_PCT = 0.16;
+  /** Y-Position der Spieler-Reihe (Bike-Marker) als Anteil der Canvas-Höhe. */
+  var RUNNER_PLAYER_ROW_Y_PCT = 0.9;
+  /** Strassenbreite am Horizont als Anteil der Canvas-Breite (schmal = Tiefenwirkung). */
+  var RUNNER_ROAD_WIDTH_TOP_PCT = 0.16;
+  /** Strassenbreite an der Spieler-Reihe als Anteil der Canvas-Breite (breit = nah am Betrachter). */
+  var RUNNER_ROAD_WIDTH_BOTTOM_PCT = 0.88;
+  /** Hindernis-Fortschritt (0=Horizont, 1=Spieler-Reihe), ab dem eine Kollision ausgewertet wird. */
+  var RUNNER_HIT_ZONE_T = 0.92;
+  /** Hindernis-Fortschritt, ab dem ein Hindernis endgültig entfernt wird (leicht über 1, "vorbeigefahren"). */
+  var RUNNER_OBSTACLE_REMOVE_T = 1.08;
+  /** Hindernis-Grösse (px) am Horizont (Fortschritt 0). */
+  var RUNNER_OBSTACLE_MIN_SIZE_PX = 5;
+  /** Hindernis-Grösse (px) an der Spieler-Reihe (Fortschritt 1). */
+  var RUNNER_OBSTACLE_MAX_SIZE_PX = 22;
+  /** Ease-Faktor (pro Sekunde) für den weichen Lane-Wechsel-Tween des Bike-Markers. */
+  var RUNNER_LANE_EASE_PER_SECOND = 10;
+  /** Mindest-Distanz (px) eines horizontalen Touch-Swipes, um einen Lane-Wechsel auszulösen. */
+  var RUNNER_SWIPE_THRESHOLD_PX = 40;
+  /** Anzeigedauer (ms) des Kollisions-Flash/Shake-Effekts (siehe triggerCollisionFeedback()). */
+  var RUNNER_COLLISION_FLASH_MS = 320;
+  /** Ab dieser Geschwindigkeit (%) werden dezente Speed-Lines gezeichnet. */
   var TRACK_SPEED_LINES_THRESHOLD_PCT = 45;
 
   /* ── Phase B: Tacho (Canvas) ─────────────────────────────────────── */
@@ -164,11 +184,24 @@
   /** true, wenn das System "Bewegung reduzieren" bevorzugt (prefers-reduced-motion). */
   var reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-  /* ── Renn-Strecke: Laufzeit-Zustand ──────────────────────────────── */
-  /** Aktueller Winkel (Radiant) des Bike-Markers auf der Oval-Strecke. */
-  var trackAngle = 0;
-  /** Trail-Punkte (Glow-Trail) hinter dem Bike-Marker, je {x, y}. */
-  var trackTrail = [];
+  /* ── Teil 1: ENDLESS-RUNNER — Laufzeit-Zustand ────────────────────
+   * Hindernisse (runnerObstacles) sind bewusst NICHT persistiert (siehe
+   * state.runner-Docblock in idle-core.js) — reiner Laufzeit-Zustand,
+   * identisches Muster zu piggyState/shiftState. Jedes Element:
+   * {lane, t, resolved} — t läuft von 0 (Horizont/Spawn) bis >1
+   * (vorbeigefahren, wird entfernt); resolved verhindert eine doppelte
+   * Kollisionsauswertung desselben Hindernisses. */
+  var runnerObstacles = [];
+  /** Sekunden bis zum nächsten Hindernis-Spawn (siehe tickRunner()). */
+  var runnerSpawnTimerSeconds = IdleCore.nextObstacleSpawnIntervalSeconds(0, Math.random);
+  /** Aufsummierte Scroll-Distanz seit dem letzten Distanz-Meilenstein (ersetzt die frühere Runden-Erkennung, siehe onLapCompleted()). */
+  var runnerLapProgressUnits = 0;
+  /** Weich nachlaufende (getweente) Lane-Position des Bike-Markers (Float, für einen sanften Lane-Wechsel statt eines harten Sprungs). */
+  var runnerBikeDisplayLane = state.runner.lane;
+  /** Timeout-Handle des aktuell angezeigten Kollisions-Flash/Shake-Effekts (für Re-Trigger bei schnell aufeinanderfolgenden Treffern). */
+  var runnerCollisionFlashTimeoutId = null;
+  /** Zuletzt angezeigter Aktivitäts-Zustand ('active'/'idle'), nur für den Auto-Pilot-Badge-Text (vermeidet unnötige DOM-Schreibzugriffe jeden Frame). */
+  var runnerLastDisplayedActivity = null;
   /** DOM-Referenzen für Canvas + 2D-Kontext (einmalig aufgelöst, siehe initCanvases()). */
   var trackCanvas = null, trackCtx = null;
   var tachoCanvas = null, tachoCtx = null;
@@ -473,6 +506,49 @@
     });
   }
 
+  /**
+   * Verdrahtet die Steuerung des Endless-Runners (Teil 1): Tastatur
+   * (ArrowLeft/ArrowRight sowie A/D, unabhängig von der Eingabe-
+   * Fokussierung ausser innerhalb von Formularfeldern) UND Touch-Swipe
+   * (links/rechts) auf der Renn-Strecke. Jede erkannte Eingabe ruft
+   * IdleCore.steerRunnerLane() auf, was automatisch auch den Aktivitäts-
+   * Zustand auf 'active' setzt (siehe IdleCore.runnerActivityState()).
+   * @returns {void}
+   */
+  function wireRunnerControls() {
+    document.addEventListener('keydown', function (event) {
+      var target = event.target;
+      var tag = target && target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (event.key === 'ArrowLeft' || event.key === 'a' || event.key === 'A') {
+        event.preventDefault();
+        IdleCore.steerRunnerLane(state, -1, Date.now());
+      } else if (event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D') {
+        event.preventDefault();
+        IdleCore.steerRunnerLane(state, 1, Date.now());
+      }
+    });
+
+    var wrap = document.getElementById('idleTrackWrap');
+    if (!wrap) return;
+    var touchStartX = null;
+    var touchStartY = null;
+    wrap.addEventListener('touchstart', function (event) {
+      if (!event.touches || event.touches.length === 0) return;
+      touchStartX = event.touches[0].clientX;
+      touchStartY = event.touches[0].clientY;
+    }, { passive: true });
+    wrap.addEventListener('touchend', function (event) {
+      if (touchStartX === null || !event.changedTouches || event.changedTouches.length === 0) return;
+      var dx = event.changedTouches[0].clientX - touchStartX;
+      var dy = event.changedTouches[0].clientY - (touchStartY || 0);
+      touchStartX = null;
+      touchStartY = null;
+      if (Math.abs(dx) < RUNNER_SWIPE_THRESHOLD_PX || Math.abs(dx) < Math.abs(dy)) return;
+      IdleCore.steerRunnerLane(state, dx < 0 ? -1 : 1, Date.now());
+    }, { passive: true });
+  }
+
   /* ============================================================
      RENN-STRECKE + TACHO (Canvas) — feat(idle-visuals)
      ============================================================ */
@@ -515,84 +591,260 @@
   }
 
   /**
-   * Rendert EINEN Frame der Oval-Renn-Strecke: bewegt den Bike-Marker
-   * entlang einer ovalen Bahn, deren Rundenzeit mit der aktuellen
-   * Geschwindigkeit (geschwindigkeitPct) sichtbar schrumpft — schneller
-   * gefahren wird spürbar mehr Runden/Sekunde. Bei ausreichender
-   * Geschwindigkeit werden zusätzlich Speed-Lines + ein Glow-Trail
-   * gezeichnet (respektiert prefers-reduced-motion).
-   * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
-   * @param {number} speedPct - Aktuelle Geschwindigkeit des Bikes (0–100%).
+   * Lineare Interpolation zwischen a und b.
+   * @param {number} a - Startwert (t=0).
+   * @param {number} b - Endwert (t=1).
+   * @param {number} t - Fortschritt (0–1, wird nicht geklemmt).
+   * @returns {number} Interpolierter Wert.
+   */
+  function lerpValue(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  /**
+   * Berechnet die x-Position einer (ggf. fraktionalen) Fahrspur bei einem
+   * gegebenen Tiefen-Fortschritt t (0=Horizont, 1=Spieler-Reihe) — die
+   * Strasse verjüngt sich zum Horizont hin (perspektivische Konvergenz),
+   * siehe RUNNER_ROAD_WIDTH_TOP_PCT/RUNNER_ROAD_WIDTH_BOTTOM_PCT.
+   * @param {number} w - Canvas-Breite (CSS-Pixel).
+   * @param {number} laneIndexFloat - Fahrspur-Index (0-basiert, auch fraktional für Tweens).
+   * @param {number} t - Tiefen-Fortschritt (0–1).
+   * @returns {number} x-Position (CSS-Pixel).
+   */
+  function laneCenterX(w, laneIndexFloat, t) {
+    var laneCount = IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT;
+    var normalized = (laneIndexFloat + 0.5) / laneCount - 0.5;
+    var roadWidth = lerpValue(w * RUNNER_ROAD_WIDTH_TOP_PCT, w * RUNNER_ROAD_WIDTH_BOTTOM_PCT, t);
+    return w / 2 + normalized * roadWidth;
+  }
+
+  /**
+   * Berechnet die y-Position bei einem gegebenen Tiefen-Fortschritt t
+   * (0=Horizont, 1=Spieler-Reihe).
+   * @param {number} h - Canvas-Höhe (CSS-Pixel).
+   * @param {number} t - Tiefen-Fortschritt (0–1).
+   * @returns {number} y-Position (CSS-Pixel).
+   */
+  function laneRowY(h, t) {
+    return lerpValue(h * RUNNER_HORIZON_Y_PCT, h * RUNNER_PLAYER_ROW_Y_PCT, t);
+  }
+
+  /**
+   * Fügt ein neues Hindernis am Horizont (t=0) auf einer zufälligen Lane
+   * hinzu (siehe tickRunner()).
    * @returns {void}
    */
-  function renderTrack(dtSeconds, speedPct) {
+  function spawnRunnerObstacle() {
+    var lane = Math.floor(Math.random() * IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
+    runnerObstacles.push({ lane: lane, t: 0, resolved: false });
+  }
+
+  /**
+   * Löst den kurzen, dezenten Kollisions-Flash/Shake-Effekt auf der
+   * Renn-Strecke aus (CSS-Klasse .is-collision, siehe idle.css) —
+   * respektiert prefers-reduced-motion (das transform-Shake wird dort per
+   * CSS deaktiviert, ein statischer Akzent-Rahmen bleibt als Feedback
+   * erhalten).
+   * @returns {void}
+   */
+  function triggerCollisionFeedback() {
+    var wrap = document.getElementById('idleTrackWrap');
+    if (!wrap) return;
+    wrap.classList.remove('is-collision');
+    // Reflow erzwingen, damit die Animation bei schnell aufeinanderfolgenden Treffern erneut startet.
+    void wrap.offsetWidth;
+    wrap.classList.add('is-collision');
+    if (runnerCollisionFlashTimeoutId) clearTimeout(runnerCollisionFlashTimeoutId);
+    runnerCollisionFlashTimeoutId = setTimeout(function () {
+      wrap.classList.remove('is-collision');
+    }, RUNNER_COLLISION_FLASH_MS);
+  }
+
+  /**
+   * Aktualisiert den kleinen "Aktiv"/"Auto-Pilot"-Badge über der Strecke,
+   * NUR wenn sich der Aktivitäts-Zustand tatsächlich geändert hat
+   * (vermeidet unnötige DOM-Schreibzugriffe in jedem Frame).
+   * @param {('active'|'idle')} activity - Aktueller Runner-Aktivitäts-Zustand.
+   * @returns {void}
+   */
+  function updateRunnerModeBadge(activity) {
+    if (activity === runnerLastDisplayedActivity) return;
+    runnerLastDisplayedActivity = activity;
+    var badge = document.getElementById('idleTrackMode');
+    if (!badge) return;
+    badge.textContent = activity === 'idle' ? '🤖 Auto-Pilot' : '🎮 Aktiv';
+    badge.classList.toggle('is-idle', activity === 'idle');
+  }
+
+  /**
+   * EIN Game-Loop-Tick des Endless-Runners (Teil 1): bestimmt den
+   * Aktivitäts-Zustand (aktiv/Auto-Run, siehe IdleCore.runnerActivityState())
+   * und den rein visuellen Kollisions-Malus (siehe IdleCore.
+   * collisionSpeedMalus()), rückt alle Hindernisse entsprechend der
+   * daraus abgeleiteten Scroll-Geschwindigkeit vor, wertet Kollisionen
+   * NUR im aktiven Modus aus (Auto-Pilot "sieht" Hindernisse und weicht
+   * ihnen zuverlässig aus — siehe RUNNER_AUTO_RUN_SPEED_CAP_PCT), spawnt
+   * neue Hindernisse (Dichte/Intervall skaliert mit der Geschwindigkeit,
+   * siehe IdleCore.obstacleDensity()/nextObstacleSpawnIntervalSeconds())
+   * und löst Distanz-Meilensteine aus (ersetzt die frühere runden-
+   * basierte onLapCompleted()-Auslösung durch einen äquivalenten,
+   * geschwindigkeitsabhängigen Trigger). Der passive km-Ertrag
+   * (IdleCore.passiveEarn(), siehe tick()) läuft davon KOMPLETT
+   * unabhängig weiter — eine Kollision ist NIEMALS ein Reset/Fail-State.
+   * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
+   * @param {number} speedPct - Aktuelle (reale) Geschwindigkeit des Bikes (0–100%).
+   * @returns {number} Die für die Strecken-Darstellung zu nutzende visuelle Geschwindigkeit (0–100%, idle-gedeckelt + Kollisions-Malus).
+   */
+  function tickRunner(dtSeconds, speedPct) {
+    var now = Date.now();
+    var activity = IdleCore.runnerActivityState(state, now);
+    updateRunnerModeBadge(activity);
+
+    var baseSpeedPct = activity === 'idle' ? IdleCore.runnerAutoRunSpeedPct(speedPct) : speedPct;
+    var malus = IdleCore.collisionSpeedMalus(state, now);
+    var visualSpeedPct = baseSpeedPct * malus;
+    var scrollSpeed = IdleCore.runnerScrollSpeed(visualSpeedPct);
+    var progressDelta = dtSeconds > 0 ? (scrollSpeed * dtSeconds) / IdleCore.IDLE_BALANCE.RUNNER_SPAWN_LEAD_DISTANCE : 0;
+
+    // Hindernisse vorrücken, im aktiven Modus einmalig auf Kollision prüfen, vorbeigefahrene entfernen.
+    for (var i = runnerObstacles.length - 1; i >= 0; i--) {
+      var obstacle = runnerObstacles[i];
+      obstacle.t += progressDelta;
+      if (!obstacle.resolved && obstacle.t >= RUNNER_HIT_ZONE_T) {
+        obstacle.resolved = true;
+        if (activity === 'active' && obstacle.lane === state.runner.lane) {
+          IdleCore.applyCollisionMalus(state, now);
+          triggerCollisionFeedback();
+        }
+      }
+      if (obstacle.t >= RUNNER_OBSTACLE_REMOVE_T) runnerObstacles.splice(i, 1);
+    }
+
+    // Spawn-Timer (mit Restzeit-Übertrag, falls ein einzelner Tick mehrere Intervalle überspringt).
+    if (dtSeconds > 0) {
+      runnerSpawnTimerSeconds -= dtSeconds;
+      while (runnerSpawnTimerSeconds <= 0) {
+        spawnRunnerObstacle();
+        runnerSpawnTimerSeconds += IdleCore.nextObstacleSpawnIntervalSeconds(visualSpeedPct, Math.random);
+      }
+    }
+
+    // Distanz-Meilenstein (ersetzt die frühere Runden-Erkennung der Oval-Strecke).
+    runnerLapProgressUnits += scrollSpeed * dtSeconds;
+    var lapDistance = IdleCore.IDLE_BALANCE.RUNNER_LAP_DISTANCE_UNITS;
+    while (runnerLapProgressUnits >= lapDistance) {
+      runnerLapProgressUnits -= lapDistance;
+      onLapCompleted();
+    }
+
+    return visualSpeedPct;
+  }
+
+  /**
+   * Rendert EINEN Frame der Endless-Runner-Straße (Teil 1): eine
+   * perspektivische 2–3-Lane-Strasse (Horizont oben, Spieler-Reihe unten),
+   * auf der Hindernisse Richtung Spieler vorrücken. Das Bike wechselt
+   * weich (getweent) zwischen den Lanes; im Auto-Pilot-Modus wird der
+   * Bike-Marker dezent transparenter dargestellt. Rein zeichnende
+   * Funktion — die eigentliche Spiel-Logik (Vorrücken/Spawn/Kollision)
+   * läuft bereits vorher in tickRunner().
+   * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt) — nur für den Lane-Wechsel-Tween.
+   * @param {number} visualSpeedPct - Von tickRunner() berechnete visuelle Geschwindigkeit (0–100%).
+   * @returns {void}
+   */
+  function renderTrack(dtSeconds, visualSpeedPct) {
     if (!trackCtx || !trackCanvas) return;
     var w = trackCanvas.clientWidth;
     var h = trackCanvas.clientHeight;
     if (w <= 0 || h <= 0) return;
 
-    var lapSeconds = TRACK_LAP_SECONDS_SLOW - (TRACK_LAP_SECONDS_SLOW - TRACK_LAP_SECONDS_FAST) * (speedPct / 100);
-    var angularSpeed = (2 * Math.PI) / Math.max(0.5, lapSeconds);
-    var rawAngle = trackAngle + angularSpeed * dtSeconds;
-    if (rawAngle >= 2 * Math.PI) {
-      var lapsCompleted = Math.floor(rawAngle / (2 * Math.PI));
-      for (var lapIndex = 0; lapIndex < lapsCompleted; lapIndex++) onLapCompleted();
-    }
-    trackAngle = rawAngle % (2 * Math.PI);
-
-    var cx = w / 2, cy = h / 2;
-    var rx = w * 0.42, ry = h * 0.34;
-    var bikeX = cx + Math.cos(trackAngle) * rx;
-    var bikeY = cy + Math.sin(trackAngle) * ry;
+    // Bike-Lane weich nachziehen (Tween), analog zum Tacho-Nadel-Ease-Muster.
+    var targetLane = state.runner.lane;
+    var laneEase = Math.min(1, RUNNER_LANE_EASE_PER_SECOND * dtSeconds);
+    runnerBikeDisplayLane += (targetLane - runnerBikeDisplayLane) * laneEase;
+    if (Math.abs(targetLane - runnerBikeDisplayLane) < 0.01) runnerBikeDisplayLane = targetLane;
 
     trackCtx.clearRect(0, 0, w, h);
 
-    // Oval-Fahrbahn.
+    var laneCount = IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT;
+    var topY = h * RUNNER_HORIZON_Y_PCT, bottomY = h * RUNNER_PLAYER_ROW_Y_PCT;
+    var topWidth = w * RUNNER_ROAD_WIDTH_TOP_PCT, bottomWidth = w * RUNNER_ROAD_WIDTH_BOTTOM_PCT;
+    var cx = w / 2;
+
+    // Horizont-Linie (dezent).
     trackCtx.beginPath();
-    trackCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    trackCtx.lineWidth = Math.max(2, h * 0.05);
-    trackCtx.strokeStyle = 'rgba(150,150,150,0.35)';
+    trackCtx.moveTo(cx - topWidth / 2, topY);
+    trackCtx.lineTo(cx + topWidth / 2, topY);
+    trackCtx.strokeStyle = 'rgba(150,150,150,0.2)';
+    trackCtx.lineWidth = Math.max(1, h * 0.005);
     trackCtx.stroke();
 
-    if (!reducedMotion) {
-      // Glow-Trail: verblassende Punkte entlang der zurückliegenden Positionen.
-      trackTrail.push({ x: bikeX, y: bikeY });
-      if (trackTrail.length > TRACK_TRAIL_LENGTH) trackTrail.shift();
-      trackTrail.forEach(function (point, index) {
-        var alpha = (index / trackTrail.length) * 0.35;
-        trackCtx.beginPath();
-        trackCtx.arc(point.x, point.y, Math.max(2, h * 0.035), 0, Math.PI * 2);
-        trackCtx.fillStyle = 'rgba(47,160,107,' + alpha.toFixed(3) + ')';
-        trackCtx.fill();
-      });
+    // Fahrbahn-Aussenkanten (konvergierendes Trapez).
+    trackCtx.beginPath();
+    trackCtx.moveTo(cx - topWidth / 2, topY);
+    trackCtx.lineTo(cx - bottomWidth / 2, bottomY);
+    trackCtx.moveTo(cx + topWidth / 2, topY);
+    trackCtx.lineTo(cx + bottomWidth / 2, bottomY);
+    trackCtx.strokeStyle = 'rgba(150,150,150,0.35)';
+    trackCtx.lineWidth = Math.max(1, h * 0.008);
+    trackCtx.stroke();
 
-      // Speed-Lines hinter dem Bike ab spürbarem Tempo.
-      if (speedPct >= TRACK_SPEED_LINES_THRESHOLD_PCT) {
-        var tangentAngle = trackAngle - Math.PI / 2;
-        var lineCount = 3;
-        for (var i = 0; i < lineCount; i++) {
-          var lx = cx + Math.cos(trackAngle - (i + 1) * 0.14) * rx;
-          var ly = cy + Math.sin(trackAngle - (i + 1) * 0.14) * ry;
-          trackCtx.beginPath();
-          trackCtx.moveTo(lx, ly);
-          trackCtx.lineTo(lx - Math.cos(tangentAngle) * (6 + i * 3), ly - Math.sin(tangentAngle) * (6 + i * 3));
-          trackCtx.strokeStyle = 'rgba(241,241,239,' + (0.35 - i * 0.1) + ')';
-          trackCtx.lineWidth = 2;
-          trackCtx.stroke();
-        }
-      }
-    } else {
-      trackTrail.length = 0;
+    // Lane-Trenner (laneCount-1 innere Linien).
+    for (var lane = 1; lane < laneCount; lane++) {
+      var frac = lane / laneCount - 0.5;
+      trackCtx.beginPath();
+      trackCtx.moveTo(cx + frac * topWidth, topY);
+      trackCtx.lineTo(cx + frac * bottomWidth, bottomY);
+      trackCtx.strokeStyle = 'rgba(150,150,150,0.22)';
+      trackCtx.lineWidth = Math.max(1, h * 0.004);
+      trackCtx.stroke();
     }
 
-    // Bike-Marker.
+    // Hindernisse: weiter entfernte zuerst zeichnen, damit näherliegende oben liegen.
+    var sortedObstacles = runnerObstacles.slice().sort(function (a, b) { return a.t - b.t; });
+    sortedObstacles.forEach(function (obstacle) {
+      var t = Math.min(1, Math.max(0, obstacle.t));
+      var x = laneCenterX(w, obstacle.lane, t);
+      var y = laneRowY(h, t);
+      var size = lerpValue(RUNNER_OBSTACLE_MIN_SIZE_PX, RUNNER_OBSTACLE_MAX_SIZE_PX, t);
+      trackCtx.beginPath();
+      trackCtx.rect(x - size / 2, y - size / 2, size, size);
+      trackCtx.fillStyle = 'rgba(241,241,239,0.85)';
+      trackCtx.strokeStyle = 'rgba(150,150,150,0.5)';
+      trackCtx.lineWidth = 1;
+      trackCtx.fill();
+      trackCtx.stroke();
+    });
+
+    // Speed-Lines entlang der Strasse ab spürbarem Tempo (respektiert prefers-reduced-motion).
+    if (!reducedMotion && visualSpeedPct >= TRACK_SPEED_LINES_THRESHOLD_PCT) {
+      for (var laneIdx = 0; laneIdx < laneCount; laneIdx++) {
+        var lineT = 0.55;
+        var lx = laneCenterX(w, laneIdx, lineT);
+        var ly = laneRowY(h, lineT);
+        trackCtx.beginPath();
+        trackCtx.moveTo(lx, ly - h * 0.05);
+        trackCtx.lineTo(lx, ly + h * 0.05);
+        trackCtx.strokeStyle = 'rgba(0,112,243,0.18)';
+        trackCtx.lineWidth = 2;
+        trackCtx.stroke();
+      }
+    }
+
+    // Bike-Marker (Vercel-Akzent) — dezent transparenter im Auto-Pilot-Modus.
+    var bikeX = laneCenterX(w, runnerBikeDisplayLane, 1);
+    var bikeY = bottomY;
+    var bikeRadius = Math.max(6, h * 0.07);
+    var activity = IdleCore.runnerActivityState(state, Date.now());
+    trackCtx.globalAlpha = activity === 'idle' ? 0.7 : 1;
     trackCtx.beginPath();
-    trackCtx.arc(bikeX, bikeY, Math.max(4, h * 0.06), 0, Math.PI * 2);
-    trackCtx.fillStyle = '#1f6d4a';
-    trackCtx.shadowColor = reducedMotion ? 'transparent' : 'rgba(47,160,107,0.8)';
+    trackCtx.arc(bikeX, bikeY, bikeRadius, 0, Math.PI * 2);
+    trackCtx.fillStyle = '#0070f3';
+    trackCtx.shadowColor = reducedMotion ? 'transparent' : 'rgba(0,112,243,0.75)';
     trackCtx.shadowBlur = reducedMotion ? 0 : 10;
     trackCtx.fill();
     trackCtx.shadowBlur = 0;
+    trackCtx.globalAlpha = 1;
   }
 
   /**
@@ -1217,9 +1469,10 @@
   }
 
   /**
-   * Wird bei jeder abgeschlossenen Runde auf der Renn-Strecke aufgerufen
-   * (siehe renderTrack()'s Rundenerkennung): zählt die Runden-Statistik
-   * hoch und würfelt einen möglichen Teile-Drop (IdleCore.rollPartDrop).
+   * Wird bei jedem erreichten Distanz-Meilenstein des Endless-Runners
+   * aufgerufen (siehe tickRunner()'s Distanz-Trigger, ersetzt die frühere
+   * rundenbasierte Auslösung der Oval-Strecke): zählt die Runden-
+   * Statistik hoch und würfelt einen möglichen Teile-Drop (IdleCore.rollPartDrop).
    * Bei einem Drop wird das Teil hinzugefügt (oder als Dublette in km
    * umgewandelt), gespeichert, die Sammlung neu gerendert und ein Toast
    * gezeigt.
@@ -1755,10 +2008,15 @@
 
     updateKmDisplay();
 
-    // Strecke/Tacho teilen sich denselben Game-Loop-Tick (kein zweiter rAF-Loop).
+    // Strecke/Tacho/Runner teilen sich denselben Game-Loop-Tick (kein zweiter rAF-Loop).
+    // tickRunner() liefert die visuelle (idle-gedeckelte + Kollisions-Malus-behaftete)
+    // Geschwindigkeit NUR für die Strecken-Darstellung — Tacho/Sound/kmh bleiben an der
+    // realen Bike-Geschwindigkeit, die Wirtschaft (passiveEarn oben) ist ohnehin komplett
+    // unabhängig davon.
     var info = getCurrentBikeInfo();
     var kmh = (info.bike.topspeed * info.stats.geschwindigkeitPct) / 100;
-    renderTrack(clampedDt, info.stats.geschwindigkeitPct);
+    var runnerVisualSpeedPct = tickRunner(clampedDt, info.stats.geschwindigkeitPct);
+    renderTrack(clampedDt, runnerVisualSpeedPct);
     renderTacho(info.stats.geschwindigkeitPct, kmh);
     updateEngineSound(info.stats.geschwindigkeitPct);
     tickShift(clampedDt);
@@ -1812,6 +2070,7 @@
     showOfflineBanner();
     wireGasButton();
     wireUpgradeButton();
+    wireRunnerControls();
     wireShiftInteraction();
     wireSoundControls();
     wireSeasonControls();
