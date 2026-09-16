@@ -987,6 +987,395 @@ section('16 · MECHANIK B — Sparschweine zerschlagen (nextPiggyIntervalSeconds
   assert(migratedWithPiggy.piggy.smashedCount === 42, 'migrateState(): ein bereits vorhandener piggy.smashedCount-Zähler bleibt exakt erhalten');
 })();
 
+section('17 · TEIL 1 — Endless-Runner: Speed-Cap/Lead-Time, Hindernis-Dichte, Kollisions-Malus, Idle-Auto-Run, v2→v3-Migration');
+(function () {
+  // runnerLeadSeconds(): niemals unter RUNNER_MIN_LEAD_SECONDS, für den gesamten 0..100%-Bereich.
+  for (let pct = 0; pct <= 100; pct += 5) {
+    assert(
+      IdleCore.runnerLeadSeconds(pct) >= IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS - 1e-9,
+      `runnerLeadSeconds(${pct}) liegt nicht unter der Mindest-Vorlaufzeit (${IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS}s)`
+    );
+  }
+  assert(IdleCore.runnerLeadSeconds(0) > IdleCore.runnerLeadSeconds(100), 'runnerLeadSeconds() sinkt mit steigender Geschwindigkeit (0% > 100%)');
+  assert(
+    Math.abs(IdleCore.runnerLeadSeconds(100) - IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS) < 1e-9,
+    'runnerLeadSeconds(100) trifft exakt die Mindest-Vorlaufzeit (Speed-Cap aktiv)'
+  );
+
+  // obstacleDensity(): steigt monoton, UND steigt STÄRKER oberhalb des Speed-Caps (kompensiert die gedeckelte Scroll-Geschwindigkeit).
+  const cap = IdleCore.IDLE_BALANCE.RUNNER_SPEED_CAP_PCT;
+  assert(IdleCore.obstacleDensity(0) === IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_BASE, 'obstacleDensity(0) entspricht der Basis-Dichte');
+  assert(
+    Math.abs(IdleCore.obstacleDensity(cap) - IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_AT_CAP) < 1e-9,
+    'obstacleDensity() am Speed-Cap entspricht RUNNER_OBSTACLE_DENSITY_AT_CAP'
+  );
+  assert(
+    Math.abs(IdleCore.obstacleDensity(100) - IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_MAX) < 1e-9,
+    'obstacleDensity(100) entspricht der Maximal-Dichte'
+  );
+  assert(IdleCore.obstacleDensity(100) > IdleCore.obstacleDensity(cap), 'obstacleDensity() steigt ÜBER den Speed-Cap hinaus weiter an, statt zu stagnieren');
+  let prevDensity = -Infinity;
+  for (let pct = 0; pct <= 100; pct += 5) {
+    const d = IdleCore.obstacleDensity(pct);
+    assert(d >= prevDensity - 1e-9, `obstacleDensity(${pct}) ist monoton nicht-fallend`);
+    prevDensity = d;
+  }
+
+  // nextObstacleSpawnIntervalSeconds(): liefert bei höherer Dichte (höherer Geschwindigkeit) im Mittel kürzere Intervalle.
+  let spawnSeed = 3;
+  function seededSpawnRandom() { spawnSeed = (spawnSeed * 1103515245 + 12345) & 0x7fffffff; return spawnSeed / 0x7fffffff; }
+  let sumSlow = 0, sumFast = 0;
+  const SPAWN_SAMPLE_COUNT = 500;
+  for (let i = 0; i < SPAWN_SAMPLE_COUNT; i++) {
+    sumSlow += IdleCore.nextObstacleSpawnIntervalSeconds(0, seededSpawnRandom);
+    sumFast += IdleCore.nextObstacleSpawnIntervalSeconds(100, seededSpawnRandom);
+  }
+  assert(sumFast < sumSlow, 'nextObstacleSpawnIntervalSeconds() liefert bei 100% Geschwindigkeit im Mittel kürzere Intervalle als bei 0% (höhere Dichte)');
+
+  // Kollisions-Malus (collisionSpeedMalus/applyCollisionMalus): reine Multiplikator-Funktion mit Ablaufzeit — NIE ein Reset/Fail-State.
+  const runnerState = IdleCore.createInitialState();
+  assert(IdleCore.collisionSpeedMalus(runnerState, 1000) === 1, 'collisionSpeedMalus() liefert 1 (kein Malus), solange keine Kollision stattgefunden hat');
+  IdleCore.applyCollisionMalus(runnerState, 1000);
+  assert(
+    IdleCore.collisionSpeedMalus(runnerState, 1000) === IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER,
+    'collisionSpeedMalus() liefert direkt nach einer Kollision den konfigurierten Malus-Multiplikator'
+  );
+  const stillActiveAt = 1000 + IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS - 1;
+  assert(
+    IdleCore.collisionSpeedMalus(runnerState, stillActiveAt) === IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER,
+    'collisionSpeedMalus() bleibt für die konfigurierte Dauer aktiv'
+  );
+  const recoveredAt = 1000 + IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS;
+  assert(IdleCore.collisionSpeedMalus(runnerState, recoveredAt) === 1, 'collisionSpeedMalus() erholt sich nach Ablauf der Malus-Dauer wieder auf 1 (kein Reset/Fail-State)');
+
+  // Idle-Auto-Run (runnerActivityState/runnerAutoRunSpeedPct): passives Fahren bleibt ZUVERLÄSSIG, aber gedeckelt.
+  const freshRunnerState = IdleCore.createInitialState();
+  assert(IdleCore.runnerActivityState(freshRunnerState, 0) === 'idle', 'runnerActivityState() ist "idle", solange noch nie gesteuert wurde (Auto-Run von Beginn an)');
+  IdleCore.steerRunnerLane(freshRunnerState, 1, 5000);
+  assert(IdleCore.runnerActivityState(freshRunnerState, 5000) === 'active', 'runnerActivityState() wird sofort "active" nach einer Lane-Wechsel-Eingabe');
+  const stillActive = 5000 + IdleCore.IDLE_BALANCE.RUNNER_IDLE_TIMEOUT_SECONDS * 1000 - 1;
+  assert(IdleCore.runnerActivityState(freshRunnerState, stillActive) === 'active', 'runnerActivityState() bleibt innerhalb des Idle-Timeouts "active"');
+  const backToIdle = 5000 + IdleCore.IDLE_BALANCE.RUNNER_IDLE_TIMEOUT_SECONDS * 1000;
+  assert(IdleCore.runnerActivityState(freshRunnerState, backToIdle) === 'idle', 'runnerActivityState() wechselt nach dem Idle-Timeout ohne weitere Eingabe zurück zu "idle"');
+  assert(
+    IdleCore.runnerAutoRunSpeedPct(100) === IdleCore.IDLE_BALANCE.RUNNER_AUTO_RUN_SPEED_CAP_PCT,
+    'runnerAutoRunSpeedPct() deckelt die Auto-Run-Geschwindigkeit auch bei einem 100%-Bike'
+  );
+  assert(IdleCore.runnerAutoRunSpeedPct(10) === 10, 'runnerAutoRunSpeedPct() lässt eine bereits niedrigere Geschwindigkeit unverändert (kein künstliches Verlangsamen)');
+
+  // passiveEarn() selbst (die reine Formel) bleibt von Runner-Kollisionen VOLLSTÄNDIG entkoppelt (Malus ist rein visuell).
+  const earnState = IdleCore.createInitialState();
+  const earnBefore = IdleCore.passiveEarn(earnState, 1);
+  IdleCore.applyCollisionMalus(earnState, 0);
+  const earnAfterCollision = IdleCore.passiveEarn(earnState, 1);
+  assert(earnBefore === earnAfterCollision, 'passiveEarn() selbst ist unverändert nach einer Runner-Kollision (die Formel bleibt rein, der Effekt lebt in runnerEarnMultiplier())');
+
+  // steerRunnerLane(): klemmt auf [0, RUNNER_LANE_COUNT-1] (kein Wechsel über den Rand hinaus).
+  const laneState = IdleCore.createInitialState();
+  for (let i = 0; i < IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT + 3; i++) IdleCore.steerRunnerLane(laneState, 1, 0);
+  assert(laneState.runner.lane === IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT - 1, 'steerRunnerLane() klemmt am rechten Rand auf die letzte Lane');
+  for (let i = 0; i < IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT + 3; i++) IdleCore.steerRunnerLane(laneState, -1, 0);
+  assert(laneState.runner.lane === 0, 'steerRunnerLane() klemmt am linken Rand auf Lane 0');
+
+  // v2→v3-Migration: ein v2-Save OHNE runner-Feld (vor feat(idle-runner)) bekommt defensiv einen gültigen runner-Zustand.
+  const v2Raw = { version: 2, km: 123, ownedBikeIds: ['z125pro'], currentBikeId: 'z125pro', bikeLevels: { z125pro: 0 } };
+  const migratedV2 = IdleCore.migrateState(v2Raw);
+  assert(migratedV2.version === IdleCore.IDLE_STATE_VERSION, 'migrateState() hebt ein v2-Save auf die aktuelle Version an');
+  assert(migratedV2.runner && typeof migratedV2.runner === 'object', 'migrateState() füllt ein fehlendes runner-Feld (Save vor feat(idle-runner)) defensiv auf');
+  assert(
+    migratedV2.runner.lane === Math.floor(IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
+    'migrateState(): frisch aufgefüllte runner.lane startet mittig'
+  );
+  assert(migratedV2.runner.collisionMalusExpiresAt === null, 'migrateState(): frisch aufgefüllte runner.collisionMalusExpiresAt ist null (kein aktiver Malus)');
+  assert(migratedV2.km === 123, 'migrateState(): bestehende km bleiben bei der runner-Migration unangetastet');
+
+  // Ein bereits vorhandener, gültiger runner-Zustand bleibt bei erneuter Migration exakt erhalten.
+  const withRunnerRaw = { version: 3, km: 5, runner: { lane: 2, lastInputAt: 9999, collisionMalusExpiresAt: 12345 } };
+  const migratedWithRunner = IdleCore.migrateState(withRunnerRaw);
+  assert(
+    migratedWithRunner.runner.lane === 2 && migratedWithRunner.runner.lastInputAt === 9999 && migratedWithRunner.runner.collisionMalusExpiresAt === 12345,
+    'migrateState(): ein bereits vorhandener gültiger runner-Zustand bleibt exakt erhalten'
+  );
+
+  // Ein runner.lane ausserhalb des gültigen Bereichs wird defensiv auf die mittige Standard-Lane korrigiert.
+  const invalidLaneRaw = { version: 3, runner: { lane: 99, lastInputAt: null, collisionMalusExpiresAt: null } };
+  const migratedInvalidLane = IdleCore.migrateState(invalidLaneRaw);
+  assert(
+    migratedInvalidLane.runner.lane >= 0 && migratedInvalidLane.runner.lane < IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT,
+    'migrateState(): eine ungültige runner.lane wird defensiv auf den gültigen Bereich korrigiert'
+  );
+})();
+
+section('18 · TEIL 2 — balance(economy): runnerEarnMultiplier() koppelt den PASSIVEN Ertrag an den Runner-Zustand (nie 0, nie gated)');
+(function () {
+  // Aktiv (frisch gesteuert), keine Kollision, kein Turbo → unveränderter 1×-Satz (identisch zu Teil 1).
+  const activeState = IdleCore.createInitialState();
+  IdleCore.steerRunnerLane(activeState, 1, 0);
+  assert(IdleCore.runnerEarnMultiplier(activeState, 0) === 1, 'runnerEarnMultiplier() ist exakt 1, solange aktiv gesteuert wird (kein Malus/Turbo)');
+
+  // Idle (nie gesteuert, lastInputAt===null) → reduzierter, aber STRIKT positiver Boden-Multiplikator — NIE 0, NIE gated.
+  const idleState = IdleCore.createInitialState();
+  const idleMultiplier = IdleCore.runnerEarnMultiplier(idleState, 0);
+  assert(idleMultiplier === IdleCore.IDLE_BALANCE.RUNNER_EARN_IDLE_MULTIPLIER, 'runnerEarnMultiplier() liefert im Idle-Auto-Run exakt RUNNER_EARN_IDLE_MULTIPLIER');
+  assert(idleMultiplier > 0 && idleMultiplier < 1, 'runnerEarnMultiplier() im Idle-Modus liegt STRIKT zwischen 0 und 1 (reduziert, aber positiv)');
+  assert(idleMultiplier < IdleCore.runnerEarnMultiplier(activeState, 0), 'runnerEarnMultiplier() ist im Idle-Modus STRIKT kleiner als im aktiven Modus');
+
+  // Eine aktive Kollision verursacht einen zusätzlichen, aber ebenfalls niemals nullenden Dip (aktiv UND idle).
+  const collisionActiveState = IdleCore.createInitialState();
+  IdleCore.steerRunnerLane(collisionActiveState, 1, 0);
+  IdleCore.applyCollisionMalus(collisionActiveState, 0);
+  const collisionActiveMultiplier = IdleCore.runnerEarnMultiplier(collisionActiveState, 0);
+  assert(
+    Math.abs(collisionActiveMultiplier - IdleCore.IDLE_BALANCE.RUNNER_EARN_COLLISION_DIP_MULTIPLIER) < 1e-9,
+    'runnerEarnMultiplier() wendet während einer aktiven Kollision den Dip-Multiplikator an (aktiv gesteuert)'
+  );
+  assert(collisionActiveMultiplier > 0, 'runnerEarnMultiplier() bleibt auch im Kollisions-Dip STRIKT positiv');
+
+  const collisionIdleState = IdleCore.createInitialState();
+  IdleCore.applyCollisionMalus(collisionIdleState, 0);
+  const collisionIdleMultiplier = IdleCore.runnerEarnMultiplier(collisionIdleState, 0);
+  const expectedIdleDip = Math.max(
+    IdleCore.IDLE_BALANCE.RUNNER_EARN_MIN_MULTIPLIER,
+    IdleCore.IDLE_BALANCE.RUNNER_EARN_IDLE_MULTIPLIER * IdleCore.IDLE_BALANCE.RUNNER_EARN_COLLISION_DIP_MULTIPLIER
+  );
+  assert(Math.abs(collisionIdleMultiplier - expectedIdleDip) < 1e-9, 'runnerEarnMultiplier() kombiniert Idle-Boden UND Kollisions-Dip multiplikativ (mit Sicherheitsnetz)');
+  assert(collisionIdleMultiplier > 0, 'runnerEarnMultiplier() ist auch in der ungünstigsten Kombination (Idle + Kollision) STRIKT positiv');
+
+  // Der Kollisions-Malus erholt sich automatisch (kein Reset/Fail-State) — identisches Muster zu collisionSpeedMalus().
+  const recoveredAt = IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS;
+  assert(
+    IdleCore.runnerEarnMultiplier(collisionActiveState, recoveredAt) === 1,
+    'runnerEarnMultiplier() erholt sich nach Ablauf des Kollisions-Malus wieder auf den vollen aktiven Satz'
+  );
+
+  // Turbo-Powerup erhöht runnerEarnMultiplier() zusätzlich (kurzer Ertrags-Boost, siehe activatePowerupEffect()).
+  const turboState = IdleCore.createInitialState();
+  IdleCore.steerRunnerLane(turboState, 1, 0);
+  IdleCore.activatePowerupEffect(turboState, 'turbo', 0);
+  assert(
+    Math.abs(IdleCore.runnerEarnMultiplier(turboState, 0) - IdleCore.IDLE_BALANCE.POWERUP_TURBO_EARN_MULTIPLIER) < 1e-9,
+    'runnerEarnMultiplier() wendet während eines aktiven Turbo-Effekts POWERUP_TURBO_EARN_MULTIPLIER an'
+  );
+
+  // Über das gesamte 0..100%-Delta hinweg: das absolute Sicherheitsnetz wird NIE unterschritten.
+  for (let ms = 0; ms <= IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS; ms += 100) {
+    assert(
+      IdleCore.runnerEarnMultiplier(collisionIdleState, ms) >= IdleCore.IDLE_BALANCE.RUNNER_EARN_MIN_MULTIPLIER - 1e-9,
+      `runnerEarnMultiplier(idle+Kollision, ${ms}ms) liegt nie unter RUNNER_EARN_MIN_MULTIPLIER`
+    );
+  }
+
+  // passiveEarn() × runnerEarnMultiplier(): der Idle-Satz ist reduziert, aber strikt > 0 — NIE gated hinter aktivem Fahren.
+  const dtSeconds = 1;
+  const baseEarn = IdleCore.passiveEarn(idleState, dtSeconds);
+  const activeCredited = baseEarn * IdleCore.runnerEarnMultiplier(activeState, 0);
+  const idleCredited = baseEarn * IdleCore.runnerEarnMultiplier(idleState, 0);
+  assert(idleCredited > 0, 'Der pro Tick gutgeschriebene Idle-Ertrag (passiveEarn() × runnerEarnMultiplier()) ist STRIKT positiv');
+  assert(idleCredited < activeCredited, 'Der Idle-Ertrag ist reduziert ggü. dem aktiven Ertrag, aber niemals 0');
+})();
+
+section('19 · TEIL 2 — feat(powerups): Magnet/Schild/Turbo/Münzregen (rollPowerupType/rollPowerupDrop/activatePowerupEffect) + Tuning-Perks + v3→v4-Migration');
+(function () {
+  // rollPowerupType(): Verteilung über viele geseedete Rolls liegt nahe POWERUP_TYPE_WEIGHTS.
+  let powerupSeed = 11;
+  function seededPowerupRandom() { powerupSeed = (powerupSeed * 1103515245 + 12345) & 0x7fffffff; return powerupSeed / 0x7fffffff; }
+  const POWERUP_ROLL_COUNT = 20000;
+  const counts = { magnet: 0, schild: 0, turbo: 0, muenzregen: 0 };
+  for (let i = 0; i < POWERUP_ROLL_COUNT; i++) {
+    const type = IdleCore.rollPowerupType(seededPowerupRandom);
+    assert(Object.prototype.hasOwnProperty.call(counts, type), `rollPowerupType() liefert einen gültigen Typ (${type})`);
+    counts[type]++;
+  }
+  const totalWeight = Object.values(IdleCore.IDLE_BALANCE.POWERUP_TYPE_WEIGHTS).reduce((a, b) => a + b, 0);
+  Object.keys(IdleCore.IDLE_BALANCE.POWERUP_TYPE_WEIGHTS).forEach((type) => {
+    const expected = POWERUP_ROLL_COUNT * (IdleCore.IDLE_BALANCE.POWERUP_TYPE_WEIGHTS[type] / totalWeight);
+    assert(
+      Math.abs(counts[type] - expected) / expected < 0.15,
+      `rollPowerupType()-Verteilung für '${type}' (${counts[type]}) liegt nahe der erwarteten ~${Math.round(expected)} (POWERUP_TYPE_WEIGHTS)`
+    );
+  });
+
+  // rollPowerupDrop(): respektiert powerupSpawnChance() VOR der Typ-Auswahl.
+  const dropState = IdleCore.createInitialState();
+  assert(IdleCore.rollPowerupDrop(() => 0, dropState) !== null, 'rollPowerupDrop() mit einer garantiert unter der Spawn-Chance liegenden Zufallszahl liefert einen Typ');
+  assert(IdleCore.rollPowerupDrop(() => 0.999, dropState) === null, 'rollPowerupDrop() mit einer garantiert über der Spawn-Chance liegenden Zufallszahl liefert null (kein Spawn, KEINE Strafe)');
+
+  // powerupSpawnChance(): TUNING-PERK — steigt mit dem Tuning-Level des aktuell gefahrenen Bikes, gedeckelt auf 1.
+  const chanceLevel0 = IdleCore.powerupSpawnChance(dropState);
+  const highTuningState = IdleCore.createInitialState();
+  highTuningState.bikeLevels[highTuningState.currentBikeId] = IdleCore.IDLE_BALANCE.TUNING_LEVEL_CAP;
+  const chanceMaxLevel = IdleCore.powerupSpawnChance(highTuningState);
+  assert(chanceMaxLevel > chanceLevel0, 'powerupSpawnChance() steigt mit dem Tuning-Level (Tuning-Perk)');
+  assert(chanceMaxLevel <= 1, 'powerupSpawnChance() ist auf 1 gedeckelt');
+
+  // Magnet/Turbo/Schild: activatePowerupEffect() setzt den jeweiligen *ExpiresAt-Zeitstempel, magnetActive()/turboActive()/shieldActive() spiegeln das (Effekt-Fenster).
+  const effectState = IdleCore.createInitialState();
+  assert(!IdleCore.magnetActive(effectState, 0) && !IdleCore.turboActive(effectState, 0) && !IdleCore.shieldActive(effectState, 0), 'Frischer Zustand hat KEINEN aktiven Powerup-Effekt');
+
+  IdleCore.activatePowerupEffect(effectState, 'magnet', 1000);
+  const magnetDurationMs = IdleCore.powerupMagnetDurationSeconds(effectState) * 1000;
+  assert(IdleCore.magnetActive(effectState, 1000), 'magnetActive() ist direkt nach activatePowerupEffect(\'magnet\') aktiv');
+  assert(IdleCore.magnetActive(effectState, 1000 + magnetDurationMs - 1), 'magnetActive() bleibt für die volle Wirkdauer aktiv');
+  assert(!IdleCore.magnetActive(effectState, 1000 + magnetDurationMs), 'magnetActive() erlischt nach Ablauf der Wirkdauer (kein Reset — einfach kein Effekt mehr)');
+
+  IdleCore.activatePowerupEffect(effectState, 'turbo', 2000);
+  const turboDurationMs = IdleCore.powerupTurboDurationSeconds(effectState) * 1000;
+  assert(IdleCore.turboActive(effectState, 2000), 'turboActive() ist direkt nach activatePowerupEffect(\'turbo\') aktiv');
+  assert(!IdleCore.turboActive(effectState, 2000 + turboDurationMs), 'turboActive() erlischt nach Ablauf der Wirkdauer');
+
+  // Schild: konsumiert GENAU EINE Kollision (consumeShield()) — danach ist er verbraucht, ein zweiter Konsum-Versuch schlägt fehl.
+  const shieldState = IdleCore.createInitialState();
+  assert(IdleCore.consumeShield(shieldState, 0) === false, 'consumeShield() ohne aktiven Schild liefert false (kein Effekt, keine Mutation)');
+  IdleCore.activatePowerupEffect(shieldState, 'schild', 0);
+  assert(IdleCore.shieldActive(shieldState, 0), 'shieldActive() ist direkt nach activatePowerupEffect(\'schild\') aktiv');
+  assert(IdleCore.consumeShield(shieldState, 0) === true, 'consumeShield() konsumiert einen aktiven Schild (blockt EINE Kollision)');
+  assert(!IdleCore.shieldActive(shieldState, 0), 'shieldActive() ist direkt nach dem Konsum wieder false');
+  assert(IdleCore.consumeShield(shieldState, 0) === false, 'consumeShield() ein zweites Mal liefert false — der Schild ist bereits verbraucht (GENAU EINE Kollision)');
+
+  // Ein Schild, der nie konsumiert wird, läuft nach powerupShieldDurationSeconds() unbenutzt ab (keine Strafe, identisches Muster zu Sparschwein/Schaltpunkt-Leiste).
+  const unusedShieldState = IdleCore.createInitialState();
+  IdleCore.activatePowerupEffect(unusedShieldState, 'schild', 0);
+  const shieldDurationMs = IdleCore.powerupShieldDurationSeconds(unusedShieldState) * 1000;
+  assert(IdleCore.shieldActive(unusedShieldState, shieldDurationMs - 1), 'shieldActive() bleibt für die volle Wirkdauer bereit');
+  assert(!IdleCore.shieldActive(unusedShieldState, shieldDurationMs), 'shieldActive() erlischt nach Ablauf der Wirkdauer, falls unbenutzt (KEINE Strafe)');
+
+  // Münzregen: sofortiger km-Bonus (powerupCoinRainReward(), analog piggybankReward()), skaliert mit Bike/Tuning.
+  const coinState = IdleCore.createInitialState();
+  const kmBeforeCoin = coinState.km;
+  const expectedCoinBonus = Math.round(IdleCore.activeEarn(coinState) * IdleCore.IDLE_BALANCE.POWERUP_COINRAIN_KM_MULTIPLIER);
+  const coinResult = IdleCore.activatePowerupEffect(coinState, 'muenzregen', 0);
+  assert(coinResult.kmBonus === expectedCoinBonus, 'activatePowerupEffect(\'muenzregen\') liefert exakt activeEarn(state) × POWERUP_COINRAIN_KM_MULTIPLIER als kmBonus');
+  assert(coinState.km === kmBeforeCoin + expectedCoinBonus, 'activatePowerupEffect(\'muenzregen\') bucht den kmBonus korrekt auf state.km');
+
+  // state.powerups.collected ist ein Lebenszeit-Zähler (jeder Typ, auch Münzregen, zählt).
+  assert(coinState.powerups.collected === 1, 'activatePowerupEffect() erhöht state.powerups.collected um 1');
+  IdleCore.activatePowerupEffect(coinState, 'magnet', 0);
+  assert(coinState.powerups.collected === 2, 'activatePowerupEffect() zählt state.powerups.collected bei jedem weiteren Aufruf hoch');
+
+  // TUNING-PERKS: Magnet-Reichweite/Dauer, Schild-/Turbo-Dauer steigen (bzw. die Reichweiten-SCHWELLE sinkt = grössere Reichweite) monoton mit dem Tuning-Level.
+  const perkBikeId = IdleCore.createInitialState().currentBikeId;
+  let prevMagnetDuration = -Infinity, prevMagnetRange = Infinity, prevShieldDuration = -Infinity, prevTurboDuration = -Infinity;
+  for (let level = 0; level <= IdleCore.IDLE_BALANCE.TUNING_LEVEL_CAP; level += 5) {
+    const perkState = IdleCore.createInitialState();
+    perkState.bikeLevels[perkBikeId] = level;
+    const magnetDuration = IdleCore.powerupMagnetDurationSeconds(perkState);
+    const magnetRange = IdleCore.powerupMagnetRangeT(perkState);
+    const shieldDuration = IdleCore.powerupShieldDurationSeconds(perkState);
+    const turboDuration = IdleCore.powerupTurboDurationSeconds(perkState);
+    assert(magnetDuration >= prevMagnetDuration, `powerupMagnetDurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
+    assert(magnetRange <= prevMagnetRange, `powerupMagnetRangeT() (Reichweiten-Schwelle) ist bei Level ${level} monoton nicht-steigend (= wachsende Reichweite)`);
+    assert(magnetRange >= IdleCore.IDLE_BALANCE.POWERUP_MAGNET_MIN_RANGE_T - 1e-9, `powerupMagnetRangeT() bei Level ${level} respektiert POWERUP_MAGNET_MIN_RANGE_T`);
+    assert(shieldDuration >= prevShieldDuration, `powerupShieldDurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
+    assert(turboDuration >= prevTurboDuration, `powerupTurboDurationSeconds() ist bei Level ${level} monoton nicht-fallend`);
+    prevMagnetDuration = magnetDuration; prevMagnetRange = magnetRange; prevShieldDuration = shieldDuration; prevTurboDuration = turboDuration;
+  }
+
+  // v3→v4-Migration: ein v3-Save OHNE powerups-Feld (vor feat(powerups)) bekommt defensiv einen gültigen powerups-Zustand.
+  const v3RawNoPowerups = { version: 3, km: 42, runner: { lane: 1, lastInputAt: null, collisionMalusExpiresAt: null } };
+  const migratedNoPowerups = IdleCore.migrateState(v3RawNoPowerups);
+  assert(migratedNoPowerups.version === IdleCore.IDLE_STATE_VERSION, 'migrateState() hebt ein v3-Save (vor feat(powerups)) auf die aktuelle Version an');
+  assert(migratedNoPowerups.powerups && migratedNoPowerups.powerups.collected === 0, 'migrateState(): fehlendes powerups-Feld wird defensiv mit collected:0 aufgefüllt');
+  assert(
+    migratedNoPowerups.powerups.magnetExpiresAt === null && migratedNoPowerups.powerups.turboExpiresAt === null && migratedNoPowerups.powerups.shieldExpiresAt === null,
+    'migrateState(): fehlendes powerups-Feld wird defensiv mit inaktiven (null) *ExpiresAt-Zeitstempeln aufgefüllt'
+  );
+  assert(migratedNoPowerups.km === 42, 'migrateState(): bestehende km bleiben bei der powerups-Migration unangetastet');
+  assert(migratedNoPowerups.runner.lane === 1, 'migrateState(): bestehendes runner-Feld bleibt bei der powerups-Migration unangetastet');
+
+  // Ein bereits vorhandener, gültiger powerups-Zustand bleibt bei erneuter Migration exakt erhalten.
+  const withPowerupsRaw = { version: 4, km: 5, powerups: { collected: 3, magnetExpiresAt: 111, turboExpiresAt: 222, shieldExpiresAt: 333 } };
+  const migratedWithPowerups = IdleCore.migrateState(withPowerupsRaw);
+  assert(
+    migratedWithPowerups.powerups.collected === 3 &&
+    migratedWithPowerups.powerups.magnetExpiresAt === 111 &&
+    migratedWithPowerups.powerups.turboExpiresAt === 222 &&
+    migratedWithPowerups.powerups.shieldExpiresAt === 333,
+    'migrateState(): ein bereits vorhandener gültiger powerups-Zustand bleibt exakt erhalten'
+  );
+})();
+
+section('20 · TEIL 2 — balance(tuning): TUNING-GATE für den nächsten Bike-Kauf (getNextBikeToBuy/buyNextBike) + tuningReactionTimeFactor()');
+(function () {
+  // ZX-6R (Index 10) verlangt laut TUNING_GATE_THRESHOLDS Tuning-Level 5 auf dem zuletzt besessenen Bike (Ninja 1000SX, Index 9).
+  const zx6rIndex = IdleCore.findBikeIndex('zx6r');
+  assert(IdleCore.IDLE_BALANCE.TUNING_GATE_THRESHOLDS[zx6rIndex] === 5, 'TUNING_GATE_THRESHOLDS: die ZX-6R verlangt Tuning-Level 5 (Aufgaben-Beispiel)');
+
+  function makeGateState(tuningLevel) {
+    const s = IdleCore.createInitialState();
+    for (let i = 1; i < zx6rIndex; i++) {
+      s.ownedBikeIds.push(IdleCore.IDLE_BIKES[i].id);
+      s.bikeLevels[IdleCore.IDLE_BIKES[i].id] = 0;
+    }
+    const lastOwnedId = IdleCore.IDLE_BIKES[zx6rIndex - 1].id;
+    s.bikeLevels[lastOwnedId] = tuningLevel;
+    s.currentBikeId = lastOwnedId;
+    s.km = IdleCore.bikeCost(zx6rIndex) + 1000; // genug km, unabhängig vom Tuning-Gate
+    return s;
+  }
+
+  // Genug km, aber Tuning-Level zu niedrig (0 < 5) → NICHT käuflich.
+  const belowGateState = makeGateState(0);
+  const belowGateInfo = IdleCore.getNextBikeToBuy(belowGateState);
+  assert(belowGateInfo.bike.id === 'zx6r', 'getNextBikeToBuy() identifiziert die ZX-6R korrekt als nächstes Bike');
+  assert(belowGateInfo.tuningMet === false, 'getNextBikeToBuy(): tuningMet ist false unterhalb der Schwelle');
+  assert(belowGateInfo.affordable === false, 'getNextBikeToBuy(): trotz genug km NICHT käuflich, solange das Tuning-Level unter der Schwelle liegt');
+  const belowGateBuy = IdleCore.buyNextBike(belowGateState);
+  assert(belowGateBuy.success === false, 'buyNextBike() schlägt unterhalb der Tuning-Gate-Schwelle fehl (trotz genug km)');
+  assert(belowGateState.ownedBikeIds.indexOf('zx6r') === -1, 'buyNextBike() fügt die ZX-6R NICHT zu ownedBikeIds hinzu, solange das Gate nicht erfüllt ist');
+
+  // Knapp unter der Schwelle (4 < 5) → weiterhin gesperrt.
+  const justBelowGateInfo = IdleCore.getNextBikeToBuy(makeGateState(4));
+  assert(justBelowGateInfo.affordable === false, 'getNextBikeToBuy(): Tuning-Level 4 (knapp unter Schwelle 5) reicht NICHT aus');
+
+  // Genug km UND Tuning-Level erreicht (exakt 5) → käuflich.
+  const atGateState = makeGateState(5);
+  const atGateInfo = IdleCore.getNextBikeToBuy(atGateState);
+  assert(atGateInfo.tuningMet === true, 'getNextBikeToBuy(): tuningMet ist true bei exakt erreichter Schwelle');
+  assert(atGateInfo.affordable === true, 'getNextBikeToBuy(): käuflich, sobald genug km UND das Tuning-Level die Schwelle erreicht');
+  const atGateBuy = IdleCore.buyNextBike(atGateState);
+  assert(atGateBuy.success === true, 'buyNextBike() gelingt, sobald das Tuning-Gate erfüllt ist (genug km + genug Tuning-Level)');
+  assert(atGateState.ownedBikeIds.indexOf('zx6r') !== -1, 'buyNextBike() fügt die ZX-6R zu ownedBikeIds hinzu, sobald das Gate erfüllt ist');
+
+  // Über der Schwelle (10 > 5) → ebenfalls käuflich (kein Deckel nach oben).
+  const aboveGateInfo = IdleCore.getNextBikeToBuy(makeGateState(10));
+  assert(aboveGateInfo.affordable === true, 'getNextBikeToBuy(): auch deutlich über der Schwelle weiterhin käuflich');
+
+  // Frühe Bikes (Schwelle 0) sind vom Tuning-Gate praktisch unberührt (bestehender Kauf-Flow bleibt intakt).
+  const earlyState = IdleCore.createInitialState();
+  earlyState.km = IdleCore.bikeCost(1) + 10;
+  const earlyInfo = IdleCore.getNextBikeToBuy(earlyState);
+  assert(earlyInfo.tuningRequirement === 0 && earlyInfo.affordable === true, 'getNextBikeToBuy(): das erste käufliche Bike (Schwelle 0) bleibt ohne Tuning-Level käuflich');
+
+  // Bereits besessene Bikes sind vom Tuning-Gate nicht betroffen — bestehender Kauf-/Fahr-Flow bleibt unverändert.
+  assert(IdleCore.selectBike(atGateState, IdleCore.IDLE_BIKES[0].id) === true, 'selectBike() für ein bereits besessenes Bike funktioniert unverändert, unabhängig vom Tuning-Gate');
+
+  // Alle Bikes bereits besessen → kein nächstes Bike (bike:null), tuningMet bleibt defensiv true (keine Schranke ohne Ziel).
+  const allOwnedState = IdleCore.createInitialState();
+  allOwnedState.ownedBikeIds = IdleCore.IDLE_BIKES.map((b) => b.id);
+  const allOwnedInfo = IdleCore.getNextBikeToBuy(allOwnedState);
+  assert(allOwnedInfo.bike === null && allOwnedInfo.affordable === false, 'getNextBikeToBuy(): bike:null, sobald bereits alle Bikes besessen sind');
+  assert(allOwnedInfo.tuningMet === true, 'getNextBikeToBuy(): tuningMet bleibt defensiv true, wenn es kein nächstes Bike mehr gibt');
+
+  // tuningReactionTimeFactor(): TUNING-PERK "breitere Reaktionszeit" — sinkt monoton mit dem Tuning-Level, gedeckelt auf TUNING_OBSTACLE_PROGRESS_MIN_FACTOR.
+  const reactionBikeId = IdleCore.createInitialState().currentBikeId;
+  assert(IdleCore.tuningReactionTimeFactor(IdleCore.createInitialState()) === 1, 'tuningReactionTimeFactor() ist 1 bei Tuning-Level 0 (keine Verlangsamung)');
+  let prevFactor = Infinity;
+  for (let level = 0; level <= IdleCore.IDLE_BALANCE.TUNING_LEVEL_CAP; level += 1) {
+    const factorState = IdleCore.createInitialState();
+    factorState.bikeLevels[reactionBikeId] = level;
+    const factor = IdleCore.tuningReactionTimeFactor(factorState);
+    assert(factor <= prevFactor + 1e-9, `tuningReactionTimeFactor() ist bei Level ${level} monoton nicht-steigend`);
+    assert(factor >= IdleCore.IDLE_BALANCE.TUNING_OBSTACLE_PROGRESS_MIN_FACTOR - 1e-9, `tuningReactionTimeFactor() bei Level ${level} respektiert TUNING_OBSTACLE_PROGRESS_MIN_FACTOR`);
+    prevFactor = factor;
+  }
+  const capState = IdleCore.createInitialState();
+  capState.bikeLevels[reactionBikeId] = IdleCore.IDLE_BALANCE.TUNING_LEVEL_CAP;
+  assert(
+    Math.abs(IdleCore.tuningReactionTimeFactor(capState) - IdleCore.IDLE_BALANCE.TUNING_OBSTACLE_PROGRESS_MIN_FACTOR) < 1e-9,
+    'tuningReactionTimeFactor() trifft am TUNING_LEVEL_CAP exakt die Untergrenze'
+  );
+})();
+
 // ============================================================
 // Results
 // ============================================================

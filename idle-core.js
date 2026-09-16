@@ -44,6 +44,37 @@
  * smashPiggybank) — ein zeitkritisches, rein optionales Extra (Verpassen
  * hat KEINE Strafe) mit einem km-Bonus + derselben wiederverwendeten
  * Gear-Drop-Chance wie payBill().
+ *
+ * Teil 1 (IDLE_STATE_VERSION 3) ersetzt die Oval-Renn-Strecke durch einen
+ * ENDLESS-RUNNER: eine 2–3-Lane-Straße, auf der Hindernisse Richtung
+ * Spieler vorrücken (Rendering + Steuerung/Touch/Tastatur lebt in
+ * idle.js, siehe dessen tickRunner()). Diese Datei liefert NUR die reinen
+ * Bausteine: Speed-Cap/Vorlaufzeit (runnerLeadSeconds — nie unter
+ * RUNNER_MIN_LEAD_SECONDS, unabhängig von der Bike-Geschwindigkeit),
+ * Hindernis-Dichte (obstacleDensity — steigt ÜBER den Speed-Cap hinaus
+ * stärker an, statt die Reaktionszeit zu gefährden), den rein VISUELLEN
+ * Kollisions-Geschwindigkeits-Malus (collisionSpeedMalus/
+ * applyCollisionMalus — NIEMALS ein Reset/Fail-State, NIEMALS ein Effekt
+ * auf passiveEarn()) sowie den Idle-Auto-Run (runnerActivityState/
+ * runnerAutoRunSpeedPct — passiver Ertrag läuft UNABHÄNGIG vom
+ * Steuerungs-/Kollisions-Zustand immer weiter, siehe passiveEarn()).
+ *
+ * Teil 2 (IDLE_STATE_VERSION 4) ergänzt DREI Dinge: (1) eine gezielte,
+ * aber IMMER positive Kopplung des km-ERTRAGS an den Runner-Zustand
+ * (runnerEarnMultiplier() — aktives Fahren bleibt bei 1×, der Idle-
+ * Auto-Run erhält einen reduzierten, aber garantiert positiven Boden-
+ * Multiplikator, eine Kollision einen kurzen Dip — NIE eine Sperre/Null,
+ * siehe dessen Docblock weiter unten); (2) vier lane-gebundene POWERUPS
+ * (Magnet/Schild/Turbo/Münzregen), die exakt das Sparschwein-Muster
+ * (spawnPiggy/tickPiggy/smashPiggy) wiederverwenden, nur lane-positioniert
+ * statt frei-%-positioniert (rollPowerupType/rollPowerupDrop/
+ * activatePowerupEffect, state.powerups); (3) konkrete TUNING-PERKS pro
+ * Level (Reaktionszeit/Powerup-Drop-Chance/Schild-&Turbo-Dauer/Magnet-
+ * Reichweite, siehe tuningReactionTimeFactor()/powerupSpawnChance()/
+ * powerup*DurationSeconds()/powerupMagnetRangeT()) UND eine TUNING-GATE
+ * für den nächsten Bike-Kauf (TUNING_GATE_THRESHOLDS, siehe
+ * getNextBikeToBuy()) — das aktuelle Bike muss zusätzlich zu genug km ein
+ * Mindest-Tuning-Level erreicht haben.
  */
 'use strict';
 
@@ -51,7 +82,7 @@
 var IDLE_STATE_KEY = 'vroooom_idle_state';
 
 /** Aktuelle Zustands-Versionsnummer (für migrateState). */
-var IDLE_STATE_VERSION = 2;
+var IDLE_STATE_VERSION = 4;
 
 /**
  * IDLE_BALANCE — zentrale Balancing-Konstanten für die gesamte Idle-Economy.
@@ -224,6 +255,190 @@ var IDLE_BALANCE = {
   PIGGY_KM_BONUS_MULTIPLIER: 6,
   /** Wahrscheinlichkeit (0–1), dass ein zerschlagenes Sparschwein zusätzlich ein Gear-Item dropt. */
   GEAR_DROP_CHANCE_ON_PIGGY_SMASH: 0.22,
+
+  /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße statt Oval-Strecke ──
+   * Ersetzt renderTrack()'s Oval durch eine perspektivische Lane-Straße
+   * (siehe idle.js): das Bike wechselt zwischen Lanes (Tastatur ←/→ bzw.
+   * A/D, Touch-Swipe), Hindernisse spawnen am Horizont und rücken
+   * Richtung Spieler vor. EIN Treffer verursacht NUR einen KURZEN,
+   * REIN VISUELLEN Geschwindigkeits-Einbruch (siehe collisionSpeedMalus()
+   * / applyCollisionMalus()) — NIEMALS einen Reset oder Fail-State; der
+   * passive km-Ertrag (passiveEarn()) ist davon komplett entkoppelt.
+   * Speed-Cap: die visuelle Scroll-Geschwindigkeit (runnerScrollSpeed())
+   * steigt mit geschwindigkeitPct bis RUNNER_SPEED_CAP_PCT, danach bleibt
+   * sie flach — das garantiert runnerLeadSeconds() >= RUNNER_MIN_LEAD_
+   * SECONDS für JEDES Bike/Tuning-Level (RUNNER_SPAWN_LEAD_DISTANCE ist
+   * bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_
+   * SECONDS exakt RUNNER_SPAWN_LEAD_DISTANCE ergibt). Oberhalb des Caps
+   * steigt stattdessen obstacleDensity() stärker an — schnellere Bikes
+   * bleiben dadurch spürbar anspruchsvoller, ohne die Reaktionszeit zu
+   * gefährden. Idle-Auto-Run: ohne Lane-Wechsel-Eingabe für RUNNER_IDLE_
+   * TIMEOUT_SECONDS gilt runnerActivityState() als 'idle' — das Bike fährt
+   * automatisch mit einer gedeckelten, aber VERLÄSSLICHEN Geschwindigkeit
+   * (runnerAutoRunSpeedPct()) weiter, Kollisionen werden im Idle-Modus
+   * grundsätzlich nicht ausgewertet (siehe idle.js tickRunner()) — Idle-
+   * Spieler:innen dürfen NIEMALS gegenüber aktivem Ausweichen benachteiligt
+   * werden (passiveEarn() lief ohnehin schon immer unabhängig davon). */
+  /** Anzahl der Fahrspuren der Runner-Straße. */
+  RUNNER_LANE_COUNT: 3,
+  /** Untere Schranke der Hindernis-Vorlaufzeit (Sekunden) — garantiert eine faire Reaktionszeit unabhängig von der Bike-Geschwindigkeit (siehe runnerLeadSeconds()). */
+  RUNNER_MIN_LEAD_SECONDS: 0.6,
+  /** Prozentsatz von geschwindigkeitPct, ab dem die visuelle Scroll-Geschwindigkeit der Straße nicht mehr weiter ansteigt (siehe runnerScrollSpeed()). */
+  RUNNER_SPEED_CAP_PCT: 70,
+  /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) bei geschwindigkeitPct=0. */
+  RUNNER_SCROLL_SPEED_BASE: 70,
+  /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) am/ab RUNNER_SPEED_CAP_PCT (Deckel). */
+  RUNNER_SCROLL_SPEED_MAX: 260,
+  /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position. Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (156 = 260 × 0.6) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. */
+  RUNNER_SPAWN_LEAD_DISTANCE: 156,
+  /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=0 (Basis-Spawnrate, siehe obstacleDensity()). */
+  RUNNER_OBSTACLE_DENSITY_BASE: 1,
+  /** Hindernis-Dichte-Multiplikator genau am Speed-Cap (RUNNER_SPEED_CAP_PCT). */
+  RUNNER_OBSTACLE_DENSITY_AT_CAP: 1.3,
+  /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=100 — steigt ÜBER den Speed-Cap hinaus stärker an, kompensiert die gedeckelte Scroll-Geschwindigkeit. */
+  RUNNER_OBSTACLE_DENSITY_MAX: 2.4,
+  /** Basis-Spawnintervall (Sekunden) für Hindernisse bei Dichte 1 (wird durch obstacleDensity() geteilt, siehe nextObstacleSpawnIntervalSeconds()). */
+  RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS: 1.8,
+  /** Zufälliger Jitter-Faktor (untere Grenze) auf das berechnete Spawnintervall — verhindert einen metronomartig gleichmässigen Rhythmus. */
+  RUNNER_OBSTACLE_SPAWN_JITTER_MIN: 0.8,
+  /** Zufälliger Jitter-Faktor (obere Grenze) auf das berechnete Spawnintervall. */
+  RUNNER_OBSTACLE_SPAWN_JITTER_MAX: 1.25,
+  /** Zurückgelegte Distanz (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*), nach der ein Distanz-Meilenstein erreicht ist — ersetzt die frühere rundenbasierte onLapCompleted()-Auslösung durch einen äquivalenten, geschwindigkeitsabhängigen Distanz-Trigger (siehe idle.js tickRunner()). */
+  RUNNER_LAP_DISTANCE_UNITS: 1000,
+  /** Multiplikator (<1), der die visuelle Geschwindigkeit für RUNNER_COLLISION_MALUS_DURATION_MS nach einer Kollision reduziert (siehe collisionSpeedMalus()). NUR visuell — passiveEarn()/activeEarn() sind unberührt. */
+  RUNNER_COLLISION_MALUS_MULTIPLIER: 0.55,
+  /** Dauer (ms) des kurzen visuellen Geschwindigkeits-Einbruchs nach einer Kollision. */
+  RUNNER_COLLISION_MALUS_DURATION_MS: 1200,
+  /** Sekunden ohne Lane-Wechsel-Eingabe, nach denen der Auto-Run (Idle-Modus) greift (siehe runnerActivityState()). */
+  RUNNER_IDLE_TIMEOUT_SECONDS: 4,
+  /** Deckel der visuellen Geschwindigkeit (%) im Auto-Run-/Idle-Modus — "reduziert, aber verlässlich" (siehe runnerAutoRunSpeedPct()); Kollisionen werden im Idle-Modus grundsätzlich nicht ausgewertet (siehe idle.js tickRunner()). */
+  RUNNER_AUTO_RUN_SPEED_CAP_PCT: 45,
+
+  /* ── Teil 2: km-ERTRAG ↔ RUNNER-ZUSTAND — balance(economy) ────────
+   * Bisher (Teil 1) war passiveEarn() bewusst KOMPLETT vom Runner
+   * entkoppelt. Teil 2 führt eine gezielte, aber niemals blockierende
+   * Kopplung ein (siehe runnerEarnMultiplier()): aktives Fahren (Lane-
+   * Wechsel innerhalb der letzten RUNNER_IDLE_TIMEOUT_SECONDS) bleibt bei
+   * 1× (unverändert ggü. Teil 1) — "aktiv/tunen lohnt sich strukturell"
+   * bedeutet hier NICHT, dass aktives Fahren einen Bonus bekommt, sondern
+   * dass der Idle-Auto-Run einen (kleinen, aber spürbaren) Abschlag
+   * gegenüber dem unveränderten aktiven Satz hinnimmt. Der Idle-Auto-Run
+   * erhält NUR RUNNER_EARN_IDLE_MULTIPLIER (< 1, aber weit über 0) —
+   * GARANTIERT NIE NULL, GARANTIERT NIE gated (Idle-Spieler:innen kommen
+   * IMMER voran, siehe runnerEarnMultiplier()). Eine aktive Kollision
+   * (collisionMalusExpiresAt, siehe Teil 1) verursacht zusätzlich einen
+   * KURZEN Ertrags-Dip (RUNNER_EARN_COLLISION_DIP_MULTIPLIER) — auch der
+   * ist rein multiplikativ und niemals 0. RUNNER_EARN_MIN_MULTIPLIER ist
+   * ein zusätzliches, hartes Sicherheitsnetz (Math.max in
+   * runnerEarnMultiplier()), das JEDE denkbare Kombination (Idle + Dip +
+   * ggf. zukünftige Effekte) über 0 hält. Pacing-Hinweis: da aktives
+   * Fahren unverändert bei 1× bleibt, ist die ursprüngliche "erste 3
+   * Bikes in ~10 Minuten"-Rechnung (siehe Datei-Docblock oben) für aktiv
+   * spielende Nutzer:innen unverändert gültig; rein passives Zusehen
+   * (Idle-Auto-Run von Anfang an, da lastInputAt initial null ist) ist
+   * jetzt bewusst etwas langsamer (600 km → 600×0.7=420 km in 10 Min),
+   * was der gewünschten strukturellen Belohnung für aktives Spielen/
+   * Tuning entspricht. */
+  /** Ertrags-Multiplikator im Idle-Auto-Run (kein Lane-Wechsel innerhalb RUNNER_IDLE_TIMEOUT_SECONDS) — reduziert, aber weit über 0 (siehe runnerEarnMultiplier()). */
+  RUNNER_EARN_IDLE_MULTIPLIER: 0.7,
+  /** Zusätzlicher, kurzer Ertrags-Dip-Multiplikator, solange der visuelle Kollisions-Malus aktiv ist (collisionMalusExpiresAt) — multiplikativ mit RUNNER_EARN_IDLE_MULTIPLIER, ebenfalls nie 0. */
+  RUNNER_EARN_COLLISION_DIP_MULTIPLIER: 0.85,
+  /** Absolutes Sicherheitsnetz (Math.max in runnerEarnMultiplier()) — der Gesamt-Multiplikator fällt NIE darunter, unabhängig von der Kombination aus Idle-Boden/Kollisions-Dip/zukünftigen Effekten. */
+  RUNNER_EARN_MIN_MULTIPLIER: 0.5,
+
+  /* ── Teil 2: POWERUPS — 4 lane-gebundene Collectibles — feat(powerups)
+   * Wiederverwendet EXAKT das Sparschwein-Muster (spawnPiggy/tickPiggy/
+   * smashPiggy in idle.js, nextPiggyIntervalSeconds/piggyVisibleSeconds/
+   * piggybankReward/smashPiggybank hier) — Unterschied: lane-positioniert
+   * (siehe idle.js laneCenterX()/laneRowY()) statt frei-%-positioniert,
+   * UND es gibt 4 unterschiedliche Effekt-Typen statt nur eines km-Bonus.
+   * rollPowerupDrop() entscheidet bei jedem abgelaufenen Intervall ZUERST
+   * (via powerupSpawnChance(), die mit dem Tuning-Level steigt), OB
+   * überhaupt ein Powerup erscheint, DANN (via rollPowerupType(),
+   * gewichtet über POWERUP_TYPE_WEIGHTS) WELCHER der 4 Typen. Ein
+   * verpasstes/unbeklickt abgelaufenes Powerup hat KEINE Strafe
+   * (identisches Muster zu Sparschwein/Schaltpunkt-Leiste). Effekte:
+   *   - Magnet: zieht nahegelegene Hindernisse aus dem Weg (Kollisions-
+   *     prüfung wird für Hindernisse ab powerupMagnetRangeT() ausgesetzt,
+   *     siehe idle.js tickRunner()) für powerupMagnetDurationSeconds().
+   *   - Schild: blockt GENAU EINE Kollision (state.powerups.
+   *     shieldExpiresAt, konsumiert von consumeShield() bei der nächsten
+   *     Kollision statt eines applyCollisionMalus()) — läuft ansonsten
+   *     nach powerupShieldDurationSeconds() ungenutzt ab.
+   *   - Turbo: hebt die effektive Geschwindigkeit (POWERUP_TURBO_SPEED_
+   *     BOOST_PCT, additiv auf geschwindigkeitPct, siehe idle.js
+   *     tickRunner() — NIEMALS die globale RUNNER_SPEED_CAP_PCT-Konstante
+   *     selbst mutiert) UND den Ertrag (POWERUP_TURBO_EARN_MULTIPLIER,
+   *     siehe runnerEarnMultiplier()) für powerupTurboDurationSeconds() an.
+   *   - Münzregen: sofortiger km-Bonus (powerupCoinRainReward(), analog
+   *     zu piggybankReward() — ein Vielfaches von activeEarn()).
+   * Persistenz: NUR die drei *ExpiresAt-Zeitstempel + der Lebenszeit-
+   * Zähler `collected` leben in state.powerups (IDLE_STATE_VERSION 3→4,
+   * siehe migratePowerups()) — das aktuell SICHTBARE, noch nicht
+   * eingesammelte Powerup selbst ist bewusst NICHT persistiert
+   * (identisches Muster zu runnerObstacles/piggyState/shiftState). */
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Powerup-Spawn-VERSUCHEN (siehe nextPowerupIntervalSeconds()) — untere Grenze. */
+  POWERUP_INTERVAL_MIN_SECONDS: 22,
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Powerup-Spawn-VERSUCHEN — obere Grenze. */
+  POWERUP_INTERVAL_MAX_SECONDS: 38,
+  /** Sichtbarkeitsdauer (Sekunden) EINES erschienenen Powerups, bevor es unbeklickt wieder verschwindet — untere Grenze. */
+  POWERUP_VISIBLE_MIN_SECONDS: 4,
+  /** Sichtbarkeitsdauer (Sekunden) EINES erschienenen Powerups — obere Grenze. */
+  POWERUP_VISIBLE_MAX_SECONDS: 6,
+  /** Basis-Wahrscheinlichkeit (0–1), dass bei einem abgelaufenen Spawn-Intervall ÜBERHAUPT ein Powerup erscheint (vor Tuning-Bonus, siehe powerupSpawnChance()). */
+  POWERUP_BASE_SPAWN_CHANCE: 0.55,
+  /** Zusätzliche Spawn-Wahrscheinlichkeit je Tuning-Level des aktuellen Bikes (Tuning-Perk, siehe powerupSpawnChance()), gedeckelt auf 1. */
+  POWERUP_SPAWN_CHANCE_PER_TUNING_LEVEL: 0.015,
+  /** Relative Gewichtung der 4 Powerup-Typen bei einem Spawn (siehe rollPowerupType()); müssen nicht auf 100 summieren. */
+  POWERUP_TYPE_WEIGHTS: { magnet: 28, schild: 22, turbo: 22, muenzregen: 28 },
+  /** Basis-Wirkdauer (Sekunden) des Magnet-Effekts (siehe powerupMagnetDurationSeconds()). */
+  POWERUP_MAGNET_BASE_DURATION_SECONDS: 5,
+  /** Zusätzliche Magnet-Wirkdauer (Sekunden) je Tuning-Level (Tuning-Perk). */
+  POWERUP_MAGNET_DURATION_PER_LEVEL_SECONDS: 0.15,
+  /** Basis-"Reichweite" des Magnets als Hindernis-Fortschritt t (0=Horizont, 1=Spieler) — ab diesem t werden Hindernisse Richtung Bike-Lane gezogen (siehe powerupMagnetRangeT()). */
+  POWERUP_MAGNET_BASE_RANGE_T: 0.55,
+  /** Verkleinerung der Magnet-Reichweiten-Schwelle je Tuning-Level (Tuning-Perk — NIEDRIGERE Schwelle = GRÖSSERE Reichweite, zieht schon von weiter weg). */
+  POWERUP_MAGNET_RANGE_PER_LEVEL_T: 0.012,
+  /** Untere Schranke der Magnet-Reichweiten-Schwelle (t) — die Reichweite wächst nie über den gesamten Streckenverlauf hinaus. */
+  POWERUP_MAGNET_MIN_RANGE_T: 0.15,
+  /** Basis-Wirkdauer (Sekunden) des Schild-Effekts, bevor er unbenutzt abläuft (siehe powerupShieldDurationSeconds()). */
+  POWERUP_SHIELD_BASE_DURATION_SECONDS: 8,
+  /** Zusätzliche Schild-Wirkdauer (Sekunden) je Tuning-Level (Tuning-Perk). */
+  POWERUP_SHIELD_DURATION_PER_LEVEL_SECONDS: 0.3,
+  /** Basis-Wirkdauer (Sekunden) des Turbo-Effekts (siehe powerupTurboDurationSeconds()). */
+  POWERUP_TURBO_BASE_DURATION_SECONDS: 4,
+  /** Zusätzliche Turbo-Wirkdauer (Sekunden) je Tuning-Level (Tuning-Perk). */
+  POWERUP_TURBO_DURATION_PER_LEVEL_SECONDS: 0.12,
+  /** Additiver Geschwindigkeits-Boost (Prozentpunkte auf geschwindigkeitPct) während der Turbo-Effekt aktiv ist (siehe idle.js tickRunner() — mutiert NIE RUNNER_SPEED_CAP_PCT selbst). */
+  POWERUP_TURBO_SPEED_BOOST_PCT: 20,
+  /** Zusätzlicher Ertrags-Multiplikator während der Turbo-Effekt aktiv ist (siehe runnerEarnMultiplier()). */
+  POWERUP_TURBO_EARN_MULTIPLIER: 1.5,
+  /** Vielfaches von activeEarn(state), das ein eingesammelter Münzregen als sofortigen km-Bonus gewährt (analog PIGGY_KM_BONUS_MULTIPLIER, siehe powerupCoinRainReward()). */
+  POWERUP_COINRAIN_KM_MULTIPLIER: 8,
+
+  /* ── Teil 2: TUNING-PERKS — balance(tuning) ────────────────────────
+   * Tuning-Level gewähren jetzt NEBEN dem Ertrags-Bonus (ERTRAG_BONUS_
+   * PER_LEVEL, siehe deriveBikeStats()) auch konkrete Runner-/Powerup-
+   * Perks (siehe tuningReactionTimeFactor()/powerupSpawnChance()/
+   * powerup*DurationSeconds()/powerupMagnetRangeT() oben) — ALLE lesen
+   * das Tuning-Level des AKTUELL GEFAHRENEN Bikes. */
+  /** Verringerung der Hindernis-Fortschrittsrate je Tuning-Level (Tuning-Perk "breitere Reaktionszeit") — ein Hindernis braucht dadurch spürbar länger bis zur Kollisionszone, OHNE die visuelle Scroll-Geschwindigkeit der Strasse zu ändern (siehe tuningReactionTimeFactor()). */
+  TUNING_OBSTACLE_PROGRESS_REDUCTION_PER_LEVEL: 0.01,
+  /** Untere Schranke des Reaktionszeit-Faktors (bei TUNING_LEVEL_CAP=25 exakt erreicht: 1 − 25×0.01 = 0.75). */
+  TUNING_OBSTACLE_PROGRESS_MIN_FACTOR: 0.75,
+
+  /* ── Teil 2: TUNING-GATE für den nächsten Bike-Kauf — balance(tuning)
+   * getNextBikeToBuy()/buyNextBike() verlangen ab sofort ZUSÄTZLICH zu
+   * genug km, dass das ZULETZT gekaufte/besessene Bike (state.
+   * ownedBikeIds[length-1]) mindestens TUNING_GATE_THRESHOLDS[nextIndex]
+   * Tuning-Level erreicht hat. Index-ausgerichtet zu IDLE_BIKES (16
+   * Einträge) — Index 0 ist irrelevant (Startbike, immer besessen).
+   * Bewusst sanft für die ersten Bikes (0 = keine Schranke), steigt dann
+   * mit dem Tier. Beispiel aus der Aufgabenstellung: die ZX-6R (Index 10)
+   * verlangt Tuning-Level 5 auf dem zuletzt besessenen Bike (Ninja
+   * 1000SX, Index 9) — siehe Tabelle unten. */
+  /** Tuning-Gate-Tabelle (siehe getNextBikeToBuy()): Index i = Mindest-Tuning-Level des zuletzt besessenen Bikes, um Bike i zu kaufen. */
+  TUNING_GATE_THRESHOLDS: [0, 0, 0, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10],
 };
 
 /**
@@ -568,6 +783,40 @@ function createInitialState() {
      * Lebenszeit-Zähler, überlebt Saison-Resets (siehe finishSeason()),
      * genutzt für die "10 Sparschweine zerschlagen"-Achievement. */
     piggy: { smashedCount: 0 },
+
+    /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße ───────────────────
+     * lane = aktuell gewählte Fahrspur (0-basiert, startet mittig).
+     * lastInputAt = Zeitstempel (ms) der letzten Lane-Wechsel-Eingabe,
+     * null = noch nie gesteuert (→ runnerActivityState() liefert sofort
+     * 'idle', der Auto-Run greift also von Anfang an, siehe idle.js).
+     * collisionMalusExpiresAt = Zeitstempel (ms), bis zu dem der rein
+     * visuelle Kollisions-Geschwindigkeits-Malus aktiv ist (null = kein
+     * aktiver Malus, siehe collisionSpeedMalus()/applyCollisionMalus()).
+     * Hindernisse selbst werden bewusst NICHT persistiert (transienter
+     * Laufzeit-Zustand in idle.js, identisches Muster zu trackTrail/
+     * piggyState/shiftState) — ein Reload startet einfach mit einer
+     * leeren Straße, ohne die Runner-Mechanik zu beeinträchtigen. */
+    runner: {
+      lane: Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
+      lastInputAt: null,
+      collisionMalusExpiresAt: null,
+    },
+
+    /* ── Teil 2: POWERUPS — 4 lane-gebundene Collectibles ────────────
+     * collected = Lebenszeit-Zähler ALLER eingesammelten Powerups (jeden
+     * Typs), überlebt Saison-Resets (analog piggy.smashedCount). Die drei
+     * *ExpiresAt-Felder sind Zeitstempel (ms), bis zu denen der jeweilige
+     * Effekt aktiv ist (null = inaktiv) — siehe magnetActive()/
+     * turboActive()/consumeShield(). Das aktuell sichtbare, noch nicht
+     * eingesammelte Powerup selbst ist bewusst NICHT persistiert
+     * (transienter Laufzeit-Zustand in idle.js, identisches Muster zu
+     * piggyState/runnerObstacles). */
+    powerups: {
+      collected: 0,
+      magnetExpiresAt: null,
+      turboExpiresAt: null,
+      shieldExpiresAt: null,
+    },
   };
 }
 
@@ -653,6 +902,49 @@ function migratePiggy(raw, fresh) {
 }
 
 /**
+ * Migriert das runner-Feld (Teil 1: Endless-Runner-Lane/Kollisions-Malus)
+ * defensiv — u. a. für v2→v3-Saves (vor feat(idle-runner)), die dieses
+ * Feld noch gar nicht kennen. Eine runner.lane ausserhalb des gültigen
+ * Bereichs (z. B. aus einem Save mit einer inzwischen geänderten
+ * RUNNER_LANE_COUNT) wird auf die mittige Standard-Lane zurückgesetzt.
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges runner-Objekt.
+ */
+function migrateRunner(raw, fresh) {
+  var rr = raw && raw.runner && typeof raw.runner === 'object' ? raw.runner : {};
+  var laneCount = IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var laneValid = typeof rr.lane === 'number' && rr.lane >= 0 && rr.lane < laneCount;
+  return {
+    lane: laneValid ? rr.lane : fresh.runner.lane,
+    lastInputAt: typeof rr.lastInputAt === 'number' ? rr.lastInputAt : fresh.runner.lastInputAt,
+    collisionMalusExpiresAt: typeof rr.collisionMalusExpiresAt === 'number' ? rr.collisionMalusExpiresAt : fresh.runner.collisionMalusExpiresAt,
+  };
+}
+
+/**
+ * Migriert das powerups-Feld (Teil 2: Magnet/Schild/Turbo/Münzregen)
+ * defensiv — u. a. für v3-Saves (vor feat(powerups)), die dieses Feld noch
+ * gar nicht kennen (IDLE_STATE_VERSION 3→4). Ein abgelaufener/negativer
+ * Zeitstempel wird NICHT gesondert behandelt (magnetActive()/turboActive()/
+ * consumeShield() prüfen ohnehin gegen "jetzt" — ein Zeitstempel in der
+ * Vergangenheit ist einfach automatisch "inaktiv", exakt wie bei
+ * runner.collisionMalusExpiresAt).
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges powerups-Objekt.
+ */
+function migratePowerups(raw, fresh) {
+  var rp = raw && raw.powerups && typeof raw.powerups === 'object' ? raw.powerups : {};
+  return {
+    collected: typeof rp.collected === 'number' && rp.collected >= 0 ? rp.collected : fresh.powerups.collected,
+    magnetExpiresAt: typeof rp.magnetExpiresAt === 'number' ? rp.magnetExpiresAt : fresh.powerups.magnetExpiresAt,
+    turboExpiresAt: typeof rp.turboExpiresAt === 'number' ? rp.turboExpiresAt : fresh.powerups.turboExpiresAt,
+    shieldExpiresAt: typeof rp.shieldExpiresAt === 'number' ? rp.shieldExpiresAt : fresh.powerups.shieldExpiresAt,
+  };
+}
+
+/**
  * Migriert das offline-Feld (Zeitstempel der letzten Sichtung) defensiv.
  * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
  * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
@@ -719,6 +1011,8 @@ function migrateState(raw) {
     finance: migrateFinance(raw, fresh),
     gear: migrateGear(raw, fresh),
     piggy: migratePiggy(raw, fresh),
+    runner: migrateRunner(raw, fresh),
+    powerups: migratePowerups(raw, fresh),
   };
 
   if (state.ownedBikeIds.length === 0) state.ownedBikeIds = fresh.ownedBikeIds.slice();
@@ -768,24 +1062,44 @@ function saveState(state) {
 
 /**
  * Prüft, ob das nächste (noch nicht besessene) Bike in der IDLE_BIKES-
- * Reihenfolge aktuell käuflich ist (genug km vorhanden). Bikes müssen in
- * aufsteigender Reihenfolge gekauft werden.
+ * Reihenfolge aktuell käuflich ist: genug km VERUND ein ausreichendes
+ * Tuning-Level auf dem ZULETZT besessenen Bike (balance(tuning) —
+ * TUNING-GATE, siehe IDLE_BALANCE.TUNING_GATE_THRESHOLDS). Bikes müssen
+ * in aufsteigender Reihenfolge gekauft werden.
  * @param {Object} state - Zentraler Idle-Zustand.
- * @returns {{bike: Object|null, cost: number, affordable: boolean}} Info
- *   zum nächsten Bike, oder bike:null falls bereits alle besessen.
+ * @returns {{bike: (Object|null), cost: number, affordable: boolean,
+ *   tuningRequirement: number, tuningLevel: number, tuningMet: boolean}}
+ *   Info zum nächsten Bike (tuningRequirement/tuningLevel/tuningMet immer
+ *   0/0/true, falls bike:null — bereits alle besessen).
  */
 function getNextBikeToBuy(state) {
   var nextIndex = state.ownedBikeIds.length;
-  if (nextIndex >= IDLE_BIKES.length) return { bike: null, cost: 0, affordable: false };
+  if (nextIndex >= IDLE_BIKES.length) {
+    return { bike: null, cost: 0, affordable: false, tuningRequirement: 0, tuningLevel: 0, tuningMet: true };
+  }
   var bike = IDLE_BIKES[nextIndex];
   var cost = bikeCost(nextIndex);
-  return { bike: bike, cost: cost, affordable: state.km >= cost };
+  var tuningRequirement = IDLE_BALANCE.TUNING_GATE_THRESHOLDS[nextIndex] || 0;
+  var lastOwnedBikeId = state.ownedBikeIds[state.ownedBikeIds.length - 1];
+  var tuningLevel = getBikeLevel(state, lastOwnedBikeId);
+  var tuningMet = tuningLevel >= tuningRequirement;
+  return {
+    bike: bike,
+    cost: cost,
+    affordable: state.km >= cost && tuningMet,
+    tuningRequirement: tuningRequirement,
+    tuningLevel: tuningLevel,
+    tuningMet: tuningMet,
+  };
 }
 
 /**
  * Kauft das nächste Bike in der IDLE_BIKES-Reihenfolge, falls genug km
- * vorhanden sind. Mutiert state bei Erfolg (zieht km ab, fügt zu
- * ownedBikeIds hinzu, initialisiert bikeLevels-Eintrag mit 0).
+ * UND das erforderliche Tuning-Level (siehe getNextBikeToBuy()) vorhanden
+ * sind. Mutiert state bei Erfolg (zieht km ab, fügt zu ownedBikeIds hinzu,
+ * initialisiert bikeLevels-Eintrag mit 0). Struktur unverändert ggü. Teil 1
+ * — EIN zentraler Gate-Check in getNextBikeToBuy(), diese Funktion prüft
+ * weiterhin nur `.affordable`.
  * @param {Object} state - Zentraler Idle-Zustand (wird bei Erfolg mutiert).
  * @returns {{success: boolean, bike: (Object|null), cost: number}} Ergebnis.
  */
@@ -1785,6 +2099,497 @@ function smashPiggybank(state, rng) {
 }
 
 /* ============================================================
+   TEIL 1 — ENDLESS-RUNNER: 2–3-Lane-Straße — feat(idle-runner)
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.runner ein gültiges Objekt ist (defensiv, für
+ * Zustände, die nicht über createInitialState()/migrateState() gelaufen
+ * sind, z. B. handgebaute Test-Zustände — mirrors ensureComboState()).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensureRunnerState(state) {
+  if (!state.runner || typeof state.runner !== 'object') {
+    state.runner = {
+      lane: Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
+      lastInputAt: null,
+      collisionMalusExpiresAt: null,
+    };
+  }
+}
+
+/**
+ * Wechselt die aktuelle Fahrspur um EINE Lane in die gegebene Richtung,
+ * geklemmt auf [0, RUNNER_LANE_COUNT-1] (kein Wechsel über den Rand
+ * hinaus möglich). Aktualisiert zusätzlich lastInputAt — jede Steuerungs-
+ * Eingabe zählt dadurch automatisch als "aktiv" (siehe runnerActivityState()).
+ * Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} direction - Richtung: <0 = eine Lane nach links, >0 = eine Lane nach rechts, 0 = keine Änderung (nur lastInputAt wird aktualisiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Die neue, geklemmte Lane.
+ */
+function steerRunnerLane(state, direction, nowMs) {
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var delta = direction < 0 ? -1 : (direction > 0 ? 1 : 0);
+  var next = Math.max(0, Math.min(IDLE_BALANCE.RUNNER_LANE_COUNT - 1, state.runner.lane + delta));
+  state.runner.lane = next;
+  state.runner.lastInputAt = now;
+  return next;
+}
+
+/**
+ * Liefert den aktuellen Aktivitäts-Zustand des Runners: 'active', solange
+ * die letzte Lane-Wechsel-Eingabe weniger als RUNNER_IDLE_TIMEOUT_SECONDS
+ * zurückliegt, sonst 'idle' (Auto-Run, siehe runnerAutoRunSpeedPct()).
+ * Ein frischer Zustand (lastInputAt === null, noch nie gesteuert) gilt
+ * SOFORT als 'idle' — Idle-Spieler:innen starten dadurch ohne jede
+ * Eingabe direkt im verlässlichen Auto-Run. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {('active'|'idle')} Aktueller Aktivitäts-Zustand.
+ */
+function runnerActivityState(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  if (!state || !state.runner || typeof state.runner.lastInputAt !== 'number') return 'idle';
+  var elapsedSeconds = (now - state.runner.lastInputAt) / 1000;
+  return elapsedSeconds >= IDLE_BALANCE.RUNNER_IDLE_TIMEOUT_SECONDS ? 'idle' : 'active';
+}
+
+/**
+ * Deckelt die visuelle Geschwindigkeit (%) im Auto-Run-/Idle-Modus auf
+ * RUNNER_AUTO_RUN_SPEED_CAP_PCT — "reduziert, aber verlässlich": ein
+ * bereits langsameres Bike wird NICHT künstlich verlangsamt, ein
+ * schnelleres Bike wird auf den Deckel gebremst. Reine Funktion.
+ * @param {number} speedPct - Rohe Bike-Geschwindigkeit (0–100%, siehe deriveBikeStats().geschwindigkeitPct).
+ * @returns {number} Gedeckelte Auto-Run-Geschwindigkeit (0–100%).
+ */
+function runnerAutoRunSpeedPct(speedPct) {
+  return Math.min(clampPct(speedPct), IDLE_BALANCE.RUNNER_AUTO_RUN_SPEED_CAP_PCT);
+}
+
+/**
+ * Berechnet die visuelle Scroll-Geschwindigkeit der Runner-Straße
+ * (abstrakte Einheiten/Sekunde) für eine gegebene Bike-Geschwindigkeit:
+ * steigt linear mit speedPct bis RUNNER_SPEED_CAP_PCT, danach bleibt sie
+ * konstant bei RUNNER_SCROLL_SPEED_MAX (Speed-Cap, siehe runnerLeadSeconds()).
+ * Reine Funktion.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @returns {number} Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde, > 0).
+ */
+function runnerScrollSpeed(speedPct) {
+  var cap = IDLE_BALANCE.RUNNER_SPEED_CAP_PCT;
+  var cappedPct = Math.min(clampPct(speedPct), cap);
+  var ratio = cap > 0 ? cappedPct / cap : 0;
+  return IDLE_BALANCE.RUNNER_SCROLL_SPEED_BASE + (IDLE_BALANCE.RUNNER_SCROLL_SPEED_MAX - IDLE_BALANCE.RUNNER_SCROLL_SPEED_BASE) * ratio;
+}
+
+/**
+ * Berechnet die Hindernis-Vorlaufzeit (Sekunden) für eine gegebene
+ * Bike-Geschwindigkeit: die Zeit, die ein Hindernis vom Spawn (Horizont)
+ * bis zur Spieler-Position benötigt (RUNNER_SPAWN_LEAD_DISTANCE geteilt
+ * durch runnerScrollSpeed()). NIE unter RUNNER_MIN_LEAD_SECONDS geklemmt —
+ * dank des Speed-Caps in runnerScrollSpeed() greift dieser Boden ab
+ * RUNNER_SPEED_CAP_PCT ohnehin automatisch (die Konstanten sind bewusst
+ * so gewählt, dass beide exakt zusammenfallen), der explizite Math.max()
+ * ist die zusätzliche Sicherheits-Garantie. Reine Funktion.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @returns {number} Vorlaufzeit in Sekunden (>= RUNNER_MIN_LEAD_SECONDS).
+ */
+function runnerLeadSeconds(speedPct) {
+  var scrollSpeed = runnerScrollSpeed(speedPct);
+  var raw = scrollSpeed > 0 ? IDLE_BALANCE.RUNNER_SPAWN_LEAD_DISTANCE / scrollSpeed : Infinity;
+  return Math.max(IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS, raw);
+}
+
+/**
+ * Berechnet den Hindernis-Dichte-Multiplikator für eine gegebene
+ * Bike-Geschwindigkeit: steigt sanft von RUNNER_OBSTACLE_DENSITY_BASE
+ * (bei 0%) auf RUNNER_OBSTACLE_DENSITY_AT_CAP (bei RUNNER_SPEED_CAP_PCT),
+ * und darüber hinaus STÄRKER weiter auf RUNNER_OBSTACLE_DENSITY_MAX (bei
+ * 100%) — kompensiert so die ab dem Speed-Cap gedeckelte Scroll-
+ * Geschwindigkeit (siehe runnerScrollSpeed()), damit schnellere Bikes
+ * trotzdem spürbar anspruchsvoller bleiben, ohne die durch
+ * runnerLeadSeconds() garantierte Reaktionszeit zu gefährden. Monoton
+ * nicht-fallend über den gesamten 0–100%-Bereich. Reine Funktion.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @returns {number} Dichte-Multiplikator (>= RUNNER_OBSTACLE_DENSITY_BASE).
+ */
+function obstacleDensity(speedPct) {
+  var pct = clampPct(speedPct);
+  var cap = IDLE_BALANCE.RUNNER_SPEED_CAP_PCT;
+  var base = IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_BASE;
+  var atCap = IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_AT_CAP;
+  var max = IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_MAX;
+  if (pct <= cap) {
+    return cap > 0 ? base + (atCap - base) * (pct / cap) : atCap;
+  }
+  var overCapFraction = (100 - cap) > 0 ? (pct - cap) / (100 - cap) : 1;
+  return atCap + (max - atCap) * overCapFraction;
+}
+
+/**
+ * Würfelt das nächste Zufallsintervall (Sekunden) bis zum nächsten
+ * Hindernis, skaliert mit obstacleDensity(speedPct) (höhere Dichte →
+ * kürzeres Intervall) PLUS einem zufälligen Jitter-Faktor (verhindert
+ * einen metronomartig gleichmässigen Rhythmus — identisches Prinzip zu
+ * nextPiggyIntervalSeconds()/nextShiftIntervalSeconds()). Zufälligkeit
+ * wird als Parameter übergeben, damit die Funktion deterministisch
+ * testbar bleibt.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zum nächsten Hindernis (> 0).
+ */
+function nextObstacleSpawnIntervalSeconds(speedPct, randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var density = obstacleDensity(speedPct);
+  var base = density > 0 ? IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS / density : IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS;
+  var jitterMin = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MIN;
+  var jitterMax = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MAX;
+  return base * (jitterMin + rnd() * (jitterMax - jitterMin));
+}
+
+/**
+ * Löst den rein VISUELLEN Kollisions-Geschwindigkeits-Malus aus: setzt
+ * einen Ablauf-Zeitstempel (state.runner.collisionMalusExpiresAt), bis zu
+ * dem collisionSpeedMalus() den konfigurierten Malus-Multiplikator
+ * liefert. Betrifft ausschliesslich die Anzeige (Strecke/Tacho/Sound,
+ * siehe idle.js tickRunner()) — NIEMALS passiveEarn()/activeEarn(), NIE
+ * ein Reset/Fail-State. Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Der neue Ablauf-Zeitstempel (ms).
+ */
+function applyCollisionMalus(state, nowMs) {
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  state.runner.collisionMalusExpiresAt = now + IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS;
+  return state.runner.collisionMalusExpiresAt;
+}
+
+/**
+ * Liefert den aktuell aktiven, rein visuellen Kollisions-Geschwindigkeits-
+ * Multiplikator: 1 (kein Malus), solange keine Kollision aktiv/noch nicht
+ * abgelaufen ist, sonst IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER
+ * (< 1). Erholt sich automatisch nach RUNNER_COLLISION_MALUS_DURATION_MS —
+ * identisches Erholungs-Muster wie activeComboMultiplier(). Reine
+ * Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Aktiver Malus-Multiplikator (RUNNER_COLLISION_MALUS_MULTIPLIER oder 1).
+ */
+function collisionSpeedMalus(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  if (!state || !state.runner || typeof state.runner.collisionMalusExpiresAt !== 'number') return 1;
+  if (now >= state.runner.collisionMalusExpiresAt) return 1;
+  return IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER;
+}
+
+/* ============================================================
+   TEIL 2 — km-ERTRAG ↔ RUNNER-ZUSTAND — balance(economy)
+   ============================================================ */
+
+/**
+ * Berechnet den EINEN zentralen Ertrags-Multiplikator, der den passiven
+ * km-Ertrag (siehe idle.js tick(), NUR dort auf das Ergebnis von
+ * passiveEarn() angewendet — NICHT auf activeEarn()/"Gas geben") an den
+ * Runner-Zustand koppelt: aktives Fahren (siehe runnerActivityState())
+ * bleibt bei 1× (unverändert ggü. Teil 1); der Idle-Auto-Run erhält NUR
+ * IDLE_BALANCE.RUNNER_EARN_IDLE_MULTIPLIER (< 1, aber weit über 0); eine
+ * gerade aktive Kollision (state.runner.collisionMalusExpiresAt, siehe
+ * applyCollisionMalus()) multipliziert zusätzlich mit IDLE_BALANCE.
+ * RUNNER_EARN_COLLISION_DIP_MULTIPLIER — ein kurzer Dip, NIEMALS ein
+ * Reset. IDLE_BALANCE.RUNNER_EARN_MIN_MULTIPLIER ist ein zusätzliches,
+ * hartes Sicherheitsnetz (Math.max): der Rückgabewert ist GARANTIERT NIE
+ * 0 und GARANTIERT NIE hinter eine "musst aktiv spielen"-Schranke
+ * gesetzt — Idle-Spieler:innen kommen IMMER voran. Reine Funktion —
+ * mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Ertrags-Multiplikator (> 0, siehe RUNNER_EARN_MIN_MULTIPLIER).
+ */
+function runnerEarnMultiplier(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var activity = runnerActivityState(state, now);
+  var base = activity === 'idle' ? IDLE_BALANCE.RUNNER_EARN_IDLE_MULTIPLIER : 1;
+  var collisionActive = !!(state && state.runner && typeof state.runner.collisionMalusExpiresAt === 'number' && now < state.runner.collisionMalusExpiresAt);
+  var dip = collisionActive ? IDLE_BALANCE.RUNNER_EARN_COLLISION_DIP_MULTIPLIER : 1;
+  var turboBoost = turboActive(state, now) ? IDLE_BALANCE.POWERUP_TURBO_EARN_MULTIPLIER : 1;
+  return Math.max(IDLE_BALANCE.RUNNER_EARN_MIN_MULTIPLIER, base * dip * turboBoost);
+}
+
+/* ============================================================
+   TEIL 2 — POWERUPS: Magnet/Schild/Turbo/Münzregen — feat(powerups)
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.powerups ein gültiges Objekt ist (defensiv,
+ * für Zustände, die nicht über createInitialState()/migrateState()
+ * gelaufen sind — mirrors ensureRunnerState()).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensurePowerupState(state) {
+  if (!state.powerups || typeof state.powerups !== 'object') {
+    state.powerups = { collected: 0, magnetExpiresAt: null, turboExpiresAt: null, shieldExpiresAt: null };
+  }
+}
+
+/**
+ * Würfelt das Zufallsintervall (Sekunden) bis zum nächsten Powerup-Spawn-
+ * VERSUCH (siehe rollPowerupDrop() — ob dabei tatsächlich ein Powerup
+ * erscheint, entscheidet powerupSpawnChance()), zwischen IDLE_BALANCE.
+ * POWERUP_INTERVAL_MIN_SECONDS und POWERUP_INTERVAL_MAX_SECONDS (flach,
+ * identisches Prinzip zu nextPiggyIntervalSeconds()).
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zum nächsten Spawn-Versuch.
+ */
+function nextPowerupIntervalSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.POWERUP_INTERVAL_MIN_SECONDS;
+  var max = IDLE_BALANCE.POWERUP_INTERVAL_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Würfelt die Sichtbarkeitsdauer (Sekunden) EINES erschienenen Powerups,
+ * zwischen IDLE_BALANCE.POWERUP_VISIBLE_MIN_SECONDS und
+ * POWERUP_VISIBLE_MAX_SECONDS, bevor es unbeklickt wieder verschwindet
+ * (identisches Prinzip zu piggyVisibleSeconds()).
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden Sichtbarkeit.
+ */
+function powerupVisibleSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.POWERUP_VISIBLE_MIN_SECONDS;
+  var max = IDLE_BALANCE.POWERUP_VISIBLE_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * TUNING-PERK "höhere Powerup-Drop-Chance": berechnet die Wahrscheinlich-
+ * keit (0–1), dass bei einem abgelaufenen Spawn-Intervall ÜBERHAUPT ein
+ * Powerup erscheint — steigt mit dem Tuning-Level des AKTUELL gefahrenen
+ * Bikes (IDLE_BALANCE.POWERUP_SPAWN_CHANCE_PER_TUNING_LEVEL je Level),
+ * gedeckelt auf 1. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Spawn-Wahrscheinlichkeit (0–1).
+ */
+function powerupSpawnChance(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  var bonus = level * IDLE_BALANCE.POWERUP_SPAWN_CHANCE_PER_TUNING_LEVEL;
+  return Math.min(1, IDLE_BALANCE.POWERUP_BASE_SPAWN_CHANCE + bonus);
+}
+
+/**
+ * Wählt gewichtet EINEN der 4 Powerup-Typen (IDLE_BALANCE.
+ * POWERUP_TYPE_WEIGHTS) — wiederverwendet pickWeightedRarity(), da eine
+ * gewichtete Auswahl aus einem {Schlüssel: Gewicht}-Objekt exakt dasselbe
+ * Problem ist wie eine Seltenheitsstufen-Auswahl. Reine Funktion.
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {('magnet'|'schild'|'turbo'|'muenzregen')} Gewählter Powerup-Typ.
+ */
+function rollPowerupType(rng) {
+  return pickWeightedRarity(typeof rng === 'function' ? rng : Math.random, IDLE_BALANCE.POWERUP_TYPE_WEIGHTS);
+}
+
+/**
+ * Würfelt EINEN Powerup-Spawn-Versuch: ZUERST, OB überhaupt ein Powerup
+ * erscheint (powerupSpawnChance(state), tuning-abhängig), DANN — falls ja
+ * — WELCHER der 4 Typen (rollPowerupType()). Identisches zweistufiges
+ * Muster zu rollPartDrop() (Drop-Chance, dann Seltenheit/Item). Ein
+ * "kein Drop"-Ergebnis ist KEINE Strafe (siehe idle.js tickPowerup()).
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @param {Object} [state] - Zentraler Idle-Zustand (für den tuning-abhängigen powerupSpawnChance()-Bonus).
+ * @returns {('magnet'|'schild'|'turbo'|'muenzregen'|null)} Gewählter Typ, oder null (kein Spawn).
+ */
+function rollPowerupDrop(rng, state) {
+  var rnd = typeof rng === 'function' ? rng : Math.random;
+  if (rnd() >= powerupSpawnChance(state)) return null;
+  return rollPowerupType(rnd);
+}
+
+/**
+ * Liefert true, solange der Magnet-Effekt gerade aktiv ist (siehe
+ * state.powerups.magnetExpiresAt/activatePowerupEffect()). Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls der Magnet-Effekt aktiv ist.
+ */
+function magnetActive(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  return !!(state && state.powerups && typeof state.powerups.magnetExpiresAt === 'number' && now < state.powerups.magnetExpiresAt);
+}
+
+/**
+ * Liefert true, solange der Turbo-Effekt gerade aktiv ist (siehe
+ * state.powerups.turboExpiresAt/activatePowerupEffect()). Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls der Turbo-Effekt aktiv ist.
+ */
+function turboActive(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  return !!(state && state.powerups && typeof state.powerups.turboExpiresAt === 'number' && now < state.powerups.turboExpiresAt);
+}
+
+/**
+ * Liefert true, solange der Schild-Effekt bereit ist, um GENAU EINE
+ * Kollision zu blocken (siehe state.powerups.shieldExpiresAt/
+ * activatePowerupEffect()) — läuft ansonsten nach
+ * powerupShieldDurationSeconds() unbenutzt ab. Reine Funktion — mutiert
+ * state NICHT (siehe consumeShield() fürs tatsächliche Konsumieren).
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls ein Schild aktuell bereitsteht.
+ */
+function shieldActive(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  return !!(state && state.powerups && typeof state.powerups.shieldExpiresAt === 'number' && now < state.powerups.shieldExpiresAt);
+}
+
+/**
+ * Konsumiert den Schild-Effekt, falls er gerade aktiv ist: blockt GENAU
+ * EINE Kollision (setzt state.powerups.shieldExpiresAt zurück auf null,
+ * statt eines applyCollisionMalus()-Aufrufs, siehe idle.js tickRunner()).
+ * Ein bereits abgelaufener/nicht aktiver Schild wird NICHT konsumiert
+ * (liefert false, state bleibt unverändert). Mutiert state bei Erfolg.
+ * @param {Object} state - Zentraler Idle-Zustand (wird bei Erfolg mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls ein Schild konsumiert wurde (Kollision geblockt).
+ */
+function consumeShield(state, nowMs) {
+  if (!shieldActive(state, nowMs)) return false;
+  state.powerups.shieldExpiresAt = null;
+  return true;
+}
+
+/**
+ * TUNING-PERK "längere Magnet-Wirkdauer": berechnet die Wirkdauer
+ * (Sekunden) des Magnet-Effekts für das AKTUELL gefahrene Bike —
+ * IDLE_BALANCE.POWERUP_MAGNET_BASE_DURATION_SECONDS plus einen Bonus je
+ * Tuning-Level. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Wirkdauer in Sekunden (> 0).
+ */
+function powerupMagnetDurationSeconds(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  return IDLE_BALANCE.POWERUP_MAGNET_BASE_DURATION_SECONDS + level * IDLE_BALANCE.POWERUP_MAGNET_DURATION_PER_LEVEL_SECONDS;
+}
+
+/**
+ * TUNING-PERK "grössere Magnet-Reichweite": berechnet die Hindernis-
+ * Fortschritts-Schwelle t (0=Horizont, 1=Spieler-Reihe), ab der Hindernisse
+ * während eines aktiven Magnet-Effekts Richtung Bike-Lane gezogen werden
+ * (siehe idle.js tickRunner()) — sinkt (= grössere Reichweite, zieht schon
+ * von weiter weg) mit dem Tuning-Level des AKTUELL gefahrenen Bikes,
+ * gedeckelt auf IDLE_BALANCE.POWERUP_MAGNET_MIN_RANGE_T. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Reichweiten-Schwelle t (zwischen POWERUP_MAGNET_MIN_RANGE_T und POWERUP_MAGNET_BASE_RANGE_T).
+ */
+function powerupMagnetRangeT(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  var range = IDLE_BALANCE.POWERUP_MAGNET_BASE_RANGE_T - level * IDLE_BALANCE.POWERUP_MAGNET_RANGE_PER_LEVEL_T;
+  return Math.max(IDLE_BALANCE.POWERUP_MAGNET_MIN_RANGE_T, range);
+}
+
+/**
+ * TUNING-PERK "längere Schild-Wirkdauer": berechnet die Wirkdauer
+ * (Sekunden), die ein Schild bereitsteht, bevor er unbenutzt abläuft, für
+ * das AKTUELL gefahrene Bike. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Wirkdauer in Sekunden (> 0).
+ */
+function powerupShieldDurationSeconds(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  return IDLE_BALANCE.POWERUP_SHIELD_BASE_DURATION_SECONDS + level * IDLE_BALANCE.POWERUP_SHIELD_DURATION_PER_LEVEL_SECONDS;
+}
+
+/**
+ * TUNING-PERK "längere Turbo-Wirkdauer": berechnet die Wirkdauer
+ * (Sekunden) des Turbo-Effekts (Speed- + Ertrags-Boost, siehe
+ * runnerEarnMultiplier()/idle.js tickRunner()) für das AKTUELL gefahrene
+ * Bike. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Wirkdauer in Sekunden (> 0).
+ */
+function powerupTurboDurationSeconds(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  return IDLE_BALANCE.POWERUP_TURBO_BASE_DURATION_SECONDS + level * IDLE_BALANCE.POWERUP_TURBO_DURATION_PER_LEVEL_SECONDS;
+}
+
+/**
+ * Berechnet den sofortigen km-Bonus eines eingesammelten Münzregens: ein
+ * Vielfaches von activeEarn(state) (IDLE_BALANCE.POWERUP_COINRAIN_KM_
+ * MULTIPLIER), skaliert dadurch automatisch mit Bike/Tuning — identisches
+ * Prinzip zu piggybankReward(). Reine Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} km-Bonus (>= 0).
+ */
+function powerupCoinRainReward(state) {
+  return Math.round(activeEarn(state) * IDLE_BALANCE.POWERUP_COINRAIN_KM_MULTIPLIER);
+}
+
+/**
+ * Aktiviert den Effekt eines eingesammelten Powerups (Magnet/Schild/
+ * Turbo setzen ihren jeweiligen *ExpiresAt-Zeitstempel via ihrer Tuning-
+ * abhängigen Wirkdauer-Funktion; Münzregen schreibt sofort einen km-Bonus
+ * gut, siehe powerupCoinRainReward()/creditKm()). Zählt IMMER
+ * state.powerups.collected (Lebenszeit-Zähler) hoch. Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {('magnet'|'schild'|'turbo'|'muenzregen')} type - Der eingesammelte Powerup-Typ.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {{type: string, kmBonus: number}} Ergebnis (kmBonus nur bei 'muenzregen' > 0).
+ */
+function activatePowerupEffect(state, type, nowMs) {
+  ensurePowerupState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var kmBonus = 0;
+  switch (type) {
+    case 'magnet':
+      state.powerups.magnetExpiresAt = now + powerupMagnetDurationSeconds(state) * 1000;
+      break;
+    case 'schild':
+      state.powerups.shieldExpiresAt = now + powerupShieldDurationSeconds(state) * 1000;
+      break;
+    case 'turbo':
+      state.powerups.turboExpiresAt = now + powerupTurboDurationSeconds(state) * 1000;
+      break;
+    case 'muenzregen':
+      kmBonus = powerupCoinRainReward(state);
+      creditKm(state, kmBonus);
+      break;
+    default:
+      break;
+  }
+  state.powerups.collected += 1;
+  return { type: type, kmBonus: kmBonus };
+}
+
+/* ============================================================
+   TEIL 2 — TUNING-PERKS (Reaktionszeit) — balance(tuning)
+   ============================================================ */
+
+/**
+ * TUNING-PERK "breitere Reaktionszeit": berechnet einen Verlangsamungs-
+ * Faktor (<= 1) für den Hindernis-Fortschritt (siehe idle.js tickRunner()),
+ * der mit dem Tuning-Level des AKTUELL gefahrenen Bikes sinkt — ein
+ * Hindernis braucht dadurch spürbar länger bis zur Kollisionszone, OHNE
+ * die visuelle Scroll-Geschwindigkeit der Strasse (runnerScrollSpeed())
+ * selbst zu verändern. Gedeckelt auf IDLE_BALANCE.TUNING_OBSTACLE_
+ * PROGRESS_MIN_FACTOR (bei TUNING_LEVEL_CAP exakt erreicht). Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @returns {number} Verlangsamungs-Faktor (zwischen TUNING_OBSTACLE_PROGRESS_MIN_FACTOR und 1).
+ */
+function tuningReactionTimeFactor(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  var reduction = level * IDLE_BALANCE.TUNING_OBSTACLE_PROGRESS_REDUCTION_PER_LEVEL;
+  return Math.max(IDLE_BALANCE.TUNING_OBSTACLE_PROGRESS_MIN_FACTOR, 1 - reduction);
+}
+
+/* ============================================================
    OFFLINE-ERTRAG — feat(idle-offline)
    ============================================================ */
 
@@ -1940,6 +2745,42 @@ var IdleCore = {
   piggyVisibleSeconds: piggyVisibleSeconds,
   piggybankReward: piggybankReward,
   smashPiggybank: smashPiggybank,
+
+  /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße — feat(idle-runner) ──── */
+  ensureRunnerState: ensureRunnerState,
+  steerRunnerLane: steerRunnerLane,
+  runnerActivityState: runnerActivityState,
+  runnerAutoRunSpeedPct: runnerAutoRunSpeedPct,
+  runnerScrollSpeed: runnerScrollSpeed,
+  runnerLeadSeconds: runnerLeadSeconds,
+  obstacleDensity: obstacleDensity,
+  nextObstacleSpawnIntervalSeconds: nextObstacleSpawnIntervalSeconds,
+  applyCollisionMalus: applyCollisionMalus,
+  collisionSpeedMalus: collisionSpeedMalus,
+
+  /* ── Teil 2: km-ERTRAG ↔ RUNNER-ZUSTAND — balance(economy) ─────────── */
+  runnerEarnMultiplier: runnerEarnMultiplier,
+
+  /* ── Teil 2: POWERUPS — feat(powerups) ─────────────────────────────── */
+  ensurePowerupState: ensurePowerupState,
+  nextPowerupIntervalSeconds: nextPowerupIntervalSeconds,
+  powerupVisibleSeconds: powerupVisibleSeconds,
+  powerupSpawnChance: powerupSpawnChance,
+  rollPowerupType: rollPowerupType,
+  rollPowerupDrop: rollPowerupDrop,
+  magnetActive: magnetActive,
+  turboActive: turboActive,
+  shieldActive: shieldActive,
+  consumeShield: consumeShield,
+  powerupMagnetDurationSeconds: powerupMagnetDurationSeconds,
+  powerupMagnetRangeT: powerupMagnetRangeT,
+  powerupShieldDurationSeconds: powerupShieldDurationSeconds,
+  powerupTurboDurationSeconds: powerupTurboDurationSeconds,
+  powerupCoinRainReward: powerupCoinRainReward,
+  activatePowerupEffect: activatePowerupEffect,
+
+  /* ── Teil 2: TUNING-PERKS — balance(tuning) ────────────────────────── */
+  tuningReactionTimeFactor: tuningReactionTimeFactor,
 
   /* ── Phase C: Offline-Ertrag ──────────────────────────────────────── */
   offlineEarn: offlineEarn,

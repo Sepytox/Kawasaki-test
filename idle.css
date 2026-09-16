@@ -86,16 +86,20 @@
   box-shadow: var(--shadow-md);
 }
 
-/* ── Renn-Strecke (Canvas) ──────────────────────────────────────── */
+/* ── Endless-Runner-Strasse (Canvas, Teil 1, feat(idle-runner)) ───────
+   Aspect-Ratio etwas höher als die frühere Oval-Strecke (16/6), damit die
+   perspektivische Lane-Strasse (Horizont oben, Spieler-Reihe unten)
+   genug Tiefe zum Zeichnen hat. */
 .idle-track-wrap {
   position: relative;
-  aspect-ratio: 16 / 6;
+  aspect-ratio: 16 / 9;
   margin-bottom: 1rem;
   background: linear-gradient(135deg, var(--accent-dim), transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 10px);
   overflow: hidden;
-  transition: transform var(--dur-slow, 0.4s) var(--ease-spring, ease);
+  transition: transform var(--dur-slow, 0.4s) var(--ease-spring, ease),
+              border-color var(--dur-fast, 0.15s) var(--ease-standard, ease);
 }
 .idle-track-wrap.is-pulsing {
   animation: idle-track-zoom-pulse 0.6s var(--ease-spring, ease);
@@ -105,10 +109,57 @@
   40% { transform: scale(1.035); }
   100% { transform: scale(1); }
 }
+/* Kurzer Kollisions-Flash/Shake (Teil 1) — NUR ein temporärer visueller
+   Hinweis, KEIN Reset/Fail-State. Der Akzent-Rahmen/Glow ist eine
+   statische Zustands-Regel (keine @keyframes) und bleibt daher auch bei
+   prefers-reduced-motion sichtbar; nur das transform-Shake wird dort
+   deaktiviert (siehe media-query unten). */
+.idle-track-wrap.is-collision {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+  animation: idle-track-shake 320ms var(--ease-standard, ease);
+}
+@keyframes idle-track-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
 .idle-track-canvas {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* Kleiner Aktiv-/Auto-Pilot-Badge (Teil 1) — zeigt, ob gerade aktiv
+   gesteuert wird oder der Idle-Auto-Run übernommen hat (siehe idle.js
+   updateRunnerModeBadge()). Rein informativ, blockiert keine Klicks. */
+.idle-track-mode {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78em;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full, 999px);
+  pointer-events: none;
+  z-index: 4;
+}
+.idle-track-mode.is-idle {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+/* Steuerungs-Hinweis unter der Strecke (Teil 1) — dezent, informativ. */
+.idle-track-hint {
+  text-align: center;
+  font-size: 0.85em;
+  color: var(--text-subtle);
+  margin-bottom: 1rem;
 }
 
 /* "Neues Bike in der Garage"-Übergabe-Banner, überlagert die Strecke kurz. */
@@ -179,6 +230,65 @@
   pointer-events: none;
   transition: opacity 220ms var(--ease-standard, ease),
               transform 220ms var(--ease-standard, ease);
+}
+
+/* ── Powerups (Teil 2) — feat(powerups) ──────────────────────────────
+   DOM-Overlay über der Strecke, IDENTISCHES Basis-Muster zu .idle-piggy
+   (nur lane-gebunden statt frei-%-positioniert, siehe idle.js
+   spawnPowerup()) — bewusst KEINE neuen Hex-/Akzentfarben, die 4 Typen
+   unterscheiden sich rein über das Emoji (idle.js POWERUP_ICONS), analog
+   zu den bereits nur-per-Emoji unterschiedenen Bike-Kategorien
+   (CATEGORY_ICONS). */
+.idle-powerup {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  margin-left: -24px;
+  margin-top: -24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 1.4em;
+  line-height: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full, 999px);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  z-index: 5;
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+  transition: opacity var(--dur-base, 0.25s) var(--ease-spring, ease),
+              transform var(--dur-base, 0.25s) var(--ease-spring, ease),
+              box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.idle-powerup.is-visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+.idle-powerup:hover {
+  box-shadow: var(--shadow-glow, var(--shadow-md));
+  transform: scale(1.06);
+}
+/* Kurzer, dezenter "Eingesammelt"-Effekt beim Klick (identisches Muster
+   zu .idle-piggy.is-smashed). */
+.idle-powerup.is-collected {
+  opacity: 0;
+  transform: scale(1.35) rotate(-10deg);
+  pointer-events: none;
+  transition: opacity 220ms var(--ease-standard, ease),
+              transform 220ms var(--ease-standard, ease);
+}
+
+/* Kurzer, POSITIVER Schild-Block-Flash auf der Strecke (siehe idle.js
+   triggerShieldFeedback()) — statischer Akzent-Rahmen/Glow (KEINE
+   @keyframes, daher motion-safe wie .idle-track-wrap.is-collision). */
+.idle-track-wrap.is-shielded {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 /* ── Tacho (Canvas) ──────────────────────────────────────────────── */
@@ -352,7 +462,9 @@
 .idle-shop-item-action {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem 0.5rem;
   flex-shrink: 0;
 }
 .idle-shop-item-badge {
@@ -360,10 +472,21 @@
   color: var(--text-subtle);
   white-space: nowrap;
 }
+/* balance(tuning) — TUNING-GATE: Hinweistext unter dem (deaktivierten)
+   Kaufen-Button, solange das zuletzt besessene Bike das erforderliche
+   Tuning-Level noch nicht erreicht hat (siehe idle.js renderShopList()). */
+.idle-shop-item-tuning-hint {
+  flex: 1 1 100%;
+  text-align: right;
+  font-size: 0.78em;
+  color: var(--accent);
+  white-space: nowrap;
+}
 
 @media (max-width: 600px) {
   .idle-shop-item { flex-direction: column; align-items: stretch; text-align: center; }
   .idle-shop-item-action { justify-content: center; }
+  .idle-shop-item-tuning-hint { text-align: center; }
 }
 
 /* ── Schaltpunkt-Combo (MECHANIK A) ─────────────────────────────── */
@@ -944,6 +1067,9 @@
 /* ── prefers-reduced-motion: Zusatzbewegung reduzieren, Spiel bleibt nutzbar ── */
 @media (prefers-reduced-motion: reduce) {
   .idle-track-wrap.is-pulsing { animation: none; }
+  /* Der Akzent-Rahmen/Glow (statische Regel oben, keine @keyframes) bleibt als
+     Kollisions-Feedback erhalten — hier wird NUR das transform-Shake deaktiviert. */
+  .idle-track-wrap.is-collision { animation: none; }
   .idle-gas-btn.is-pulsing { animation: none; }
   .idle-handover { transition: none; }
   .idle-shift { transition: none; }
@@ -954,4 +1080,7 @@
   .idle-insolvency-notice { transition: none; }
   .idle-piggy,
   .idle-piggy.is-smashed { transition: none; transform: none; }
+  .idle-powerup,
+  .idle-powerup.is-collected { transition: none; transform: none; }
+  /* is-shielded ist ohnehin nur eine statische Regel (kein @keyframes) — nichts zu deaktivieren. */
 }
