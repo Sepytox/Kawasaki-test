@@ -741,9 +741,10 @@
    * einer Lane UND 'lowBar' auf einer anderen), IMMER mit mindestens
    * einer garantiert freien Lane (nie unmöglich/unfair). `lane` ist die
    * für die Kollisionsprüfung massgebliche (unveränderliche) Lane,
-   * `displayLane` die für das Zeichnen genutzte, ggf. vom Magnet-Effekt
-   * weich Richtung Bike-Lane gezogene Lane (siehe tickRunner()/
-   * renderTrack()). `type` (Teil 3, feat(obstacles)) bestimmt die
+   * `displayLane` die für das Zeichnen genutzte Lane — bei Hindernissen
+   * (balance(powerups) Teil C: Magnet wirkt NICHT mehr auf Hindernisse)
+   * stets identisch zu `lane` (siehe tickRunner()/renderTrack()). `type`
+   * (Teil 3, feat(obstacles)) bestimmt die
    * passende Ausweich-Aktion: 'side' (Lane wechseln), 'lowBar'
    * (springen, IdleCore.jumpRunner()) oder 'highBarrier' (ducken,
    * IdleCore.duckRunner()) — siehe IdleCore.rollObstacleType()/
@@ -1083,12 +1084,13 @@
    * Teil 2 (feat(powerups)/balance(tuning)) unverändert: Turbo hebt die
    * effektive Geschwindigkeit temporär an (POWERUP_TURBO_SPEED_BOOST_PCT,
    * NIEMALS die globale RUNNER_SPEED_CAP_PCT-Konstante selbst mutiert);
-   * Magnet zieht Hindernisse ab IdleCore.powerupMagnetRangeT() weich
-   * Richtung Bike-Lane (nur `displayLane`, NICHT die für die Kollision
-   * massgebliche `lane`) und lässt sie dadurch die Kollisionsprüfung
-   * überspringen; die Tuning-PERK-Reaktionszeit (IdleCore.
-   * tuningReactionTimeFactor()) verlangsamt den Hindernis-FORTSCHRITT
-   * (nicht die Strassen-Scroll-Geschwindigkeit selbst).
+   * die Tuning-PERK-Reaktionszeit (IdleCore.tuningReactionTimeFactor())
+   * verlangsamt den Hindernis-FORTSCHRITT (nicht die Strassen-Scroll-
+   * Geschwindigkeit selbst). balance(powerups) (Teil C): Magnet zieht ab
+   * IdleCore.powerupMagnetRangeT() ausschliesslich nahe MÜNZEN weich
+   * Richtung Bike-Lane (siehe Münz-Trail-Schleife unten) — Hindernisse
+   * sind vom Magnet-Effekt NICHT mehr betroffen, jede Kollision wird
+   * weiterhin regulär geprüft.
    * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
    * @param {number} speedPct - Aktuelle (reale) Geschwindigkeit des Bikes (0–100%).
    * @returns {number} Die für die Strecken-Darstellung zu nutzende visuelle Geschwindigkeit (0–100%, idle-gedeckelt + Kollisions-Malus, 0 falls kein Run läuft).
@@ -1122,17 +1124,7 @@
     for (var i = runnerObstacles.length - 1; i >= 0; i--) {
       var obstacle = runnerObstacles[i];
       obstacle.t += progressDelta;
-
-      // Magnet: zieht Hindernisse ab der Reichweiten-Schwelle NUR visuell
-      // (displayLane) Richtung Bike-Lane — die für die Kollision
-      // massgebliche `lane` bleibt unverändert, magnetSaved entscheidet
-      // stattdessen direkt, ob die Kollision übersprungen wird.
-      var magnetSaved = magnetOn && obstacle.t >= magnetRangeT;
-      if (magnetSaved) {
-        obstacle.displayLane += (state.runner.lane - obstacle.displayLane) * pullEase;
-      } else {
-        obstacle.displayLane = obstacle.lane;
-      }
+      obstacle.displayLane = obstacle.lane;
 
       // Teil 4 (feat(nearmiss)): JEDES Hindernis, das die HIT-Zone erreicht
       // (nicht nur solche in der Bike-Lane), wird auf einen Near-Miss
@@ -1140,9 +1132,13 @@
       // Zweig unten) ein 'lowBar'/'highBarrier' sauber per Sprung/Ducken/
       // Turbo pariert. Near-Misses zählen NUR im aktiven Modus (Auto-Pilot
       // evaluiert grundsätzlich keine Kollision, siehe Teil-1-Invariante).
+      // Magnet wirkt (Teil-C-Spec-Angleichung) NUR auf Münzen (siehe unten),
+      // NICHT mehr auf Hindernisse — ein Hindernis-Ausweich-Magnet wäre in
+      // einem Crash-basierten Run effektiv eine Crash-Immunität und damit
+      // ausserhalb der Spezifikation ("zieht nahe Coins automatisch ein").
       if (!obstacle.resolved && obstacle.t >= RUNNER_HIT_ZONE_T) {
         obstacle.resolved = true;
-        var sameLane = !magnetSaved && obstacle.lane === state.runner.lane;
+        var sameLane = obstacle.lane === state.runner.lane;
         if (activity === 'active' && !crashedThisTick && sameLane) {
           var collisionResult = IdleCore.detectRunCollision(state, obstacle.type, now);
           if (collisionResult.shielded) {
@@ -1153,7 +1149,7 @@
           } else if (IdleCore.isNearMiss(state, obstacle, now)) {
             triggerNearMiss(now);
           }
-        } else if (activity === 'active' && !magnetSaved && IdleCore.isNearMiss(state, obstacle, now)) {
+        } else if (activity === 'active' && IdleCore.isNearMiss(state, obstacle, now)) {
           triggerNearMiss(now);
         }
       }
@@ -1165,8 +1161,9 @@
     }
 
     // Münz-Trails (Teil 4, feat(coins)): vorrücken, bei Lane-Überlappung
-    // (oder aktivem Magnet-Effekt — zieht nahegelegene Münzen zusätzlich
-    // zu Hindernissen ein, siehe magnetOn oben) automatisch einsammeln,
+    // (oder aktivem Magnet-Effekt — zieht nahegelegene Münzen ein, siehe
+    // magnetOn oben; balance(powerups) Teil C: NUR Münzen, Hindernisse
+    // bleiben unbeeinflusst) automatisch einsammeln,
     // vorbeigefahrene entfernen. Läuft UNABHÄNGIG vom Aktivitäts-Zustand —
     // Münzen sind reine Belohnungen ohne Kollisionsrisiko, daher auch im
     // Auto-Pilot eingesammelt (identisches "Idle-Spieler:innen nie
@@ -1315,9 +1312,9 @@
     var sortedObstacles = runnerObstacles.slice().sort(function (a, b) { return a.t - b.t; });
     sortedObstacles.forEach(function (obstacle) {
       var t = Math.min(1, Math.max(0, obstacle.t));
-      // displayLane statt lane: bei aktivem Magnet-Effekt weich Richtung
-      // Bike-Lane gezogen (rein visuell — siehe tickRunner()), sonst
-      // identisch zu obstacle.lane.
+      // displayLane statt lane: bei Hindernissen (balance(powerups) Teil C:
+      // Magnet wirkt NICHT auf Hindernisse) stets identisch zu
+      // obstacle.lane — siehe tickRunner().
       var x = laneCenterX(w, obstacle.displayLane, t);
       var y = laneRowY(h, t);
       var size = lerpValue(RUNNER_OBSTACLE_MIN_SIZE_PX, RUNNER_OBSTACLE_MAX_SIZE_PX, t);
@@ -2474,9 +2471,10 @@
      laneRowY() aus Teil 1, statt frei-%-positioniert) UND 4 statt 1
      Effekt-Typ (siehe IdleCore.rollPowerupDrop()/activatePowerupEffect()).
      Teil 4 ersetzt 'muenzregen' im selben Gewichtungs-Slot durch
-     'scoreX2' (Magnet zieht seither zusätzlich Münzen ein, siehe
-     tickRunner(); Turbo lässt 'lowBar'-Hindernisse ohne Sprung passieren,
-     siehe IdleCore.obstacleCausesCrash()).
+     'scoreX2' (Magnet zieht seither Münzen ein, siehe tickRunner();
+     Turbo lässt 'lowBar'-Hindernisse ohne Sprung passieren, siehe
+     IdleCore.obstacleCausesCrash()). balance(powerups) (Teil C):
+     Magnet wirkt AUSSCHLIESSLICH auf Münzen, nicht mehr auf Hindernisse.
      ============================================================ */
 
   /**
@@ -2492,7 +2490,7 @@
     if (!container) return;
 
     var messages = {
-      magnet: '🧲 Magnet aktiviert — zieht Hindernisse & Münzen an!',
+      magnet: '🧲 Magnet aktiviert — zieht nahe Münzen automatisch ein!',
       schild: '🛡️ Schild aktiviert — blockt die nächste Kollision!',
       turbo: '🚀 Turbo aktiviert — Speedboost & fährt durch niedrige Hindernisse!',
       scoreX2: '✨ Score x2 aktiviert — doppelter Score für kurze Zeit!',

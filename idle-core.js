@@ -118,6 +118,14 @@
  * runDifficultyWaveSize()) — rein über HINDERNIS-DICHTE/Muster-Komplexität,
  * NIEMALS über die Vorlaufzeit (runnerLeadSeconds()' 0.6s-Boden bleibt
  * eine reine Funktion von speedPct, siehe Regressionstest §22).
+ *
+ * balance(powerups) (Teil C, Spec-Angleichung): Magnet zieht AUSSCHLIESSLICH
+ * nahe Münzen automatisch ein — der in Teil 4 zusätzlich eingeführte
+ * Hindernis-Ausweich-Zweig (Kollisionsprüfung ab powerupMagnetRangeT()
+ * aussetzen) wurde wieder entfernt, da er in einem Crash-basierten Run
+ * effektiv eine Crash-Immunität wäre und damit ausserhalb der Spezifikation
+ * liegt ("zieht nahe Coins automatisch ein"). Schild/Turbo/Score-x2
+ * unverändert.
  */
 'use strict';
 
@@ -401,9 +409,10 @@ var IDLE_BALANCE = {
    * gewichtet über POWERUP_TYPE_WEIGHTS) WELCHER der 4 Typen. Ein
    * verpasstes/unbeklickt abgelaufenes Powerup hat KEINE Strafe
    * (identisches Muster zu Sparschwein/Schaltpunkt-Leiste). Effekte:
-   *   - Magnet: zieht nahegelegene Hindernisse aus dem Weg (Kollisions-
-   *     prüfung wird für Hindernisse ab powerupMagnetRangeT() ausgesetzt,
-   *     siehe idle.js tickRunner()) für powerupMagnetDurationSeconds().
+   *   - Magnet: zieht nahegelegene MÜNZEN automatisch ein (ab
+   *     powerupMagnetRangeT() weich Richtung Bike-Lane gezogen, siehe
+   *     idle.js tickRunner()) für powerupMagnetDurationSeconds() —
+   *     balance(powerups) Teil C: wirkt NICHT auf Hindernisse.
    *   - Schild: blockt GENAU EINE Kollision (state.powerups.
    *     shieldExpiresAt, konsumiert von consumeShield() bei der nächsten
    *     Kollision statt eines applyCollisionMalus()) — läuft ansonsten
