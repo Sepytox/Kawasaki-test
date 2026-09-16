@@ -554,12 +554,27 @@
   }
 
   /**
-   * Verdrahtet die Steuerung des Endless-Runners (Teil 1): Tastatur
-   * (ArrowLeft/ArrowRight sowie A/D, unabhängig von der Eingabe-
-   * Fokussierung ausser innerhalb von Formularfeldern) UND Touch-Swipe
-   * (links/rechts) auf der Renn-Strecke. Jede erkannte Eingabe ruft
-   * IdleCore.steerRunnerLane() auf, was automatisch auch den Aktivitäts-
-   * Zustand auf 'active' setzt (siehe IdleCore.runnerActivityState()).
+   * Element-ids, die ihre EIGENE Enter/Leertaste-Interaktion verdrahten
+   * (Schaltpunkt-Leiste/Sparschwein/Powerup/Crash-Zusammenfassung-Button,
+   * siehe wireShiftInteraction()/wirePiggyInteraction()/
+   * wirePowerupInteraction()/wireRunSummaryButtons()) — der globale
+   * Sprung/Ducken-Handler in wireRunnerControls() ignoriert Leertaste-
+   * Drücke auf genau diesen Elementen, damit "Space" dort NICHT
+   * zusätzlich einen Sprung auslöst (verhindert doppelte Aktivierung).
+   */
+  var RUNNER_CONTROL_EXEMPT_IDS = { idleShiftTrack: true, idlePiggy: true, idlePowerup: true, idleRunSummaryRestartBtn: true };
+
+  /**
+   * Verdrahtet die Steuerung des Endless-Runners (Teil 1 + Teil 3):
+   * Tastatur (ArrowLeft/ArrowRight sowie A/D für den Lane-Wechsel,
+   * ArrowUp/Space für einen Sprung, ArrowDown/Ctrl für Ducken —
+   * unabhängig von der Eingabe-Fokussierung ausser innerhalb von
+   * Formularfeldern bzw. den in RUNNER_CONTROL_EXEMPT_IDS gelisteten
+   * Elementen) UND Touch-Swipe in ALLEN 4 Richtungen (links/rechts = Lane-
+   * Wechsel, hoch = Sprung, runter = Ducken) auf der Renn-Strecke. Jede
+   * erkannte Eingabe ruft IdleCore.steerRunnerLane()/jumpRunner()/
+   * duckRunner() auf, was automatisch auch den Aktivitäts-Zustand auf
+   * 'active' setzt (siehe IdleCore.runnerActivityState()).
    * @returns {void}
    */
   function wireRunnerControls() {
@@ -567,12 +582,19 @@
       var target = event.target;
       var tag = target && target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (target && target.id && RUNNER_CONTROL_EXEMPT_IDS[target.id]) return;
       if (event.key === 'ArrowLeft' || event.key === 'a' || event.key === 'A') {
         event.preventDefault();
         IdleCore.steerRunnerLane(state, -1, Date.now());
       } else if (event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D') {
         event.preventDefault();
         IdleCore.steerRunnerLane(state, 1, Date.now());
+      } else if (event.key === 'ArrowUp' || event.key === ' ' || event.key === 'Spacebar') {
+        event.preventDefault();
+        IdleCore.jumpRunner(state, Date.now());
+      } else if (event.key === 'ArrowDown' || event.key === 'Control') {
+        event.preventDefault();
+        IdleCore.duckRunner(state, Date.now());
       }
     });
 
@@ -591,8 +613,15 @@
       var dy = event.changedTouches[0].clientY - (touchStartY || 0);
       touchStartX = null;
       touchStartY = null;
-      if (Math.abs(dx) < RUNNER_SWIPE_THRESHOLD_PX || Math.abs(dx) < Math.abs(dy)) return;
-      IdleCore.steerRunnerLane(state, dx < 0 ? -1 : 1, Date.now());
+      if (Math.abs(dx) >= RUNNER_SWIPE_THRESHOLD_PX && Math.abs(dx) >= Math.abs(dy)) {
+        IdleCore.steerRunnerLane(state, dx < 0 ? -1 : 1, Date.now());
+      } else if (Math.abs(dy) >= RUNNER_SWIPE_THRESHOLD_PX && Math.abs(dy) > Math.abs(dx)) {
+        if (dy < 0) {
+          IdleCore.jumpRunner(state, Date.now());
+        } else {
+          IdleCore.duckRunner(state, Date.now());
+        }
+      }
     }, { passive: true });
   }
 
@@ -943,10 +972,21 @@
     }
 
     // Bike-Marker (Vercel-Akzent) — dezent transparenter im Auto-Pilot-Modus.
+    // Teil 3 (feat(controls)): ein aktiver Sprung hebt den Marker sichtbar an
+    // (springt über ein 'lowBar'-Hindernis), ein aktives Ducken staucht ihn
+    // nach unten (duckt unter ein 'highBarrier'-Hindernis) — rein visuelles
+    // Feedback, die eigentliche Kollisionslogik lebt in IdleCore.detectRunCollision().
     var bikeX = laneCenterX(w, runnerBikeDisplayLane, 1);
     var bikeY = bottomY;
     var bikeRadius = Math.max(6, h * 0.07);
-    var activity = IdleCore.runnerActivityState(state, Date.now());
+    var nowForBike = Date.now();
+    var activity = IdleCore.runnerActivityState(state, nowForBike);
+    if (IdleCore.isJumping(state, nowForBike)) {
+      bikeY -= bikeRadius * 1.4;
+    } else if (IdleCore.isDucking(state, nowForBike)) {
+      bikeY += bikeRadius * 0.25;
+      bikeRadius *= 0.7;
+    }
     trackCtx.globalAlpha = activity === 'idle' ? 0.7 : 1;
     trackCtx.beginPath();
     trackCtx.arc(bikeX, bikeY, bikeRadius, 0, Math.PI * 2);
