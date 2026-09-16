@@ -119,6 +119,21 @@
   /** Rand-Puffer (% der Streckenbreite/-höhe), innerhalb dessen die zufällige Sparschwein-Position NICHT liegen darf (verhindert Anklebe-Positionen am Rand). */
   var PIGGY_POSITION_MARGIN_PCT = 12;
 
+  /* ── Teil 2: POWERUPS — Magnet/Schild/Turbo/Münzregen — feat(powerups)
+   * Wiederverwendet EXAKT das Sparschwein-Muster (spawnPiggy/tickPiggy/
+   * smashPiggy oben), nur lane-gebunden statt frei-%-positioniert (siehe
+   * laneCenterX()/laneRowY() aus Teil 1) UND mit 4 statt 1 Effekt-Typ. */
+  /** Hindernis-Fortschritt t (0=Horizont, 1=Spieler-Reihe), auf dem ein Powerup erscheint — mittig auf der Strecke, gut erreichbar, bevor es despawnt. */
+  var POWERUP_SPAWN_T = 0.6;
+  /** Anzeigedauer (ms) des kurzen "Eingesammelt"-Effekts, bevor das Powerup despawnt (mirrors PIGGY_SMASH_ANIM_MS). */
+  var POWERUP_COLLECT_ANIM_MS = 220;
+  /** Anzeigedauer (ms) des kurzen Schild-Block-Flash/Toasts (siehe triggerShieldFeedback()). */
+  var POWERUP_SHIELD_FLASH_MS = 320;
+  /** Emoji je Powerup-Typ, rein dekorativ. */
+  var POWERUP_ICONS = { magnet: '🧲', schild: '🛡️', turbo: '🚀', muenzregen: '💰' };
+  /** Deutsche Anzeigenamen je Powerup-Typ (Toasts/aria-label). */
+  var POWERUP_NAMES = { magnet: 'Magnet', schild: 'Schild', turbo: 'Turbo', muenzregen: 'Münzregen' };
+
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = ApiClient.loadIdleState();
 
@@ -237,6 +252,14 @@
   var piggyState = { active: false, elapsedSeconds: 0, visibleSeconds: 0 };
   /** Sekunden bis zum nächsten erscheinenden Sparschwein (flach 20–40s, siehe idle-core.js). */
   var piggyTimerSeconds = IdleCore.nextPiggyIntervalSeconds(Math.random);
+
+  /* ── Teil 2: POWERUPS (feat(powerups)) — Laufzeit-Zustand, NICHT
+     persistiert (mirrors piggyState); nur die aktiven Effekt-Timer
+     (state.powerups.*ExpiresAt) + der Lebenszeit-Zähler (collected) leben
+     im persistierten Zustand (siehe idle-core.js). ── */
+  var powerupState = { active: false, elapsedSeconds: 0, visibleSeconds: 0, type: null };
+  /** Sekunden bis zum nächsten Powerup-Spawn-VERSUCH (siehe IdleCore.rollPowerupDrop() — ob dabei tatsächlich eines erscheint, ist tuning-abhängig). */
+  var powerupTimerSeconds = IdleCore.nextPowerupIntervalSeconds(Math.random);
 
   /**
    * Formatiert eine km-Zahl für die Anzeige (deutsches Zahlenformat,
@@ -631,12 +654,15 @@
 
   /**
    * Fügt ein neues Hindernis am Horizont (t=0) auf einer zufälligen Lane
-   * hinzu (siehe tickRunner()).
+   * hinzu (siehe tickRunner()). `lane` ist die für die Kollisionsprüfung
+   * massgebliche (unveränderliche) Lane, `displayLane` die für das
+   * Zeichnen genutzte, ggf. vom Magnet-Effekt weich Richtung Bike-Lane
+   * gezogene Lane (siehe tickRunner()/renderTrack()).
    * @returns {void}
    */
   function spawnRunnerObstacle() {
     var lane = Math.floor(Math.random() * IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
-    runnerObstacles.push({ lane: lane, t: 0, resolved: false });
+    runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false });
   }
 
   /**
@@ -661,6 +687,29 @@
   }
 
   /**
+   * Löst den kurzen, POSITIVEN Schild-Block-Flash aus (CSS-Klasse
+   * .is-shielded, siehe idle.css) UND einen Toast — Feedback dafür, dass
+   * ein Schild-Powerup GENAU EINE Kollision geblockt hat (siehe
+   * IdleCore.consumeShield()). Respektiert prefers-reduced-motion
+   * identisch zu triggerCollisionFeedback() (nur ein statischer Akzent-
+   * Rahmen, kein Shake).
+   * @returns {void}
+   */
+  function triggerShieldFeedback() {
+    var wrap = document.getElementById('idleTrackWrap');
+    if (wrap) {
+      wrap.classList.remove('is-shielded');
+      void wrap.offsetWidth;
+      wrap.classList.add('is-shielded');
+      if (runnerCollisionFlashTimeoutId) clearTimeout(runnerCollisionFlashTimeoutId);
+      runnerCollisionFlashTimeoutId = setTimeout(function () {
+        wrap.classList.remove('is-shielded');
+      }, POWERUP_SHIELD_FLASH_MS);
+    }
+    showPowerupBlockToast();
+  }
+
+  /**
    * Aktualisiert den kleinen "Aktiv"/"Auto-Pilot"-Badge über der Strecke,
    * NUR wenn sich der Aktivitäts-Zustand tatsächlich geändert hat
    * (vermeidet unnötige DOM-Schreibzugriffe in jedem Frame).
@@ -677,7 +726,7 @@
   }
 
   /**
-   * EIN Game-Loop-Tick des Endless-Runners (Teil 1): bestimmt den
+   * EIN Game-Loop-Tick des Endless-Runners (Teil 1 + Teil 2): bestimmt den
    * Aktivitäts-Zustand (aktiv/Auto-Run, siehe IdleCore.runnerActivityState())
    * und den rein visuellen Kollisions-Malus (siehe IdleCore.
    * collisionSpeedMalus()), rückt alle Hindernisse entsprechend der
@@ -686,11 +735,23 @@
    * ihnen zuverlässig aus — siehe RUNNER_AUTO_RUN_SPEED_CAP_PCT), spawnt
    * neue Hindernisse (Dichte/Intervall skaliert mit der Geschwindigkeit,
    * siehe IdleCore.obstacleDensity()/nextObstacleSpawnIntervalSeconds())
-   * und löst Distanz-Meilensteine aus (ersetzt die frühere runden-
-   * basierte onLapCompleted()-Auslösung durch einen äquivalenten,
-   * geschwindigkeitsabhängigen Trigger). Der passive km-Ertrag
-   * (IdleCore.passiveEarn(), siehe tick()) läuft davon KOMPLETT
-   * unabhängig weiter — eine Kollision ist NIEMALS ein Reset/Fail-State.
+   * und löst Distanz-Meilensteine aus. Der passive km-Ertrag
+   * (IdleCore.passiveEarn(), siehe tick()) läuft davon UNABHÄNGIG weiter
+   * (nur der Runner-Ertrags-MULTIPLIKATOR ist gekoppelt, siehe
+   * IdleCore.runnerEarnMultiplier() in tick()) — eine Kollision ist
+   * NIEMALS ein Reset/Fail-State.
+   *
+   * Teil 2 (feat(powerups)/balance(tuning)) ergänzt: Turbo hebt die
+   * effektive Geschwindigkeit temporär an (POWERUP_TURBO_SPEED_BOOST_PCT,
+   * NIEMALS die globale RUNNER_SPEED_CAP_PCT-Konstante selbst mutiert);
+   * Magnet zieht Hindernisse ab IdleCore.powerupMagnetRangeT() weich
+   * Richtung Bike-Lane (nur `displayLane`, NICHT die für die Kollision
+   * massgebliche `lane`) und lässt sie dadurch die Kollisionsprüfung
+   * überspringen; ein aktiver Schild konsumiert GENAU EINE Kollision
+   * (IdleCore.consumeShield()) statt eines applyCollisionMalus(); die
+   * Tuning-PERK-Reaktionszeit (IdleCore.tuningReactionTimeFactor())
+   * verlangsamt den Hindernis-FORTSCHRITT (nicht die Strassen-Scroll-
+   * Geschwindigkeit selbst).
    * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
    * @param {number} speedPct - Aktuelle (reale) Geschwindigkeit des Bikes (0–100%).
    * @returns {number} Die für die Strecken-Darstellung zu nutzende visuelle Geschwindigkeit (0–100%, idle-gedeckelt + Kollisions-Malus).
@@ -700,21 +761,44 @@
     var activity = IdleCore.runnerActivityState(state, now);
     updateRunnerModeBadge(activity);
 
-    var baseSpeedPct = activity === 'idle' ? IdleCore.runnerAutoRunSpeedPct(speedPct) : speedPct;
+    var turboOn = IdleCore.turboActive(state, now);
+    var boostedSpeedPct = turboOn ? Math.min(100, speedPct + IdleCore.IDLE_BALANCE.POWERUP_TURBO_SPEED_BOOST_PCT) : speedPct;
+    var baseSpeedPct = activity === 'idle' ? IdleCore.runnerAutoRunSpeedPct(boostedSpeedPct) : boostedSpeedPct;
     var malus = IdleCore.collisionSpeedMalus(state, now);
     var visualSpeedPct = baseSpeedPct * malus;
     var scrollSpeed = IdleCore.runnerScrollSpeed(visualSpeedPct);
-    var progressDelta = dtSeconds > 0 ? (scrollSpeed * dtSeconds) / IdleCore.IDLE_BALANCE.RUNNER_SPAWN_LEAD_DISTANCE : 0;
+    var reactionFactor = IdleCore.tuningReactionTimeFactor(state);
+    var progressDelta = dtSeconds > 0 ? (scrollSpeed * dtSeconds * reactionFactor) / IdleCore.IDLE_BALANCE.RUNNER_SPAWN_LEAD_DISTANCE : 0;
+
+    var magnetOn = IdleCore.magnetActive(state, now);
+    var magnetRangeT = magnetOn ? IdleCore.powerupMagnetRangeT(state) : null;
+    var pullEase = Math.min(1, RUNNER_LANE_EASE_PER_SECOND * dtSeconds);
 
     // Hindernisse vorrücken, im aktiven Modus einmalig auf Kollision prüfen, vorbeigefahrene entfernen.
     for (var i = runnerObstacles.length - 1; i >= 0; i--) {
       var obstacle = runnerObstacles[i];
       obstacle.t += progressDelta;
+
+      // Magnet: zieht Hindernisse ab der Reichweiten-Schwelle NUR visuell
+      // (displayLane) Richtung Bike-Lane — die für die Kollision
+      // massgebliche `lane` bleibt unverändert, magnetSaved entscheidet
+      // stattdessen direkt, ob die Kollision übersprungen wird.
+      var magnetSaved = magnetOn && obstacle.t >= magnetRangeT;
+      if (magnetSaved) {
+        obstacle.displayLane += (state.runner.lane - obstacle.displayLane) * pullEase;
+      } else {
+        obstacle.displayLane = obstacle.lane;
+      }
+
       if (!obstacle.resolved && obstacle.t >= RUNNER_HIT_ZONE_T) {
         obstacle.resolved = true;
-        if (activity === 'active' && obstacle.lane === state.runner.lane) {
-          IdleCore.applyCollisionMalus(state, now);
-          triggerCollisionFeedback();
+        if (activity === 'active' && !magnetSaved && obstacle.lane === state.runner.lane) {
+          if (IdleCore.consumeShield(state, now)) {
+            triggerShieldFeedback();
+          } else {
+            IdleCore.applyCollisionMalus(state, now);
+            triggerCollisionFeedback();
+          }
         }
       }
       if (obstacle.t >= RUNNER_OBSTACLE_REMOVE_T) runnerObstacles.splice(i, 1);
@@ -804,7 +888,10 @@
     var sortedObstacles = runnerObstacles.slice().sort(function (a, b) { return a.t - b.t; });
     sortedObstacles.forEach(function (obstacle) {
       var t = Math.min(1, Math.max(0, obstacle.t));
-      var x = laneCenterX(w, obstacle.lane, t);
+      // displayLane statt lane: bei aktivem Magnet-Effekt weich Richtung
+      // Bike-Lane gezogen (rein visuell — siehe tickRunner()), sonst
+      // identisch zu obstacle.lane.
+      var x = laneCenterX(w, obstacle.displayLane, t);
       var y = laneRowY(h, t);
       var size = lerpValue(RUNNER_OBSTACLE_MIN_SIZE_PX, RUNNER_OBSTACLE_MAX_SIZE_PX, t);
       trackCtx.beginPath();
@@ -1907,6 +1994,189 @@
   }
 
   /* ============================================================
+     TEIL 2 — POWERUPS: Magnet/Schild/Turbo/Münzregen — feat(powerups)
+     Wiederverwendet EXAKT das obige Sparschwein-Muster (spawnPiggy/
+     tickPiggy/smashPiggy) — Unterschied: LANE-gebunden (via laneCenterX()/
+     laneRowY() aus Teil 1, statt frei-%-positioniert) UND 4 statt 1
+     Effekt-Typ (siehe IdleCore.rollPowerupDrop()/activatePowerupEffect()).
+     ============================================================ */
+
+  /**
+   * Zeigt einen kurzen Toast für ein eingesammeltes Powerup (Effekt-
+   * abhängiger Text). Nutzt denselben Toast-Container/dieselbe CSS-Klasse
+   * wie showPartToast()/showGearToast()/showPiggyToast().
+   * @param {('magnet'|'schild'|'turbo'|'muenzregen')} type - Eingesammelter Powerup-Typ.
+   * @param {{type: string, kmBonus: number}} result - Ergebnis von IdleCore.activatePowerupEffect().
+   * @returns {void}
+   */
+  function showPowerupToast(type, result) {
+    var container = document.getElementById('idleToastContainer');
+    if (!container) return;
+
+    var messages = {
+      magnet: '🧲 Magnet aktiviert — zieht Hindernisse aus dem Weg!',
+      schild: '🛡️ Schild aktiviert — blockt die nächste Kollision!',
+      turbo: '🚀 Turbo aktiviert — kurzer Speed- &amp; Ertragsboost!',
+      muenzregen: '💰 Münzregen — +' + formatKm(result && result.kmBonus ? result.kmBonus : 0) + ' km',
+    };
+
+    var toast = document.createElement('div');
+    toast.className = 'idle-toast';
+    toast.textContent = messages[type] || (POWERUP_NAMES[type] || 'Powerup') + ' eingesammelt';
+    container.appendChild(toast);
+
+    window.requestAnimationFrame(function () { toast.classList.add('is-visible'); });
+    setTimeout(function () {
+      toast.classList.remove('is-visible');
+      setTimeout(function () {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 400);
+    }, PART_TOAST_VISIBLE_MS);
+  }
+
+  /**
+   * Zeigt einen kurzen Toast dafür, dass ein Schild-Powerup GENAU EINE
+   * Kollision geblockt hat (siehe triggerShieldFeedback()).
+   * @returns {void}
+   */
+  function showPowerupBlockToast() {
+    var container = document.getElementById('idleToastContainer');
+    if (!container) return;
+    var toast = document.createElement('div');
+    toast.className = 'idle-toast';
+    toast.textContent = '🛡️ Schild hat eine Kollision geblockt!';
+    container.appendChild(toast);
+    window.requestAnimationFrame(function () { toast.classList.add('is-visible'); });
+    setTimeout(function () {
+      toast.classList.remove('is-visible');
+      setTimeout(function () {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 400);
+    }, PART_TOAST_VISIBLE_MS);
+  }
+
+  /**
+   * Lässt ein neues Powerup auf einer zufälligen Lane erscheinen (bei
+   * POWERUP_SPAWN_T Tiefen-Fortschritt — mittig auf der Strecke, gut
+   * erreichbar), für powerupVisibleSeconds() Sekunden klickbar. Nutzt
+   * dieselben Lane-Geometrie-Helfer (laneCenterX()/laneRowY()) wie die
+   * Hindernis-/Bike-Darstellung, umgerechnet auf %-Position innerhalb von
+   * #idleTrackWrap (identisches Overlay-Prinzip wie #idlePiggy).
+   * @param {('magnet'|'schild'|'turbo'|'muenzregen')} type - Zu spawnender Powerup-Typ.
+   * @returns {void}
+   */
+  function spawnPowerup(type) {
+    var el = document.getElementById('idlePowerup');
+    if (!el || !trackCanvas) return;
+
+    var lane = Math.floor(Math.random() * IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
+    var w = trackCanvas.clientWidth, h = trackCanvas.clientHeight;
+    var leftPct = w > 0 ? (laneCenterX(w, lane, POWERUP_SPAWN_T) / w) * 100 : 50;
+    var topPct = h > 0 ? (laneRowY(h, POWERUP_SPAWN_T) / h) * 100 : 50;
+
+    powerupState.active = true;
+    powerupState.type = type;
+    powerupState.elapsedSeconds = 0;
+    powerupState.visibleSeconds = IdleCore.powerupVisibleSeconds(Math.random);
+
+    el.style.left = leftPct + '%';
+    el.style.top = topPct + '%';
+    el.textContent = POWERUP_ICONS[type] || '❓';
+    el.className = 'idle-powerup is-visible idle-powerup-' + type;
+    el.setAttribute('aria-label', (POWERUP_NAMES[type] || 'Powerup') + ' einsammeln');
+    el.setAttribute('aria-hidden', 'false');
+    el.tabIndex = 0;
+  }
+
+  /**
+   * Lässt das aktuell sichtbare Powerup wieder verschwinden (unbeklickt
+   * abgelaufen ODER kurz nach dem Einsammeln-Effekt) und würfelt das
+   * Intervall bis zum nächsten Spawn-Versuch neu. Ein unbeklickt
+   * despawntes Powerup ist KEINE Strafe (identisches Muster zu despawnPiggy()).
+   * @returns {void}
+   */
+  function despawnPowerup() {
+    var el = document.getElementById('idlePowerup');
+    if (el) {
+      el.classList.remove('is-visible');
+      el.setAttribute('aria-hidden', 'true');
+      el.tabIndex = -1;
+    }
+    powerupState.active = false;
+    powerupState.type = null;
+    powerupTimerSeconds = IdleCore.nextPowerupIntervalSeconds(Math.random);
+  }
+
+  /**
+   * Sammelt das aktuell sichtbare Powerup ein: aktiviert dessen Effekt
+   * (IdleCore.activatePowerupEffect()), zeigt einen entsprechenden Toast +
+   * einen kurzen, dezenten "Eingesammelt"-Effekt (respektiert prefers-
+   * reduced-motion via CSS) und despawnt danach.
+   * @returns {void}
+   */
+  function collectPowerup() {
+    if (!powerupState.active) return;
+    var type = powerupState.type;
+    var el = document.getElementById('idlePowerup');
+
+    var result = IdleCore.activatePowerupEffect(state, type, Date.now());
+    ApiClient.saveIdleState(state);
+
+    if (el) el.classList.add('is-collected');
+    showPowerupToast(type, result);
+    if (type === 'muenzregen') renderAll();
+    checkIdleAchievements();
+
+    setTimeout(despawnPowerup, reducedMotion ? 0 : POWERUP_COLLECT_ANIM_MS);
+  }
+
+  /**
+   * Verdrahtet die Klick-/Tastatur-Interaktion (Enter/Leertaste) des
+   * Powerups (identisches Muster zu wirePiggyInteraction()).
+   * @returns {void}
+   */
+  function wirePowerupInteraction() {
+    var el = document.getElementById('idlePowerup');
+    if (!el) return;
+    el.addEventListener('click', collectPowerup);
+    el.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        collectPowerup();
+      }
+    });
+  }
+
+  /**
+   * EIN Game-Loop-Tick der Powerups: zählt entweder bis zum nächsten
+   * Spawn-VERSUCH herunter (bei Ablauf entscheidet IdleCore.
+   * rollPowerupDrop() — tuning-abhängig — OB und WELCHER Typ tatsächlich
+   * erscheint; kein Treffer = einfach das Intervall neu würfeln, KEINE
+   * Strafe), oder lässt das sichtbare Powerup weiterlaufen und despawnt
+   * es unbeklickt, sobald powerupVisibleSeconds() erreicht ist.
+   * @param {number} dtSeconds - Verstrichene Zeit seit dem letzten Frame (Sekunden, gedeckelt).
+   * @returns {void}
+   */
+  function tickPowerup(dtSeconds) {
+    if (!powerupState.active) {
+      powerupTimerSeconds -= dtSeconds;
+      if (powerupTimerSeconds <= 0) {
+        var type = IdleCore.rollPowerupDrop(Math.random, state);
+        if (type) {
+          spawnPowerup(type);
+        } else {
+          powerupTimerSeconds = IdleCore.nextPowerupIntervalSeconds(Math.random);
+        }
+      }
+      return;
+    }
+    powerupState.elapsedSeconds += dtSeconds;
+    if (powerupState.elapsedSeconds >= powerupState.visibleSeconds) {
+      despawnPowerup();
+    }
+  }
+
+  /* ============================================================
      STATISTIKEN — feat(idle-stats)
      ============================================================ */
 
@@ -2028,6 +2298,7 @@
     tickShift(clampedDt);
     tickBill(clampedDt);
     tickPiggy(clampedDt);
+    tickPowerup(clampedDt);
     updateComboBadge();
 
     window.requestAnimationFrame(tick);
@@ -2082,6 +2353,7 @@
     wireSeasonControls();
     wireBillPayButton();
     wirePiggyInteraction();
+    wirePowerupInteraction();
     wireLifecycleSave();
     window.requestAnimationFrame(tick);
   }

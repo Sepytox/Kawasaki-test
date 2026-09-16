@@ -232,6 +232,65 @@
               transform 220ms var(--ease-standard, ease);
 }
 
+/* ── Powerups (Teil 2) — feat(powerups) ──────────────────────────────
+   DOM-Overlay über der Strecke, IDENTISCHES Basis-Muster zu .idle-piggy
+   (nur lane-gebunden statt frei-%-positioniert, siehe idle.js
+   spawnPowerup()) — bewusst KEINE neuen Hex-/Akzentfarben, die 4 Typen
+   unterscheiden sich rein über das Emoji (idle.js POWERUP_ICONS), analog
+   zu den bereits nur-per-Emoji unterschiedenen Bike-Kategorien
+   (CATEGORY_ICONS). */
+.idle-powerup {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  margin-left: -24px;
+  margin-top: -24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 1.4em;
+  line-height: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full, 999px);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  z-index: 5;
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+  transition: opacity var(--dur-base, 0.25s) var(--ease-spring, ease),
+              transform var(--dur-base, 0.25s) var(--ease-spring, ease),
+              box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.idle-powerup.is-visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+.idle-powerup:hover {
+  box-shadow: var(--shadow-glow, var(--shadow-md));
+  transform: scale(1.06);
+}
+/* Kurzer, dezenter "Eingesammelt"-Effekt beim Klick (identisches Muster
+   zu .idle-piggy.is-smashed). */
+.idle-powerup.is-collected {
+  opacity: 0;
+  transform: scale(1.35) rotate(-10deg);
+  pointer-events: none;
+  transition: opacity 220ms var(--ease-standard, ease),
+              transform 220ms var(--ease-standard, ease);
+}
+
+/* Kurzer, POSITIVER Schild-Block-Flash auf der Strecke (siehe idle.js
+   triggerShieldFeedback()) — statischer Akzent-Rahmen/Glow (KEINE
+   @keyframes, daher motion-safe wie .idle-track-wrap.is-collision). */
+.idle-track-wrap.is-shielded {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
 /* ── Tacho (Canvas) ──────────────────────────────────────────────── */
 .idle-tacho-wrap {
   aspect-ratio: 16 / 5;
@@ -1008,4 +1067,7 @@
   .idle-insolvency-notice { transition: none; }
   .idle-piggy,
   .idle-piggy.is-smashed { transition: none; transform: none; }
+  .idle-powerup,
+  .idle-powerup.is-collected { transition: none; transform: none; }
+  /* is-shielded ist ohnehin nur eine statische Regel (kein @keyframes) — nichts zu deaktivieren. */
 }
