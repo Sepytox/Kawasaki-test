@@ -75,6 +75,57 @@
  * für den nächsten Bike-Kauf (TUNING_GATE_THRESHOLDS, siehe
  * getNextBikeToBuy()) — das aktuelle Bike muss zusätzlich zu genug km ein
  * Mindest-Tuning-Level erreicht haben.
+ *
+ * Teil 3 (IDLE_STATE_VERSION 5) macht den bisher NIEMALS scheiternden
+ * Runner zu einem echten CRASH-BASED RUN — ZWEI GETRENNTE Schichten:
+ * die PROGRESS-Schicht (km/totalKmEarned/Bikes/Tuning/Saison/Gear/
+ * Achievements — bleibt exakt wie bisher, NIEMALS direkt von einem
+ * Crash berührt) und die neue, transiente RUN-Schicht (state.run — Live-
+ * Score/Run-Coins/Combo/Distanz EINES laufenden Runs, siehe startRun()/
+ * endRun()/restartRun()). Eine Kollision mit einem Hindernis (jetzt DREI
+ * Typen: 'side'/'lowBar'/'highBarrier', siehe detectRunCollision()) OHNE
+ * die passende Ausweich-Aktion (Lane-Wechsel/Sprung/Ducken) UND ohne
+ * aktiven Schild beendet den Run (endRun()) — GENAU DANN, und NUR dann,
+ * werden die im Run gesammelten Coins EINMALIG über creditKm() der
+ * PROGRESS-Schicht gutgeschrieben (runCoinsToKm()); ein Highscore
+ * (state.runHighscore) sowie Lebenszeit-Statistiken (state.runStats)
+ * werden PERMANENT fortgeschrieben. Der bisherige kontinuierliche km-
+ * Drip aus runnerEarnMultiplier() (Teil 2) bleibt als reine Funktion
+ * unangetastet (weiterhin getestet), wird aber vom Game-Loop (idle.js)
+ * für den AKTIVEN Run nicht mehr aufgerufen — siehe tickRunEconomy():
+ * aktives Fahren sammelt Score/Coins nur noch im Run (gebankt erst bei
+ * einem Crash), der Auto-Pilot (Idle-Aktivität, siehe
+ * runnerActivityState()) bankt dagegen kontinuierlich, aber REDUZIERT
+ * (RUN_AUTOPILOT_CREDIT_MULTIPLIER) direkt in km — der Auto-Pilot
+ * evaluiert (identisch zu Teil 1) grundsätzlich KEINE Kollision und
+ * kann daher provably NIE crashen. jumpRunner()/duckRunner() ergänzen
+ * steerRunnerLane() um zeitlich befristete state.runner.jumpUntil/
+ * duckUntil-Fenster (siehe isJumping()/isDucking()).
+ *
+ * Teil 4 (IDLE_STATE_VERSION 6) ergänzt die RUN-FEEL-Schicht auf dem
+ * Crash-Run aus Teil 3: einen live SCORE, der distanzbasiert UND mit dem
+ * Near-Miss-Combo-Multiplikator wächst (siehe runScoreForDistance()/
+ * runComboMultiplier()), Münz-TRAILS als lane-gebundene Sammel-Muster
+ * statt eines rein abstrakten Coin-Zuwachses (siehe generateCoinTrail()/
+ * collectRunCoin()), einen NEAR-MISS-Bonus + Combo (siehe isNearMiss()/
+ * registerNearMiss() — ein echter Crash setzt die Combo über endRun()
+ * weiterhin auf 0 zurück, ein Schild-Block NICHT), den Powerup-Roster
+ * MAGNET/SCHILD/TURBO/SCORE-X2 (ersetzt 'muenzregen' 1:1 im selben
+ * Gewichtungs-Slot, siehe POWERUP_TYPE_WEIGHTS — Magnet zieht jetzt
+ * zusätzlich nahe Münzen ein, Turbo lässt 'lowBar'-Hindernisse OHNE
+ * Sprung passieren, siehe obstacleCausesCrash()) sowie eine
+ * DISTANZ-abhängige Schwierigkeitskurve (siehe runDifficultyDensity()/
+ * runDifficultyWaveSize()) — rein über HINDERNIS-DICHTE/Muster-Komplexität,
+ * NIEMALS über die Vorlaufzeit (runnerLeadSeconds()' 0.6s-Boden bleibt
+ * eine reine Funktion von speedPct, siehe Regressionstest §22).
+ *
+ * balance(powerups) (Teil C, Spec-Angleichung): Magnet zieht AUSSCHLIESSLICH
+ * nahe Münzen automatisch ein — der in Teil 4 zusätzlich eingeführte
+ * Hindernis-Ausweich-Zweig (Kollisionsprüfung ab powerupMagnetRangeT()
+ * aussetzen) wurde wieder entfernt, da er in einem Crash-basierten Run
+ * effektiv eine Crash-Immunität wäre und damit ausserhalb der Spezifikation
+ * liegt ("zieht nahe Coins automatisch ein"). Schild/Turbo/Score-x2
+ * unverändert.
  */
 'use strict';
 
@@ -82,7 +133,7 @@
 var IDLE_STATE_KEY = 'vroooom_idle_state';
 
 /** Aktuelle Zustands-Versionsnummer (für migrateState). */
-var IDLE_STATE_VERSION = 4;
+var IDLE_STATE_VERSION = 6;
 
 /**
  * IDLE_BALANCE — zentrale Balancing-Konstanten für die gesamte Idle-Economy.
@@ -358,9 +409,10 @@ var IDLE_BALANCE = {
    * gewichtet über POWERUP_TYPE_WEIGHTS) WELCHER der 4 Typen. Ein
    * verpasstes/unbeklickt abgelaufenes Powerup hat KEINE Strafe
    * (identisches Muster zu Sparschwein/Schaltpunkt-Leiste). Effekte:
-   *   - Magnet: zieht nahegelegene Hindernisse aus dem Weg (Kollisions-
-   *     prüfung wird für Hindernisse ab powerupMagnetRangeT() ausgesetzt,
-   *     siehe idle.js tickRunner()) für powerupMagnetDurationSeconds().
+   *   - Magnet: zieht nahegelegene MÜNZEN automatisch ein (ab
+   *     powerupMagnetRangeT() weich Richtung Bike-Lane gezogen, siehe
+   *     idle.js tickRunner()) für powerupMagnetDurationSeconds() —
+   *     balance(powerups) Teil C: wirkt NICHT auf Hindernisse.
    *   - Schild: blockt GENAU EINE Kollision (state.powerups.
    *     shieldExpiresAt, konsumiert von consumeShield() bei der nächsten
    *     Kollision statt eines applyCollisionMalus()) — läuft ansonsten
@@ -369,10 +421,15 @@ var IDLE_BALANCE = {
    *     BOOST_PCT, additiv auf geschwindigkeitPct, siehe idle.js
    *     tickRunner() — NIEMALS die globale RUNNER_SPEED_CAP_PCT-Konstante
    *     selbst mutiert) UND den Ertrag (POWERUP_TURBO_EARN_MULTIPLIER,
-   *     siehe runnerEarnMultiplier()) für powerupTurboDurationSeconds() an.
-   *   - Münzregen: sofortiger km-Bonus (powerupCoinRainReward(), analog
-   *     zu piggybankReward() — ein Vielfaches von activeEarn()).
-   * Persistenz: NUR die drei *ExpiresAt-Zeitstempel + der Lebenszeit-
+   *     siehe runnerEarnMultiplier()) für powerupTurboDurationSeconds()
+   *     an UND lässt (Teil 4) 'lowBar'-Hindernisse OHNE Sprung passieren
+   *     (siehe obstacleCausesCrash()).
+   *   - Score-x2 (Teil 4, ersetzt 'muenzregen' im selben Gewichtungs-
+   *     Slot): verdoppelt für powerupScoreX2DurationSeconds() den
+   *     RUN-Score-Zuwachs (POWERUP_SCORE_X2_MULTIPLIER, siehe
+   *     scoreX2Active()/tickRunEconomy()) — wirkt AUSSCHLIESSLICH auf
+   *     state.run.score, NIEMALS auf km/die PROGRESS-Schicht.
+   * Persistenz: NUR die vier *ExpiresAt-Zeitstempel + der Lebenszeit-
    * Zähler `collected` leben in state.powerups (IDLE_STATE_VERSION 3→4,
    * siehe migratePowerups()) — das aktuell SICHTBARE, noch nicht
    * eingesammelte Powerup selbst ist bewusst NICHT persistiert
@@ -389,8 +446,8 @@ var IDLE_BALANCE = {
   POWERUP_BASE_SPAWN_CHANCE: 0.55,
   /** Zusätzliche Spawn-Wahrscheinlichkeit je Tuning-Level des aktuellen Bikes (Tuning-Perk, siehe powerupSpawnChance()), gedeckelt auf 1. */
   POWERUP_SPAWN_CHANCE_PER_TUNING_LEVEL: 0.015,
-  /** Relative Gewichtung der 4 Powerup-Typen bei einem Spawn (siehe rollPowerupType()); müssen nicht auf 100 summieren. */
-  POWERUP_TYPE_WEIGHTS: { magnet: 28, schild: 22, turbo: 22, muenzregen: 28 },
+  /** Relative Gewichtung der 4 Powerup-Typen bei einem Spawn (siehe rollPowerupType()); müssen nicht auf 100 summieren. Teil 4: 'muenzregen' im selben Gewichtungs-Slot durch 'scoreX2' ersetzt. */
+  POWERUP_TYPE_WEIGHTS: { magnet: 28, schild: 22, turbo: 22, scoreX2: 28 },
   /** Basis-Wirkdauer (Sekunden) des Magnet-Effekts (siehe powerupMagnetDurationSeconds()). */
   POWERUP_MAGNET_BASE_DURATION_SECONDS: 5,
   /** Zusätzliche Magnet-Wirkdauer (Sekunden) je Tuning-Level (Tuning-Perk). */
@@ -413,8 +470,12 @@ var IDLE_BALANCE = {
   POWERUP_TURBO_SPEED_BOOST_PCT: 20,
   /** Zusätzlicher Ertrags-Multiplikator während der Turbo-Effekt aktiv ist (siehe runnerEarnMultiplier()). */
   POWERUP_TURBO_EARN_MULTIPLIER: 1.5,
-  /** Vielfaches von activeEarn(state), das ein eingesammelter Münzregen als sofortigen km-Bonus gewährt (analog PIGGY_KM_BONUS_MULTIPLIER, siehe powerupCoinRainReward()). */
-  POWERUP_COINRAIN_KM_MULTIPLIER: 8,
+  /** Basis-Wirkdauer (Sekunden) des Score-x2-Effekts (Teil 4, ersetzt 'muenzregen', siehe powerupScoreX2DurationSeconds()). */
+  POWERUP_SCORE_X2_BASE_DURATION_SECONDS: 6,
+  /** Zusätzliche Score-x2-Wirkdauer (Sekunden) je Tuning-Level (Tuning-Perk). */
+  POWERUP_SCORE_X2_DURATION_PER_LEVEL_SECONDS: 0.2,
+  /** Score-Multiplikator, solange der Score-x2-Effekt aktiv ist (siehe scoreX2Active()/tickRunEconomy()) — wirkt NUR auf state.run.score, NIE auf km. */
+  POWERUP_SCORE_X2_MULTIPLIER: 2,
 
   /* ── Teil 2: TUNING-PERKS — balance(tuning) ────────────────────────
    * Tuning-Level gewähren jetzt NEBEN dem Ertrags-Bonus (ERTRAG_BONUS_
@@ -439,6 +500,60 @@ var IDLE_BALANCE = {
    * 1000SX, Index 9) — siehe Tabelle unten. */
   /** Tuning-Gate-Tabelle (siehe getNextBikeToBuy()): Index i = Mindest-Tuning-Level des zuletzt besessenen Bikes, um Bike i zu kaufen. */
   TUNING_GATE_THRESHOLDS: [0, 0, 0, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10],
+
+  /* ── Teil 3: CRASH-BASED RUN — feat(run)/feat(controls)/feat(obstacles)/
+   * feat(crash) ─────────────────────────────────────────────────────
+   * Macht den Runner zu einem echten Subway-Surfers-artigen Lauf: ein
+   * Treffer OHNE die passende Ausweich-Aktion beendet den Run (siehe
+   * detectRunCollision()/endRun()) statt nur eines visuellen Malus. */
+  /** Dauer (ms) eines Sprungs (siehe jumpRunner()/isJumping()) — solange "airborne", macht ein 'lowBar'-Hindernis KEINEN Treffer. */
+  RUNNER_JUMP_DURATION_MS: 550,
+  /** Dauer (ms) eines Duckens (siehe duckRunner()/isDucking()) — solange "geduckt", macht ein 'highBarrier'-Hindernis KEINEN Treffer. */
+  RUNNER_DUCK_DURATION_MS: 650,
+  /** Relative Gewichtung der drei Hindernis-Typen bei einem Spawn (siehe rollObstacleType()) — 'side' (Lane wechseln), 'lowBar' (springen), 'highBarrier' (ducken); müssen nicht auf 100 summieren. */
+  RUNNER_OBSTACLE_TYPE_WEIGHTS: { side: 40, lowBar: 30, highBarrier: 30 },
+  /** Score-Zuwachs je zurückgelegter Distanz-Einheit (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*, siehe runScoreForDistance()) — reiner "wie gut lief dieser Run"-Wert, KEINE km-Wirkung. */
+  RUN_SCORE_PER_DISTANCE_UNIT: 0.5,
+  /** Run-Coin-Zuwachs je zurückgelegter Distanz-Einheit (siehe runCoinsForDistance()) — sammelt sich in state.run.coins, wird ERST bei endRun() (Crash) in km umgewandelt (aktiver Run) bzw. kontinuierlich reduziert gutgeschrieben (Auto-Pilot, siehe RUN_AUTOPILOT_CREDIT_MULTIPLIER). */
+  RUN_COIN_PER_DISTANCE_UNIT: 0.03,
+  /** km-Gegenwert EINES Run-Coins (siehe runCoinsToKm()) — die EINE Umrechnung, die endRun() über creditKm() anwendet. */
+  RUN_COIN_KM_VALUE: 1,
+  /** Reduktions-Multiplikator (< 1) auf den Auto-Piloten-km-Ertrag (siehe tickRunEconomy()) — der Auto-Pilot crasht NIE (siehe Teil 1 activity==='idle'-Gate), bankt seinen Ertrag daher kontinuierlich statt bei einem Crash, aber bewusst reduziert gegenüber aktivem Spiel (analog RUNNER_EARN_IDLE_MULTIPLIER aus Teil 2). */
+  RUN_AUTOPILOT_CREDIT_MULTIPLIER: 0.5,
+
+  /* ── Teil 4: RUN-FEEL — Score/Near-Miss-Combo/Münz-Trails/Schwierigkeit —
+   * feat(score)/feat(coins)/feat(nearmiss)/feat(powerups)/feat(difficulty)
+   * ─────────────────────────────────────────────────────────────────── */
+  /** Lane-Abstand (|Hindernis-Lane − Bike-Lane|), bei dem ein an der HIT-Zone vorbeigezogenes 'side'-Hindernis als Near-Miss gilt (siehe isNearMiss()). */
+  RUNNER_NEAR_MISS_LANE_GAP: 1,
+  /** Fixer Score-Bonus je erkanntem Near-Miss (siehe registerNearMiss()) — distanzunabhängig, kommt zum laufenden Distanz-Score hinzu. */
+  RUN_NEAR_MISS_SCORE_BONUS: 25,
+  /** Basis-Multiplikator der Run-Combo bei Combo 1 (siehe runComboMultiplier(), mirrors COMBO_MULTIPLIER_BASE). */
+  RUN_COMBO_MULTIPLIER_BASE: 2,
+  /** Zusätzlicher Multiplikator je weiterem Combo-Punkt (siehe runComboMultiplier()). */
+  RUN_COMBO_MULTIPLIER_STEP: 0.5,
+  /** Deckel des Run-Combo-Multiplikators (siehe runComboMultiplier()) — ab hier steigt er trotz weiterer Near-Misses nicht mehr. */
+  RUN_COMBO_MULTIPLIER_MAX: 5,
+  /** Anzahl Münzen je gespawntem Münz-Trail (Linie/Bogen, siehe generateCoinTrail()). */
+  RUN_COIN_TRAIL_LENGTH: 5,
+  /** Tiefen-Fortschritt-Abstand (t) zwischen zwei Münzen desselben Trails (siehe generateCoinTrail()) — bestimmt, wie "gestreckt" der Trail auf der Strecke wirkt. */
+  RUN_COIN_TRAIL_SPACING_T: 0.05,
+  /** Wahrscheinlichkeit (0–1), dass ein gespawnter Trail ein über Lanes wandernder BOGEN statt einer geraden LINIE ist (siehe generateCoinTrail()). */
+  RUN_COIN_TRAIL_ARC_CHANCE: 0.4,
+  /** Run-Coin-Zuwachs je eingesammelter Trail-Münze (siehe collectRunCoin()) — separat vom distanzbasierten Zuwachs aus runCoinsForDistance(), beide fliessen in denselben state.run.coins-Pool. */
+  RUN_COIN_TRAIL_PICKUP_VALUE: 1,
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Münz-Trail-Spawns — untere Grenze (siehe nextCoinTrailIntervalSeconds()). */
+  RUN_COIN_TRAIL_INTERVAL_MIN_SECONDS: 5,
+  /** Zufälliges Intervall (Sekunden) zwischen zwei Münz-Trail-Spawns — obere Grenze. */
+  RUN_COIN_TRAIL_INTERVAL_MAX_SECONDS: 9,
+  /** In-Run-Distanz (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*), bei der runDifficultyDensity() ihren Deckel (RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER) erreicht. */
+  RUN_DIFFICULTY_DISTANCE_SCALE_UNITS: 4000,
+  /** Zusätzlicher Dichte-Multiplikator (auf obstacleDensity() draufmultipliziert, siehe runDifficultyDensity()), den ein Run bei RUN_DIFFICULTY_DISTANCE_SCALE_UNITS Distanz erreicht — wirkt NUR auf die Spawn-Dichte/-Muster, NIEMALS auf runnerLeadSeconds()' 0.6s-Boden (siehe Regressionstest §22). */
+  RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER: 1.8,
+  /** In-Run-Distanz, ab der runDifficultyWaveSize() eine zweite, kombinierte Hindernis-Lane pro Welle spawnt (siehe runDifficultyPatternTier()). */
+  RUN_DIFFICULTY_PATTERN_TIER1_UNITS: 2000,
+  /** In-Run-Distanz, ab der runDifficultyWaveSize() eine dritte, kombinierte Hindernis-Lane pro Welle spawnt (immer mindestens eine Lane frei, siehe runDifficultyWaveSize()). */
+  RUN_DIFFICULTY_PATTERN_TIER2_UNITS: 5000,
 };
 
 /**
@@ -800,22 +915,62 @@ function createInitialState() {
       lane: Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
       lastInputAt: null,
       collisionMalusExpiresAt: null,
+      /* ── Teil 3: Sprung/Ducken-Fenster (feat(controls)) — Zeitstempel
+       * (ms), bis zu denen isJumping()/isDucking() true liefern (null =
+       * inaktiv). Siehe jumpRunner()/duckRunner(). */
+      jumpUntil: null,
+      duckUntil: null,
     },
 
     /* ── Teil 2: POWERUPS — 4 lane-gebundene Collectibles ────────────
      * collected = Lebenszeit-Zähler ALLER eingesammelten Powerups (jeden
-     * Typs), überlebt Saison-Resets (analog piggy.smashedCount). Die drei
+     * Typs), überlebt Saison-Resets (analog piggy.smashedCount). Die vier
      * *ExpiresAt-Felder sind Zeitstempel (ms), bis zu denen der jeweilige
      * Effekt aktiv ist (null = inaktiv) — siehe magnetActive()/
-     * turboActive()/consumeShield(). Das aktuell sichtbare, noch nicht
-     * eingesammelte Powerup selbst ist bewusst NICHT persistiert
-     * (transienter Laufzeit-Zustand in idle.js, identisches Muster zu
-     * piggyState/runnerObstacles). */
+     * turboActive()/consumeShield()/scoreX2Active() (Teil 4, ersetzt das
+     * frühere 'muenzregen' im selben Gewichtungs-Slot). Das aktuell
+     * sichtbare, noch nicht eingesammelte Powerup selbst ist bewusst
+     * NICHT persistiert (transienter Laufzeit-Zustand in idle.js,
+     * identisches Muster zu piggyState/runnerObstacles). */
     powerups: {
       collected: 0,
       magnetExpiresAt: null,
       turboExpiresAt: null,
       shieldExpiresAt: null,
+      scoreX2ExpiresAt: null,
+    },
+
+    /* ── Teil 3: CRASH-BASED RUN — feat(run) ─────────────────────────
+     * state.run: die LIVE-Schicht EINES laufenden Runs — score/coins/
+     * combo/distanceUnits resetten bei JEDEM startRun()/restartRun() auf
+     * 0 (identisches "frischer Lauf"-Prinzip wie runnerObstacles, siehe
+     * Datei-Docblock Teil 3). phase ist 'ready' (noch nie gestartet),
+     * 'running' (läuft, kollisionsfähig) oder 'crashed' (Run beendet,
+     * Zusammenfassung wird angezeigt, siehe idle.js). speedPct ist die
+     * beim letzten startRun() aus dem aktuellen Bike/Tuning abgeleitete
+     * Basis-Geschwindigkeit (deriveBikeStats().geschwindigkeitPct) — läuft
+     * weiterhin durch dieselbe runnerScrollSpeed()/runnerLeadSeconds()-
+     * Pipeline wie zuvor (0.6s-Vorlaufzeit-Boden unverändert garantiert).
+     * combo/comboMult sind für Phase B (Near-Miss-Bonus) vorbereitet,
+     * in Phase A bewusst inert (bleiben 0/1). */
+    run: {
+      phase: 'ready',
+      score: 0,
+      coins: 0,
+      combo: 0,
+      comboMult: 1,
+      speedPct: 0,
+      distanceUnits: 0,
+      startedAt: null,
+    },
+    /** Bester je erreichter Run-Score (Lebenszeit, überlebt Saison-Resets) — siehe endRun(). */
+    runHighscore: 0,
+    /** Lebenszeit-Aggregat-Statistiken über alle Runs (siehe endRun()) — additiv, sinkt nie. */
+    runStats: {
+      totalRuns: 0,
+      totalCoinsCollected: 0,
+      totalCrashes: 0,
+      bestComboEver: 0,
     },
   };
 }
@@ -919,6 +1074,63 @@ function migrateRunner(raw, fresh) {
     lane: laneValid ? rr.lane : fresh.runner.lane,
     lastInputAt: typeof rr.lastInputAt === 'number' ? rr.lastInputAt : fresh.runner.lastInputAt,
     collisionMalusExpiresAt: typeof rr.collisionMalusExpiresAt === 'number' ? rr.collisionMalusExpiresAt : fresh.runner.collisionMalusExpiresAt,
+    /* Teil 3 (v4→v5): u. a. für v1-v4-Saves, die diese Felder noch gar
+     * nicht kennen — defensiv auf fresh.runner.* (null) zurückfallen. */
+    jumpUntil: typeof rr.jumpUntil === 'number' ? rr.jumpUntil : fresh.runner.jumpUntil,
+    duckUntil: typeof rr.duckUntil === 'number' ? rr.duckUntil : fresh.runner.duckUntil,
+  };
+}
+
+/**
+ * Migriert das run-Feld (Teil 3: Live-Schicht EINES Runs — Score/Coins/
+ * Combo/Distanz/Phase) defensiv — u. a. für v1-v4-Saves (vor
+ * feat(run)), die dieses Feld noch gar nicht kennen (IDLE_STATE_VERSION
+ * 4→5). Ein ungültiger `phase`-Wert fällt auf 'ready' zurück (niemals
+ * 'running' aus einem ungeprüften Rohwert übernehmen — ein wiederhergestellter
+ * Run würde sonst ohne einen erneuten startRun() als kollisionsfähig gelten).
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges run-Objekt.
+ */
+function migrateRun(raw, fresh) {
+  var rr = raw && raw.run && typeof raw.run === 'object' ? raw.run : {};
+  var validPhases = { ready: true, running: true, crashed: true };
+  return {
+    phase: typeof rr.phase === 'string' && validPhases[rr.phase] ? rr.phase : fresh.run.phase,
+    score: typeof rr.score === 'number' && rr.score >= 0 ? rr.score : fresh.run.score,
+    coins: typeof rr.coins === 'number' && rr.coins >= 0 ? rr.coins : fresh.run.coins,
+    combo: typeof rr.combo === 'number' && rr.combo >= 0 ? rr.combo : fresh.run.combo,
+    comboMult: typeof rr.comboMult === 'number' && rr.comboMult >= 1 ? rr.comboMult : fresh.run.comboMult,
+    speedPct: typeof rr.speedPct === 'number' && rr.speedPct >= 0 ? rr.speedPct : fresh.run.speedPct,
+    distanceUnits: typeof rr.distanceUnits === 'number' && rr.distanceUnits >= 0 ? rr.distanceUnits : fresh.run.distanceUnits,
+    startedAt: typeof rr.startedAt === 'number' ? rr.startedAt : fresh.run.startedAt,
+  };
+}
+
+/**
+ * Migriert runHighscore (Teil 3: bester je erreichter Run-Score) defensiv.
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {number} Gültiger runHighscore-Wert (>= 0).
+ */
+function migrateRunHighscore(raw, fresh) {
+  return typeof raw.runHighscore === 'number' && raw.runHighscore >= 0 ? raw.runHighscore : fresh.runHighscore;
+}
+
+/**
+ * Migriert das runStats-Feld (Teil 3: Lebenszeit-Aggregat-Statistiken über
+ * alle Runs) defensiv — u. a. für v1-v4-Saves (vor feat(run)).
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges runStats-Objekt.
+ */
+function migrateRunStats(raw, fresh) {
+  var rs = raw && raw.runStats && typeof raw.runStats === 'object' ? raw.runStats : {};
+  return {
+    totalRuns: typeof rs.totalRuns === 'number' && rs.totalRuns >= 0 ? rs.totalRuns : fresh.runStats.totalRuns,
+    totalCoinsCollected: typeof rs.totalCoinsCollected === 'number' && rs.totalCoinsCollected >= 0 ? rs.totalCoinsCollected : fresh.runStats.totalCoinsCollected,
+    totalCrashes: typeof rs.totalCrashes === 'number' && rs.totalCrashes >= 0 ? rs.totalCrashes : fresh.runStats.totalCrashes,
+    bestComboEver: typeof rs.bestComboEver === 'number' && rs.bestComboEver >= 0 ? rs.bestComboEver : fresh.runStats.bestComboEver,
   };
 }
 
@@ -941,6 +1153,9 @@ function migratePowerups(raw, fresh) {
     magnetExpiresAt: typeof rp.magnetExpiresAt === 'number' ? rp.magnetExpiresAt : fresh.powerups.magnetExpiresAt,
     turboExpiresAt: typeof rp.turboExpiresAt === 'number' ? rp.turboExpiresAt : fresh.powerups.turboExpiresAt,
     shieldExpiresAt: typeof rp.shieldExpiresAt === 'number' ? rp.shieldExpiresAt : fresh.powerups.shieldExpiresAt,
+    /* Teil 4 (v5→v6): für Saves vor feat(powerups)-Score-x2, die dieses
+     * Feld noch gar nicht kennen — defensiv auf fresh.powerups.* (null) zurückfallen. */
+    scoreX2ExpiresAt: typeof rp.scoreX2ExpiresAt === 'number' ? rp.scoreX2ExpiresAt : fresh.powerups.scoreX2ExpiresAt,
   };
 }
 
@@ -1013,6 +1228,9 @@ function migrateState(raw) {
     piggy: migratePiggy(raw, fresh),
     runner: migrateRunner(raw, fresh),
     powerups: migratePowerups(raw, fresh),
+    run: migrateRun(raw, fresh),
+    runHighscore: migrateRunHighscore(raw, fresh),
+    runStats: migrateRunStats(raw, fresh),
   };
 
   if (state.ownedBikeIds.length === 0) state.ownedBikeIds = fresh.ownedBikeIds.slice();
@@ -2235,16 +2453,24 @@ function obstacleDensity(speedPct) {
  * Hindernis, skaliert mit obstacleDensity(speedPct) (höhere Dichte →
  * kürzeres Intervall) PLUS einem zufälligen Jitter-Faktor (verhindert
  * einen metronomartig gleichmässigen Rhythmus — identisches Prinzip zu
- * nextPiggyIntervalSeconds()/nextShiftIntervalSeconds()). Zufälligkeit
- * wird als Parameter übergeben, damit die Funktion deterministisch
- * testbar bleibt.
+ * nextPiggyIntervalSeconds()/nextShiftIntervalSeconds()). Teil 4: ein
+ * optionaler distanceUnits-Parameter multipliziert die Dichte zusätzlich
+ * mit runDifficultyDensity(distanceUnits) — die IN-RUN-Schwierigkeitskurve
+ * wirkt dadurch NUR auf die Spawn-DICHTE (kürzere Intervalle), NIEMALS
+ * auf runnerLeadSeconds()' 0.6s-Boden (der ist eine reine Funktion von
+ * speedPct, siehe Regressionstest §22) — ausgelassen/undefiniert verhält
+ * sich wie distanceUnits=0 (Multiplikator 1, unverändertes Verhalten,
+ * rückwärtskompatibel zu bestehenden Aufrufen/Tests). Zufälligkeit wird
+ * als Parameter übergeben, damit die Funktion deterministisch testbar
+ * bleibt.
  * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
  * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @param {number} [distanceUnits] - Bereits zurückgelegte In-Run-Distanz (Teil 4, Schwierigkeitskurve); Standard 0.
  * @returns {number} Sekunden bis zum nächsten Hindernis (> 0).
  */
-function nextObstacleSpawnIntervalSeconds(speedPct, randomFn) {
+function nextObstacleSpawnIntervalSeconds(speedPct, randomFn, distanceUnits) {
   var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
-  var density = obstacleDensity(speedPct);
+  var density = obstacleDensity(speedPct) * runDifficultyDensity(distanceUnits);
   var base = density > 0 ? IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS / density : IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS;
   var jitterMin = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MIN;
   var jitterMax = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MAX;
@@ -2333,7 +2559,7 @@ function runnerEarnMultiplier(state, nowMs) {
  */
 function ensurePowerupState(state) {
   if (!state.powerups || typeof state.powerups !== 'object') {
-    state.powerups = { collected: 0, magnetExpiresAt: null, turboExpiresAt: null, shieldExpiresAt: null };
+    state.powerups = { collected: 0, magnetExpiresAt: null, turboExpiresAt: null, shieldExpiresAt: null, scoreX2ExpiresAt: null };
   }
 }
 
@@ -2389,7 +2615,7 @@ function powerupSpawnChance(state) {
  * gewichtete Auswahl aus einem {Schlüssel: Gewicht}-Objekt exakt dasselbe
  * Problem ist wie eine Seltenheitsstufen-Auswahl. Reine Funktion.
  * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
- * @returns {('magnet'|'schild'|'turbo'|'muenzregen')} Gewählter Powerup-Typ.
+ * @returns {('magnet'|'schild'|'turbo'|'scoreX2')} Gewählter Powerup-Typ.
  */
 function rollPowerupType(rng) {
   return pickWeightedRarity(typeof rng === 'function' ? rng : Math.random, IDLE_BALANCE.POWERUP_TYPE_WEIGHTS);
@@ -2403,7 +2629,7 @@ function rollPowerupType(rng) {
  * "kein Drop"-Ergebnis ist KEINE Strafe (siehe idle.js tickPowerup()).
  * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
  * @param {Object} [state] - Zentraler Idle-Zustand (für den tuning-abhängigen powerupSpawnChance()-Bonus).
- * @returns {('magnet'|'schild'|'turbo'|'muenzregen'|null)} Gewählter Typ, oder null (kein Spawn).
+ * @returns {('magnet'|'schild'|'turbo'|'scoreX2'|null)} Gewählter Typ, oder null (kein Spawn).
  */
 function rollPowerupDrop(rng, state) {
   var rnd = typeof rng === 'function' ? rng : Math.random;
@@ -2467,6 +2693,21 @@ function consumeShield(state, nowMs) {
 }
 
 /**
+ * Liefert true, solange der Score-x2-Effekt gerade aktiv ist (Teil 4,
+ * ersetzt 'muenzregen' im selben Gewichtungs-Slot, siehe state.powerups.
+ * scoreX2ExpiresAt/activatePowerupEffect()) — wirkt AUSSCHLIESSLICH auf
+ * state.run.score (siehe tickRunEconomy()), NIEMALS auf km/die PROGRESS-
+ * Schicht. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls der Score-x2-Effekt aktiv ist.
+ */
+function scoreX2Active(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  return !!(state && state.powerups && typeof state.powerups.scoreX2ExpiresAt === 'number' && now < state.powerups.scoreX2ExpiresAt);
+}
+
+/**
  * TUNING-PERK "längere Magnet-Wirkdauer": berechnet die Wirkdauer
  * (Sekunden) des Magnet-Effekts für das AKTUELL gefahrene Bike —
  * IDLE_BALANCE.POWERUP_MAGNET_BASE_DURATION_SECONDS plus einen Bonus je
@@ -2521,32 +2762,32 @@ function powerupTurboDurationSeconds(state) {
 }
 
 /**
- * Berechnet den sofortigen km-Bonus eines eingesammelten Münzregens: ein
- * Vielfaches von activeEarn(state) (IDLE_BALANCE.POWERUP_COINRAIN_KM_
- * MULTIPLIER), skaliert dadurch automatisch mit Bike/Tuning — identisches
- * Prinzip zu piggybankReward(). Reine Funktion — mutiert state NICHT.
+ * TUNING-PERK "längere Score-x2-Wirkdauer" (Teil 4): berechnet die
+ * Wirkdauer (Sekunden) des Score-x2-Effekts für das AKTUELL gefahrene
+ * Bike. Reine Funktion.
  * @param {Object} state - Zentraler Idle-Zustand.
- * @returns {number} km-Bonus (>= 0).
+ * @returns {number} Wirkdauer in Sekunden (> 0).
  */
-function powerupCoinRainReward(state) {
-  return Math.round(activeEarn(state) * IDLE_BALANCE.POWERUP_COINRAIN_KM_MULTIPLIER);
+function powerupScoreX2DurationSeconds(state) {
+  var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
+  return IDLE_BALANCE.POWERUP_SCORE_X2_BASE_DURATION_SECONDS + level * IDLE_BALANCE.POWERUP_SCORE_X2_DURATION_PER_LEVEL_SECONDS;
 }
 
 /**
- * Aktiviert den Effekt eines eingesammelten Powerups (Magnet/Schild/
- * Turbo setzen ihren jeweiligen *ExpiresAt-Zeitstempel via ihrer Tuning-
- * abhängigen Wirkdauer-Funktion; Münzregen schreibt sofort einen km-Bonus
- * gut, siehe powerupCoinRainReward()/creditKm()). Zählt IMMER
+ * Aktiviert den Effekt eines eingesammelten Powerups — Magnet/Schild/
+ * Turbo/Score-x2 setzen ALLE ihren jeweiligen *ExpiresAt-Zeitstempel via
+ * ihrer Tuning-abhängigen Wirkdauer-Funktion (Teil 4: 'muenzregen' durch
+ * 'scoreX2' ersetzt, KEIN sofortiger km-Bonus mehr — Score-x2 wirkt rein
+ * über state.run.score, siehe tickRunEconomy()). Zählt IMMER
  * state.powerups.collected (Lebenszeit-Zähler) hoch. Mutiert state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
- * @param {('magnet'|'schild'|'turbo'|'muenzregen')} type - Der eingesammelte Powerup-Typ.
+ * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Der eingesammelte Powerup-Typ.
  * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
- * @returns {{type: string, kmBonus: number}} Ergebnis (kmBonus nur bei 'muenzregen' > 0).
+ * @returns {{type: string}} Ergebnis (der aktivierte Typ).
  */
 function activatePowerupEffect(state, type, nowMs) {
   ensurePowerupState(state);
   var now = typeof nowMs === 'number' ? nowMs : Date.now();
-  var kmBonus = 0;
   switch (type) {
     case 'magnet':
       state.powerups.magnetExpiresAt = now + powerupMagnetDurationSeconds(state) * 1000;
@@ -2557,15 +2798,14 @@ function activatePowerupEffect(state, type, nowMs) {
     case 'turbo':
       state.powerups.turboExpiresAt = now + powerupTurboDurationSeconds(state) * 1000;
       break;
-    case 'muenzregen':
-      kmBonus = powerupCoinRainReward(state);
-      creditKm(state, kmBonus);
+    case 'scoreX2':
+      state.powerups.scoreX2ExpiresAt = now + powerupScoreX2DurationSeconds(state) * 1000;
       break;
     default:
       break;
   }
   state.powerups.collected += 1;
-  return { type: type, kmBonus: kmBonus };
+  return { type: type };
 }
 
 /* ============================================================
@@ -2587,6 +2827,530 @@ function tuningReactionTimeFactor(state) {
   var level = state ? getBikeLevel(state, state.currentBikeId) : 0;
   var reduction = level * IDLE_BALANCE.TUNING_OBSTACLE_PROGRESS_REDUCTION_PER_LEVEL;
   return Math.max(IDLE_BALANCE.TUNING_OBSTACLE_PROGRESS_MIN_FACTOR, 1 - reduction);
+}
+
+/* ============================================================
+   TEIL 3 — CRASH-BASED RUN: Lifecycle + Controls + Kollision
+   feat(run) / feat(controls) / feat(obstacles) / feat(crash)
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.run ein gültiges Objekt ist (defensiv, für
+ * Zustände, die nicht über createInitialState()/migrateState() gelaufen
+ * sind — mirrors ensureRunnerState()/ensurePowerupState()).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensureRunState(state) {
+  if (!state.run || typeof state.run !== 'object') {
+    state.run = { phase: 'ready', score: 0, coins: 0, combo: 0, comboMult: 1, speedPct: 0, distanceUnits: 0, startedAt: null };
+  }
+}
+
+/**
+ * Stellt sicher, dass state.runStats ein gültiges Objekt ist (defensiv,
+ * mirrors ensureStatsState()).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensureRunStatsState(state) {
+  if (!state.runStats || typeof state.runStats !== 'object') {
+    state.runStats = { totalRuns: 0, totalCoinsCollected: 0, totalCrashes: 0, bestComboEver: 0 };
+  }
+  if (typeof state.runHighscore !== 'number' || state.runHighscore < 0) {
+    state.runHighscore = 0;
+  }
+}
+
+/**
+ * Startet einen frischen Run: setzt state.run auf 'running' mit
+ * score/coins/combo/distanceUnits = 0, leitet die Basis-Geschwindigkeit
+ * (speedPct) aus dem AKTUELL gefahrenen Bike/Tuning-Level ab
+ * (deriveBikeStats().geschwindigkeitPct — läuft danach unverändert durch
+ * dieselbe runnerScrollSpeed()/runnerLeadSeconds()-Pipeline wie zuvor, der
+ * 0.6s-Vorlaufzeit-Boden bleibt dadurch für JEDES Bike/Tuning garantiert)
+ * UND setzt die STEUERUNG (state.runner: Lane mittig, Sprung/Ducken/
+ * Kollisions-Malus zurückgesetzt) für einen fairen Neustart zurück.
+ * Berührt NIEMALS die PROGRESS-Schicht (km/Bikes/Tuning/Saison/Gear).
+ * Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {Object} Das neue state.run-Objekt.
+ */
+function startRun(state, nowMs) {
+  ensureRunState(state);
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var bike = getBikeById(state.currentBikeId) || IDLE_BIKES[IDLE_BALANCE.STARTER_BIKE_INDEX];
+  var level = getBikeLevel(state, bike.id);
+  var stats = deriveBikeStats(bike, level);
+
+  state.run.phase = 'running';
+  state.run.score = 0;
+  state.run.coins = 0;
+  state.run.combo = 0;
+  state.run.comboMult = 1;
+  state.run.distanceUnits = 0;
+  state.run.speedPct = stats.geschwindigkeitPct;
+  state.run.startedAt = now;
+
+  state.runner.lane = Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2);
+  state.runner.jumpUntil = null;
+  state.runner.duckUntil = null;
+  state.runner.collisionMalusExpiresAt = null;
+
+  return state.run;
+}
+
+/**
+ * Beendet den aktuell laufenden Run (Crash): setzt phase='crashed',
+ * aktualisiert state.runHighscore (falls der erreichte Score den
+ * bisherigen Bestwert übertrifft), schreibt state.runStats fort (additiv,
+ * sinkt nie) UND schreibt die im Run gesammelten Coins GENAU EINMAL über
+ * runCoinsToKm()/creditKm() der PROGRESS-Schicht gut — der EINZIGE Punkt,
+ * an dem ein Run die PROGRESS-Schicht überhaupt berührt (mirrors
+ * piggybankReward() — dieselbe zentrale creditKm()-Stelle). Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (aktuell ungenutzt, für API-Symmetrie zu startRun()/detectRunCollision() vorgehalten).
+ * @returns {{score: number, coins: number, newHighscore: boolean}} Zusammenfassung des beendeten Runs.
+ */
+function endRun(state, nowMs) {
+  ensureRunState(state);
+  ensureRunStatsState(state);
+
+  var finalScore = state.run.score;
+  var finalCoins = state.run.coins;
+  var finalCombo = state.run.combo;
+
+  var newHighscore = finalScore > state.runHighscore;
+  if (newHighscore) state.runHighscore = finalScore;
+
+  state.runStats.totalRuns += 1;
+  state.runStats.totalCoinsCollected += finalCoins;
+  state.runStats.totalCrashes += 1;
+  if (finalCombo > state.runStats.bestComboEver) state.runStats.bestComboEver = finalCombo;
+
+  creditKm(state, runCoinsToKm(finalCoins));
+
+  state.run.phase = 'crashed';
+  state.run.combo = 0;
+  state.run.comboMult = 1;
+
+  return { score: finalScore, coins: finalCoins, newHighscore: newHighscore };
+}
+
+/**
+ * Startet einen neuen Run nach einer angezeigten Crash-Zusammenfassung
+ * ("Nochmal fahren") — semantisch identisch zu startRun() (Alias, siehe
+ * dessen Docblock), eigener Name für die klare "Neustart nach Crash"-
+ * Absicht am Aufrufort (idle.js).
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {Object} Das neue state.run-Objekt.
+ */
+function restartRun(state, nowMs) {
+  return startRun(state, nowMs);
+}
+
+/**
+ * Rechnet einen Score-Zuwachs aus einer zurückgelegten Distanz-Einheit
+ * (siehe IDLE_BALANCE.RUN_SCORE_PER_DISTANCE_UNIT) — reiner "wie gut lief
+ * dieser Run"-Wert, hat KEINE km-Wirkung (siehe runCoinsForDistance() für
+ * den getrennten Coin-Pool). Teil 4: ein optionaler scoreMultiplier (z. B.
+ * runComboMultiplier(state.run.combo) multipliziert mit
+ * IDLE_BALANCE.POWERUP_SCORE_X2_MULTIPLIER bei aktivem Score-x2-Effekt,
+ * siehe tickRunEconomy()) skaliert den Zuwachs zusätzlich — Standard 1
+ * (kein Multiplikator), damit bestehende Aufrufe unverändert bleiben.
+ * Reine Funktion.
+ * @param {number} distanceDelta - Zurückgelegte Distanz seit dem letzten Tick (abstrakte Einheiten, >= 0).
+ * @param {number} [scoreMultiplier] - Combo-/Score-x2-Multiplikator (>= 1); Standard 1.
+ * @returns {number} Score-Zuwachs (>= 0).
+ */
+function runScoreForDistance(distanceDelta, scoreMultiplier) {
+  if (!distanceDelta || distanceDelta <= 0) return 0;
+  var mult = typeof scoreMultiplier === 'number' && scoreMultiplier > 0 ? scoreMultiplier : 1;
+  return distanceDelta * IDLE_BALANCE.RUN_SCORE_PER_DISTANCE_UNIT * mult;
+}
+
+/**
+ * Rechnet einen Run-Coin-Zuwachs aus einer zurückgelegten Distanz-Einheit
+ * (siehe IDLE_BALANCE.RUN_COIN_PER_DISTANCE_UNIT). Reine Funktion.
+ * @param {number} distanceDelta - Zurückgelegte Distanz seit dem letzten Tick (abstrakte Einheiten, >= 0).
+ * @returns {number} Run-Coin-Zuwachs (>= 0).
+ */
+function runCoinsForDistance(distanceDelta) {
+  if (!distanceDelta || distanceDelta <= 0) return 0;
+  return distanceDelta * IDLE_BALANCE.RUN_COIN_PER_DISTANCE_UNIT;
+}
+
+/**
+ * Rechnet gesammelte Run-Coins in km um (IDLE_BALANCE.RUN_COIN_KM_VALUE)
+ * — die EINE Umrechnung, die endRun() (Crash) bzw. tickRunEconomy()
+ * (Auto-Pilot) über creditKm() auf die PROGRESS-Schicht anwendet. Reine
+ * Funktion.
+ * @param {number} coins - Run-Coins (>= 0).
+ * @returns {number} km-Gegenwert (>= 0).
+ */
+function runCoinsToKm(coins) {
+  if (!coins || coins <= 0) return 0;
+  return coins * IDLE_BALANCE.RUN_COIN_KM_VALUE;
+}
+
+/**
+ * Verbucht EINE eingesammelte Münz-Trail-Münze (Teil 4, feat(coins)) —
+ * fester Zuwachs (IDLE_BALANCE.RUN_COIN_TRAIL_PICKUP_VALUE) auf
+ * state.run.coins, DENSELBEN Pool wie der distanzbasierte Zuwachs aus
+ * runCoinsForDistance()/tickRunEconomy() — beide werden identisch erst
+ * bei einem Crash (endRun()) bzw. kontinuierlich reduziert im Auto-Pilot
+ * in km umgewandelt. No-op, falls kein Run läuft. Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (aktuell ungenutzt, für API-Symmetrie vorgehalten).
+ * @returns {number} Gutgeschriebener Coin-Betrag (0, falls kein Run läuft).
+ */
+function collectRunCoin(state, nowMs) {
+  ensureRunState(state);
+  if (state.run.phase !== 'running') return 0;
+  var amount = IDLE_BALANCE.RUN_COIN_TRAIL_PICKUP_VALUE;
+  state.run.coins += amount;
+  return amount;
+}
+
+/**
+ * EIN Wirtschafts-Tick des laufenden Runs: rückt state.run.distanceUnits/
+ * score um distanceDelta vor. Der Score-Zuwachs wird (Teil 4) mit dem
+ * AKTUELLEN Near-Miss-Combo-Multiplikator (state.run.comboMult) UND —
+ * falls aktiv — IDLE_BALANCE.POWERUP_SCORE_X2_MULTIPLIER skaliert (siehe
+ * scoreX2Active()); Score-x2 wirkt dadurch AUSSCHLIESSLICH auf
+ * state.run.score, NIE auf km. Der Coin-Zuwachs wird UNTERSCHIEDLICH
+ * behandelt, je nach Aktivitäts-Zustand (siehe runnerActivityState()):
+ * im AKTIVEN Run sammeln sich Coins nur in state.run.coins (gebankt ERST
+ * bei einem Crash, siehe endRun() — ersetzt den früheren kontinuierlichen
+ * km-Drip aus runnerEarnMultiplier()); im AUTO-PILOT (activity==='idle',
+ * crasht laut Teil-1-Invariante NIE) werden sie SOFORT, aber REDUZIERT
+ * (RUN_AUTOPILOT_CREDIT_MULTIPLIER) über creditKm() der PROGRESS-Schicht
+ * gutgeschrieben — ohne diese Sonderbehandlung könnte ein Auto-Pilot-
+ * Coin-Pool nie gebankt werden, da er ja nie crasht. No-op, falls kein
+ * Run läuft (state.run.phase !== 'running'). Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} distanceDelta - Zurückgelegte Distanz seit dem letzten Tick (abstrakte Einheiten, >= 0).
+ * @param {('active'|'idle')} activity - Aktueller Runner-Aktivitäts-Zustand (siehe runnerActivityState()).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (für scoreX2Active()).
+ * @returns {{scoreGained: number, coinsGained: number, kmCredited: number}} Zuwächse dieses Ticks.
+ */
+function tickRunEconomy(state, distanceDelta, activity, nowMs) {
+  ensureRunState(state);
+  if (state.run.phase !== 'running' || !distanceDelta || distanceDelta <= 0) {
+    return { scoreGained: 0, coinsGained: 0, kmCredited: 0 };
+  }
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+
+  var scoreX2Boost = scoreX2Active(state, now) ? IDLE_BALANCE.POWERUP_SCORE_X2_MULTIPLIER : 1;
+  var scoreMultiplier = (state.run.comboMult || 1) * scoreX2Boost;
+  var scoreGained = runScoreForDistance(distanceDelta, scoreMultiplier);
+  state.run.score += scoreGained;
+  state.run.distanceUnits += distanceDelta;
+
+  var coinsGained = runCoinsForDistance(distanceDelta);
+  var kmCredited = 0;
+  if (activity === 'idle') {
+    kmCredited = runCoinsToKm(coinsGained) * IDLE_BALANCE.RUN_AUTOPILOT_CREDIT_MULTIPLIER;
+    creditKm(state, kmCredited);
+  } else {
+    state.run.coins += coinsGained;
+  }
+
+  return { scoreGained: scoreGained, coinsGained: coinsGained, kmCredited: kmCredited };
+}
+
+/**
+ * Löst einen Sprung aus (feat(controls)) — setzt state.runner.jumpUntil auf
+ * jetzt + RUNNER_JUMP_DURATION_MS UND hebt ein evtl. aktives Ducken auf
+ * (beide Zustände schliessen sich gegenseitig aus). Aktualisiert
+ * zusätzlich lastInputAt — zählt automatisch als "aktiv" (mirrors
+ * steerRunnerLane()). Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Der neue Ablauf-Zeitstempel (ms) des Sprungs.
+ */
+function jumpRunner(state, nowMs) {
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  state.runner.jumpUntil = now + IDLE_BALANCE.RUNNER_JUMP_DURATION_MS;
+  state.runner.duckUntil = null;
+  state.runner.lastInputAt = now;
+  return state.runner.jumpUntil;
+}
+
+/**
+ * Löst ein Ducken aus (feat(controls)) — setzt state.runner.duckUntil auf
+ * jetzt + RUNNER_DUCK_DURATION_MS UND hebt einen evtl. aktiven Sprung auf
+ * (siehe jumpRunner()-Docblock). Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Der neue Ablauf-Zeitstempel (ms) des Duckens.
+ */
+function duckRunner(state, nowMs) {
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  state.runner.duckUntil = now + IDLE_BALANCE.RUNNER_DUCK_DURATION_MS;
+  state.runner.jumpUntil = null;
+  state.runner.lastInputAt = now;
+  return state.runner.duckUntil;
+}
+
+/**
+ * Liefert true, solange gerade ein Sprung aktiv ist (siehe jumpRunner()).
+ * Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls aktuell "airborne".
+ */
+function isJumping(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  return !!(state && state.runner && typeof state.runner.jumpUntil === 'number' && now < state.runner.jumpUntil);
+}
+
+/**
+ * Liefert true, solange gerade ein Ducken aktiv ist (siehe duckRunner()).
+ * Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls aktuell "geduckt".
+ */
+function isDucking(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  return !!(state && state.runner && typeof state.runner.duckUntil === 'number' && now < state.runner.duckUntil);
+}
+
+/**
+ * Berechnet den zusätzlichen Hindernis-Dichte-Multiplikator für die
+ * bereits zurückgelegte IN-RUN-Distanz (Teil 4, feat(difficulty)) —
+ * steigt monoton von 1 (Distanz 0) auf IDLE_BALANCE.RUN_DIFFICULTY_
+ * DENSITY_MAX_MULTIPLIER (ab RUN_DIFFICULTY_DISTANCE_SCALE_UNITS Distanz,
+ * danach gedeckelt). Wird MULTIPLIKATIV auf obstacleDensity(speedPct)
+ * angewendet (siehe nextObstacleSpawnIntervalSeconds()) — wirkt dadurch
+ * NUR auf die Spawn-Dichte/-Häufigkeit, NIEMALS auf runnerLeadSeconds()'
+ * 0.6s-Boden (der bleibt eine reine Funktion von speedPct, unabhängig von
+ * distanceUnits). Reine, deterministische Funktion.
+ * @param {number} distanceUnits - Bereits zurückgelegte In-Run-Distanz (abstrakte Einheiten, >= 0).
+ * @returns {number} Dichte-Multiplikator (1 bis RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER).
+ */
+function runDifficultyDensity(distanceUnits) {
+  var d = typeof distanceUnits === 'number' && distanceUnits > 0 ? distanceUnits : 0;
+  var scale = IDLE_BALANCE.RUN_DIFFICULTY_DISTANCE_SCALE_UNITS;
+  var ratio = scale > 0 ? Math.min(1, d / scale) : 1;
+  var max = IDLE_BALANCE.RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER;
+  return 1 + ratio * (max - 1);
+}
+
+/**
+ * Bestimmt die Muster-Komplexitäts-Stufe für eine gegebene IN-RUN-Distanz
+ * (Teil 4, feat(difficulty)) — 0 (nur einzelne Hindernisse) bis Distanz
+ * RUN_DIFFICULTY_PATTERN_TIER1_UNITS, dann 1 (kombinierte 2-Lane-Wellen),
+ * dann 2 (ab RUN_DIFFICULTY_PATTERN_TIER2_UNITS, kombinierte 3-Lane-
+ * Wellen) — siehe runDifficultyWaveSize(). Reine, deterministische,
+ * monoton nicht-fallende Funktion.
+ * @param {number} distanceUnits - Bereits zurückgelegte In-Run-Distanz (abstrakte Einheiten, >= 0).
+ * @returns {(0|1|2)} Muster-Komplexitäts-Stufe.
+ */
+function runDifficultyPatternTier(distanceUnits) {
+  var d = typeof distanceUnits === 'number' && distanceUnits > 0 ? distanceUnits : 0;
+  if (d >= IDLE_BALANCE.RUN_DIFFICULTY_PATTERN_TIER2_UNITS) return 2;
+  if (d >= IDLE_BALANCE.RUN_DIFFICULTY_PATTERN_TIER1_UNITS) return 1;
+  return 0;
+}
+
+/**
+ * Berechnet, wie viele Hindernisse GLEICHZEITIG (auf unterschiedlichen
+ * Lanes) in EINER Spawn-Welle erscheinen sollen (Teil 4, feat(difficulty))
+ * — 1 bei Muster-Stufe 0, steigt mit runDifficultyPatternTier(distanceUnits),
+ * ABER GEDECKELT auf laneCount-1 (mindestens EINE Lane bleibt IMMER frei —
+ * ein Run darf durch die Schwierigkeitskurve nie unmöglich/unfair
+ * werden). Reine, deterministische Funktion.
+ * @param {number} distanceUnits - Bereits zurückgelegte In-Run-Distanz (abstrakte Einheiten, >= 0).
+ * @param {number} [laneCount] - Anzahl Fahrspuren; Standard IDLE_BALANCE.RUNNER_LANE_COUNT.
+ * @returns {number} Anzahl gleichzeitig zu spawnender Hindernisse (>= 1).
+ */
+function runDifficultyWaveSize(distanceUnits, laneCount) {
+  var lanes = typeof laneCount === 'number' && laneCount > 0 ? laneCount : IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var tier = runDifficultyPatternTier(distanceUnits);
+  var size = 1 + tier;
+  return Math.min(size, Math.max(1, lanes - 1));
+}
+
+/**
+ * Generiert ein Münz-Trail-Muster (Teil 4, feat(coins)) — eine gerade
+ * LINIE (alle Münzen dieselbe Lane) oder ein über Lanes wandernder BOGEN
+ * (IDLE_BALANCE.RUN_COIN_TRAIL_ARC_CHANCE), IDLE_BALANCE.RUN_COIN_TRAIL_
+ * LENGTH Münzen lang, jede mit einem zunehmenden Tiefen-Fortschritt-
+ * Versatz (offsetT, Vielfaches von RUN_COIN_TRAIL_SPACING_T) relativ zum
+ * Trail-Start — der Aufrufer (idle.js) setzt daraus tatsächliche,
+ * gestaffelt erscheinende Collectibles auf der Strecke (reused
+ * laneCenterX()/laneRowY()). Reine Funktion.
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @param {number} [laneCount] - Anzahl Fahrspuren; Standard IDLE_BALANCE.RUNNER_LANE_COUNT.
+ * @returns {Array<{lane: number, offsetT: number}>} Münz-Positionen des Trails.
+ */
+function generateCoinTrail(rng, laneCount) {
+  var rnd = typeof rng === 'function' ? rng : Math.random;
+  var lanes = typeof laneCount === 'number' && laneCount > 0 ? laneCount : IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var length = IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH;
+  var isArc = rnd() < IDLE_BALANCE.RUN_COIN_TRAIL_ARC_CHANCE && lanes > 1;
+  var direction = rnd() < 0.5 ? -1 : 1;
+  var lane = Math.floor(rnd() * lanes);
+  var coins = [];
+  for (var i = 0; i < length; i++) {
+    if (isArc && i > 0 && i % 2 === 0) {
+      lane = Math.min(lanes - 1, Math.max(0, lane + direction));
+    }
+    coins.push({ lane: lane, offsetT: i * IDLE_BALANCE.RUN_COIN_TRAIL_SPACING_T });
+  }
+  return coins;
+}
+
+/**
+ * Würfelt das Zufallsintervall (Sekunden) bis zum nächsten Münz-Trail-
+ * Spawn, zwischen IDLE_BALANCE.RUN_COIN_TRAIL_INTERVAL_MIN_SECONDS und
+ * _MAX_SECONDS (flach, identisches Prinzip zu nextPiggyIntervalSeconds()).
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zum nächsten Münz-Trail-Spawn.
+ */
+function nextCoinTrailIntervalSeconds(randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var min = IDLE_BALANCE.RUN_COIN_TRAIL_INTERVAL_MIN_SECONDS;
+  var max = IDLE_BALANCE.RUN_COIN_TRAIL_INTERVAL_MAX_SECONDS;
+  return min + rnd() * (max - min);
+}
+
+/**
+ * Wählt gewichtet EINEN der 3 Hindernis-Typen (IDLE_BALANCE.
+ * RUNNER_OBSTACLE_TYPE_WEIGHTS) — wiederverwendet pickWeightedRarity()
+ * (identisches Prinzip zu rollPowerupType()). Reine Funktion.
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {('side'|'lowBar'|'highBarrier')} Gewählter Hindernis-Typ.
+ */
+function rollObstacleType(rng) {
+  return pickWeightedRarity(typeof rng === 'function' ? rng : Math.random, IDLE_BALANCE.RUNNER_OBSTACLE_TYPE_WEIGHTS);
+}
+
+/**
+ * Prüft, OB ein Hindernis eines gegebenen Typs — ANGENOMMEN, es befindet
+ * sich bereits in der Lane des Bikes — gerade einen Treffer verursachen
+ * WÜRDE (ohne Schild-Berücksichtigung, siehe detectRunCollision() dafür):
+ * 'side' trifft IMMER (Lane-Wechsel ist die einzige Ausweich-Aktion,
+ * bereits durch den Lane-Vergleich des Aufrufers abgedeckt); 'lowBar'
+ * trifft, AUSSER das Bike springt gerade (isJumping()) ODER Turbo aktiv
+ * ist (Teil 4, turboActive() — "Sprung-Boost" fährt OHNE Sprung durch ein
+ * 'lowBar'-Hindernis); 'highBarrier' trifft, AUSSER das Bike duckt gerade
+ * (isDucking() — Turbo hilft hier NICHT, ein hohes Hindernis bleibt ohne
+ * Ducken ein Treffer). Reine Funktion.
+ * @param {('side'|'lowBar'|'highBarrier')} obstacleType - Hindernis-Typ.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls dieser Hindernis-Typ (ohne Schild) einen Treffer verursachen würde.
+ */
+function obstacleCausesCrash(obstacleType, state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  switch (obstacleType) {
+    case 'lowBar':
+      return !isJumping(state, now) && !turboActive(state, now);
+    case 'highBarrier':
+      return !isDucking(state, now);
+    case 'side':
+    default:
+      return true;
+  }
+}
+
+/**
+ * Prüft, OB ein Hindernis, das die HIT-Zone erreicht hat, ein Near-Miss
+ * war (Teil 4, feat(nearmiss)) — ein knapp vermiedener Treffer, der einen
+ * Score-Bonus + Combo-Zuwachs verdient (siehe registerNearMiss()). Zwei
+ * Fälle: (1) ein 'side'-Hindernis in einer zur Bike-Lane BENACHBARTEN
+ * Lane (Lane-Abstand = RUNNER_NEAR_MISS_LANE_GAP) — ein knapper
+ * Lane-Wechsel daran vorbei; (2) ein 'lowBar'/'highBarrier'-Hindernis
+ * GENAU in der Bike-Lane, das OHNE Treffer geblieben ist (obstacleCauses
+ * Crash() liefert false, d. h. saubar per Sprung/Ducken/Turbo pariert).
+ * Ein Hindernis, das GAR NICHT in der Nähe der Bike-Lane war (Lane-
+ * Abstand > RUNNER_NEAR_MISS_LANE_GAP), ist KEIN Near-Miss (schlicht
+ * irrelevant). Reine Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {{lane: number, type: ('side'|'lowBar'|'highBarrier')}} obstacle - Das an der HIT-Zone ausgewertete Hindernis.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {boolean} true, falls dies ein Near-Miss war.
+ */
+function isNearMiss(state, obstacle, nowMs) {
+  if (!state || !state.runner || !obstacle) return false;
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var laneDelta = Math.abs(obstacle.lane - state.runner.lane);
+  if (obstacle.type === 'side') {
+    return laneDelta === IDLE_BALANCE.RUNNER_NEAR_MISS_LANE_GAP;
+  }
+  if (laneDelta !== 0) return false;
+  return !obstacleCausesCrash(obstacle.type, state, now);
+}
+
+/**
+ * Verbucht einen erkannten Near-Miss (Teil 4, feat(nearmiss)) — erhöht
+ * state.run.combo um 1, aktualisiert den daraus abgeleiteten Score-
+ * Multiplikator (runComboMultiplier(), gedeckelt auf RUN_COMBO_
+ * MULTIPLIER_MAX) UND schreibt sofort einen fixen Score-Bonus
+ * (RUN_NEAR_MISS_SCORE_BONUS) gut. Die Combo wird NUR von einem echten
+ * Crash zurückgesetzt (siehe endRun()), NICHT von dieser Funktion selbst.
+ * Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (aktuell ungenutzt, für API-Symmetrie vorgehalten).
+ * @returns {{combo: number, comboMult: number, bonus: number}} Neuer Combo-Stand, Multiplikator und gutgeschriebener Score-Bonus.
+ */
+function registerNearMiss(state, nowMs) {
+  ensureRunState(state);
+  state.run.combo += 1;
+  state.run.comboMult = runComboMultiplier(state.run.combo);
+  var bonus = IDLE_BALANCE.RUN_NEAR_MISS_SCORE_BONUS;
+  state.run.score += bonus;
+  return { combo: state.run.combo, comboMult: state.run.comboMult, bonus: bonus };
+}
+
+/**
+ * Berechnet den Run-Score-Multiplikator für eine gegebene Near-Miss-
+ * Combo-Anzahl (Teil 4) — IDENTISCHE Formel wie comboMultiplier() (Combo
+ * 0 → 1×, ab Combo 1 startet RUN_COMBO_MULTIPLIER_BASE, +RUN_COMBO_
+ * MULTIPLIER_STEP je weiterem Punkt, gedeckelt auf RUN_COMBO_MULTIPLIER_
+ * MAX), aber mit eigenen, unabhängigen Konstanten für die Run-Combo (vs.
+ * die Schaltpunkt-Combo). Reine, deterministische Funktion.
+ * @param {number} combo - Aktuelle Run-Combo-Anzahl (>= 0).
+ * @returns {number} Score-Multiplikator (1 bis RUN_COMBO_MULTIPLIER_MAX).
+ */
+function runComboMultiplier(combo) {
+  if (!combo || combo <= 0) return 1;
+  var raw = IDLE_BALANCE.RUN_COMBO_MULTIPLIER_BASE + (combo - 1) * IDLE_BALANCE.RUN_COMBO_MULTIPLIER_STEP;
+  return Math.min(IDLE_BALANCE.RUN_COMBO_MULTIPLIER_MAX, raw);
+}
+
+/**
+ * Wertet EINEN Kollisionsfall aus (feat(crash)) — der Aufrufer (idle.js
+ * tickRunner()) ruft dies NUR auf, wenn sich ein Hindernis bereits in der
+ * Lane des Bikes befindet UND die Kollisions-HIT-Zone erreicht hat (siehe
+ * RUNNER_HIT_ZONE_T). Prüft zunächst obstacleCausesCrash() (Typ-abhängig,
+ * Sprung/Ducken); würde das einen Treffer verursachen, konsumiert ein
+ * aktiver Schild GENAU DIESEN einen Treffer (consumeShield() — kein
+ * Crash, aber der Schild ist danach verbraucht); ohne Schild endet der
+ * Run NICHT selbst (das obliegt weiterhin dem Aufrufer via endRun() —
+ * detectRunCollision() bleibt dadurch eine reine, seiteneffektfreie
+ * Abfrage ausser dem Schild-Verbrauch). Reine Funktion bzgl. state.run/
+ * km — mutiert HÖCHSTENS state.powerups.shieldExpiresAt (via
+ * consumeShield()), NIEMALS km/Bikes/Tuning.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {('side'|'lowBar'|'highBarrier')} obstacleType - Typ des Hindernisses in der Bike-Lane.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {{crashed: boolean, shielded: boolean}} Ergebnis: crashed=true → Aufrufer muss endRun() aufrufen; shielded=true → ein Schild wurde konsumiert, kein Crash.
+ */
+function detectRunCollision(state, obstacleType, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var wouldCrash = obstacleCausesCrash(obstacleType, state, now);
+  if (!wouldCrash) return { crashed: false, shielded: false };
+  if (consumeShield(state, now)) return { crashed: false, shielded: true };
+  return { crashed: true, shielded: false };
 }
 
 /* ============================================================
@@ -2771,12 +3535,13 @@ var IdleCore = {
   magnetActive: magnetActive,
   turboActive: turboActive,
   shieldActive: shieldActive,
+  scoreX2Active: scoreX2Active,
   consumeShield: consumeShield,
   powerupMagnetDurationSeconds: powerupMagnetDurationSeconds,
   powerupMagnetRangeT: powerupMagnetRangeT,
   powerupShieldDurationSeconds: powerupShieldDurationSeconds,
   powerupTurboDurationSeconds: powerupTurboDurationSeconds,
-  powerupCoinRainReward: powerupCoinRainReward,
+  powerupScoreX2DurationSeconds: powerupScoreX2DurationSeconds,
   activatePowerupEffect: activatePowerupEffect,
 
   /* ── Teil 2: TUNING-PERKS — balance(tuning) ────────────────────────── */
@@ -2789,6 +3554,35 @@ var IdleCore = {
   recordLap: recordLap,
   recordComboPeak: recordComboPeak,
   addPlayTime: addPlayTime,
+
+  /* ── Teil 3: CRASH-BASED RUN — feat(run)/feat(controls)/feat(obstacles)/feat(crash) ── */
+  ensureRunState: ensureRunState,
+  ensureRunStatsState: ensureRunStatsState,
+  startRun: startRun,
+  endRun: endRun,
+  restartRun: restartRun,
+  runScoreForDistance: runScoreForDistance,
+  runCoinsForDistance: runCoinsForDistance,
+  runCoinsToKm: runCoinsToKm,
+  tickRunEconomy: tickRunEconomy,
+  jumpRunner: jumpRunner,
+  duckRunner: duckRunner,
+  isJumping: isJumping,
+  isDucking: isDucking,
+  rollObstacleType: rollObstacleType,
+  obstacleCausesCrash: obstacleCausesCrash,
+  detectRunCollision: detectRunCollision,
+
+  /* ── Teil 4: RUN-FEEL — feat(score)/feat(coins)/feat(nearmiss)/feat(powerups)/feat(difficulty) ── */
+  isNearMiss: isNearMiss,
+  registerNearMiss: registerNearMiss,
+  runComboMultiplier: runComboMultiplier,
+  collectRunCoin: collectRunCoin,
+  generateCoinTrail: generateCoinTrail,
+  nextCoinTrailIntervalSeconds: nextCoinTrailIntervalSeconds,
+  runDifficultyDensity: runDifficultyDensity,
+  runDifficultyPatternTier: runDifficultyPatternTier,
+  runDifficultyWaveSize: runDifficultyWaveSize,
 };
 
 if (typeof window !== 'undefined') {

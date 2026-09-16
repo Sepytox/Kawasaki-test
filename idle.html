@@ -45,21 +45,54 @@
                          wenigen Sekunden der Auto-Pilot (gedeckelte, aber verlässliche
                          Geschwindigkeit) — der passive km-Ertrag läuft davon unabhängig weiter. -->
                     <div class="idle-track-wrap" id="idleTrackWrap">
-                        <canvas id="idleTrackCanvas" class="idle-track-canvas" aria-label="Endless-Runner — 2–3-Lane-Strasse mit Hindernissen"></canvas>
+                        <canvas id="idleTrackCanvas" class="idle-track-canvas" aria-label="Endless-Runner — 2–3-Lane-Strasse mit Hindernissen, Münz-Trails und Powerups"></canvas>
                         <span class="idle-track-mode" id="idleTrackMode" aria-live="polite"></span>
                         <div class="idle-handover" id="idleHandover" aria-live="polite"></div>
+
+                        <!-- Score-/Highscore-HUD (Teil 4, feat(score)): live Distanz-Score
+                             (zählt sichtbar schnell hoch, siehe idle.js updateRunScoreHud())
+                             + persönlicher Bestwert als Ziel. -->
+                        <div class="idle-run-score-hud" id="idleRunScoreHud" aria-live="off">
+                            <span class="idle-run-score-hud-label">Score</span>
+                            <span class="idle-run-score-hud-value" id="idleRunScore">0</span>
+                            <span class="idle-run-score-hud-highscore">Highscore: <strong id="idleRunHighscore">0</strong></span>
+                        </div>
+
+                        <!-- Near-Miss-Popup (Teil 4, feat(nearmiss)): kurzer "Knapp vorbei!"-Text
+                             bei einem knapp vermiedenen Treffer (siehe idle.js triggerNearMiss()). -->
+                        <div class="idle-near-miss-popup" id="idleNearMissPopup" aria-live="polite"></div>
+
+                        <!-- Powerup-Timer-HUD (Teil 4, feat(powerups)): EIN Badge pro Typ,
+                             nur sichtbar, solange dessen Effekt aktiv ist (siehe idle.js
+                             updatePowerupHud()). -->
+                        <div class="idle-powerup-hud" id="idlePowerupHud">
+                            <span class="idle-powerup-hud-badge" id="idlePowerupHud-magnet" hidden>🧲 <span class="idle-powerup-hud-timer">0s</span></span>
+                            <span class="idle-powerup-hud-badge" id="idlePowerupHud-schild" hidden>🛡️ <span class="idle-powerup-hud-timer">0s</span></span>
+                            <span class="idle-powerup-hud-badge" id="idlePowerupHud-turbo" hidden>🚀 <span class="idle-powerup-hud-timer">0s</span></span>
+                            <span class="idle-powerup-hud-badge" id="idlePowerupHud-scoreX2" hidden>✨ <span class="idle-powerup-hud-timer">0s</span></span>
+                        </div>
 
                         <!-- Sparschwein (MECHANIK B, feat(idle-piggybanks)): erscheint kurz an
                              zufälliger Position, Klick zerschlägt es (km-Bonus + Gear-Drop-Chance),
                              unbeklickt verschwindet es wieder — keine Strafe. -->
                         <button type="button" class="idle-piggy" id="idlePiggy" aria-hidden="true" tabindex="-1" aria-label="Sparschwein zerschlagen">🐷</button>
 
-                        <!-- Powerup (Teil 2, feat(powerups)): erscheint kurz lane-gebunden auf
-                             der Strasse (Magnet/Schild/Turbo/Münzregen), Klick sammelt es ein,
-                             unbeklickt verschwindet es wieder — keine Strafe. -->
+                        <!-- Powerup (Teil 2+4, feat(powerups)): erscheint kurz lane-gebunden auf
+                             der Strasse (Magnet/Schild/Turbo/Score-x2), Klick sammelt es ein,
+                             unbeklickt verschwindet es wieder — keine Strafe. Seltener als
+                             Münz-Trails (siehe idle-core.js nextPowerupIntervalSeconds()/
+                             nextCoinTrailIntervalSeconds()). -->
                         <button type="button" class="idle-powerup" id="idlePowerup" aria-hidden="true" tabindex="-1" aria-label="Powerup einsammeln"></button>
                     </div>
-                    <p class="idle-track-hint">⬅️ ➡️ oder A/D zum Ausweichen · auf Mobilgeräten wischen</p>
+                    <p class="idle-track-hint">⬅️ ➡️ oder A/D zum Spurwechsel · ⬆️ oder Leertaste zum Springen · ⬇️ oder Strg zum Ducken · auf Mobilgeräten in alle 4 Richtungen wischen</p>
+
+                    <!-- Near-Miss-Combo-Badge (Teil 4, feat(nearmiss)): eigenständig von der
+                         Schaltpunkt-Combo (idleComboBadge) — zeigt die Anzahl knapp vermiedener
+                         Treffer + den daraus abgeleiteten Score-Multiplikator. -->
+                    <div class="idle-combo-badge idle-run-combo-badge" id="idleRunComboBadge" hidden>
+                        <span id="idleRunComboCount">💨 Near-Miss ×0</span>
+                        <span id="idleRunComboMultiplier"></span>
+                    </div>
 
                     <!-- Tacho (Canvas): Halbkreis-Gauge, Nadel folgt der aktuellen Bike-Geschwindigkeit. -->
                     <div class="idle-tacho-wrap" id="idleTachoWrap">
@@ -217,6 +250,28 @@
 
     <!-- Teile-Drop-Toast (feat(idle-parts)) -->
     <div class="idle-toast-container" id="idleToastContainer" aria-live="polite"></div>
+
+    <!-- Crash-Zusammenfassung (Teil 3, feat(crash)): erscheint nach einem
+         echten Crash — Score, gesammelte Coins (bereits einmalig in km
+         umgewandelt, siehe IdleCore.endRun()) und ggf. ein neuer Highscore.
+         "Nochmal fahren" startet sofort einen neuen Run. -->
+    <div class="idle-run-summary" id="idleRunSummary" hidden role="dialog" aria-modal="true" aria-labelledby="idleRunSummaryTitle">
+        <div class="idle-run-summary-card">
+            <h2 id="idleRunSummaryTitle">💥 Crash!</h2>
+            <p class="idle-run-summary-highscore" id="idleRunSummaryHighscore" hidden>🏆 Neuer Highscore!</p>
+            <div class="idle-run-summary-stats">
+                <div class="idle-run-summary-stat">
+                    <span class="idle-run-summary-stat-label">Score</span>
+                    <span class="idle-run-summary-stat-value" id="idleRunSummaryScore">0</span>
+                </div>
+                <div class="idle-run-summary-stat">
+                    <span class="idle-run-summary-stat-label">Gesammelte Coins</span>
+                    <span class="idle-run-summary-stat-value" id="idleRunSummaryCoins">0</span>
+                </div>
+            </div>
+            <button type="button" class="btn idle-run-summary-restart-btn" id="idleRunSummaryRestartBtn">🔄 Nochmal fahren</button>
+        </div>
+    </div>
 
     <script src="theme-toggle.js"></script>
     <script src="settings.js"></script>
