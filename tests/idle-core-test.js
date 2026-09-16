@@ -987,6 +987,125 @@ section('16 · MECHANIK B — Sparschweine zerschlagen (nextPiggyIntervalSeconds
   assert(migratedWithPiggy.piggy.smashedCount === 42, 'migrateState(): ein bereits vorhandener piggy.smashedCount-Zähler bleibt exakt erhalten');
 })();
 
+section('17 · TEIL 1 — Endless-Runner: Speed-Cap/Lead-Time, Hindernis-Dichte, Kollisions-Malus, Idle-Auto-Run, v2→v3-Migration');
+(function () {
+  // runnerLeadSeconds(): niemals unter RUNNER_MIN_LEAD_SECONDS, für den gesamten 0..100%-Bereich.
+  for (let pct = 0; pct <= 100; pct += 5) {
+    assert(
+      IdleCore.runnerLeadSeconds(pct) >= IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS - 1e-9,
+      `runnerLeadSeconds(${pct}) liegt nicht unter der Mindest-Vorlaufzeit (${IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS}s)`
+    );
+  }
+  assert(IdleCore.runnerLeadSeconds(0) > IdleCore.runnerLeadSeconds(100), 'runnerLeadSeconds() sinkt mit steigender Geschwindigkeit (0% > 100%)');
+  assert(
+    Math.abs(IdleCore.runnerLeadSeconds(100) - IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS) < 1e-9,
+    'runnerLeadSeconds(100) trifft exakt die Mindest-Vorlaufzeit (Speed-Cap aktiv)'
+  );
+
+  // obstacleDensity(): steigt monoton, UND steigt STÄRKER oberhalb des Speed-Caps (kompensiert die gedeckelte Scroll-Geschwindigkeit).
+  const cap = IdleCore.IDLE_BALANCE.RUNNER_SPEED_CAP_PCT;
+  assert(IdleCore.obstacleDensity(0) === IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_BASE, 'obstacleDensity(0) entspricht der Basis-Dichte');
+  assert(
+    Math.abs(IdleCore.obstacleDensity(cap) - IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_AT_CAP) < 1e-9,
+    'obstacleDensity() am Speed-Cap entspricht RUNNER_OBSTACLE_DENSITY_AT_CAP'
+  );
+  assert(
+    Math.abs(IdleCore.obstacleDensity(100) - IdleCore.IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_MAX) < 1e-9,
+    'obstacleDensity(100) entspricht der Maximal-Dichte'
+  );
+  assert(IdleCore.obstacleDensity(100) > IdleCore.obstacleDensity(cap), 'obstacleDensity() steigt ÜBER den Speed-Cap hinaus weiter an, statt zu stagnieren');
+  let prevDensity = -Infinity;
+  for (let pct = 0; pct <= 100; pct += 5) {
+    const d = IdleCore.obstacleDensity(pct);
+    assert(d >= prevDensity - 1e-9, `obstacleDensity(${pct}) ist monoton nicht-fallend`);
+    prevDensity = d;
+  }
+
+  // nextObstacleSpawnIntervalSeconds(): liefert bei höherer Dichte (höherer Geschwindigkeit) im Mittel kürzere Intervalle.
+  let spawnSeed = 3;
+  function seededSpawnRandom() { spawnSeed = (spawnSeed * 1103515245 + 12345) & 0x7fffffff; return spawnSeed / 0x7fffffff; }
+  let sumSlow = 0, sumFast = 0;
+  const SPAWN_SAMPLE_COUNT = 500;
+  for (let i = 0; i < SPAWN_SAMPLE_COUNT; i++) {
+    sumSlow += IdleCore.nextObstacleSpawnIntervalSeconds(0, seededSpawnRandom);
+    sumFast += IdleCore.nextObstacleSpawnIntervalSeconds(100, seededSpawnRandom);
+  }
+  assert(sumFast < sumSlow, 'nextObstacleSpawnIntervalSeconds() liefert bei 100% Geschwindigkeit im Mittel kürzere Intervalle als bei 0% (höhere Dichte)');
+
+  // Kollisions-Malus (collisionSpeedMalus/applyCollisionMalus): reine Multiplikator-Funktion mit Ablaufzeit — NIE ein Reset/Fail-State.
+  const runnerState = IdleCore.createInitialState();
+  assert(IdleCore.collisionSpeedMalus(runnerState, 1000) === 1, 'collisionSpeedMalus() liefert 1 (kein Malus), solange keine Kollision stattgefunden hat');
+  IdleCore.applyCollisionMalus(runnerState, 1000);
+  assert(
+    IdleCore.collisionSpeedMalus(runnerState, 1000) === IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER,
+    'collisionSpeedMalus() liefert direkt nach einer Kollision den konfigurierten Malus-Multiplikator'
+  );
+  const stillActiveAt = 1000 + IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS - 1;
+  assert(
+    IdleCore.collisionSpeedMalus(runnerState, stillActiveAt) === IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER,
+    'collisionSpeedMalus() bleibt für die konfigurierte Dauer aktiv'
+  );
+  const recoveredAt = 1000 + IdleCore.IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS;
+  assert(IdleCore.collisionSpeedMalus(runnerState, recoveredAt) === 1, 'collisionSpeedMalus() erholt sich nach Ablauf der Malus-Dauer wieder auf 1 (kein Reset/Fail-State)');
+
+  // Idle-Auto-Run (runnerActivityState/runnerAutoRunSpeedPct): passives Fahren bleibt ZUVERLÄSSIG, aber gedeckelt.
+  const freshRunnerState = IdleCore.createInitialState();
+  assert(IdleCore.runnerActivityState(freshRunnerState, 0) === 'idle', 'runnerActivityState() ist "idle", solange noch nie gesteuert wurde (Auto-Run von Beginn an)');
+  IdleCore.steerRunnerLane(freshRunnerState, 1, 5000);
+  assert(IdleCore.runnerActivityState(freshRunnerState, 5000) === 'active', 'runnerActivityState() wird sofort "active" nach einer Lane-Wechsel-Eingabe');
+  const stillActive = 5000 + IdleCore.IDLE_BALANCE.RUNNER_IDLE_TIMEOUT_SECONDS * 1000 - 1;
+  assert(IdleCore.runnerActivityState(freshRunnerState, stillActive) === 'active', 'runnerActivityState() bleibt innerhalb des Idle-Timeouts "active"');
+  const backToIdle = 5000 + IdleCore.IDLE_BALANCE.RUNNER_IDLE_TIMEOUT_SECONDS * 1000;
+  assert(IdleCore.runnerActivityState(freshRunnerState, backToIdle) === 'idle', 'runnerActivityState() wechselt nach dem Idle-Timeout ohne weitere Eingabe zurück zu "idle"');
+  assert(
+    IdleCore.runnerAutoRunSpeedPct(100) === IdleCore.IDLE_BALANCE.RUNNER_AUTO_RUN_SPEED_CAP_PCT,
+    'runnerAutoRunSpeedPct() deckelt die Auto-Run-Geschwindigkeit auch bei einem 100%-Bike'
+  );
+  assert(IdleCore.runnerAutoRunSpeedPct(10) === 10, 'runnerAutoRunSpeedPct() lässt eine bereits niedrigere Geschwindigkeit unverändert (kein künstliches Verlangsamen)');
+
+  // Passiver Ertrag bleibt von Runner-Kollisionen VOLLSTÄNDIG entkoppelt (Malus ist rein visuell).
+  const earnState = IdleCore.createInitialState();
+  const earnBefore = IdleCore.passiveEarn(earnState, 1);
+  IdleCore.applyCollisionMalus(earnState, 0);
+  const earnAfterCollision = IdleCore.passiveEarn(earnState, 1);
+  assert(earnBefore === earnAfterCollision, 'passiveEarn() ist unverändert nach einer Runner-Kollision (Malus ist rein visuell, KEIN Ertrags-Malus)');
+
+  // steerRunnerLane(): klemmt auf [0, RUNNER_LANE_COUNT-1] (kein Wechsel über den Rand hinaus).
+  const laneState = IdleCore.createInitialState();
+  for (let i = 0; i < IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT + 3; i++) IdleCore.steerRunnerLane(laneState, 1, 0);
+  assert(laneState.runner.lane === IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT - 1, 'steerRunnerLane() klemmt am rechten Rand auf die letzte Lane');
+  for (let i = 0; i < IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT + 3; i++) IdleCore.steerRunnerLane(laneState, -1, 0);
+  assert(laneState.runner.lane === 0, 'steerRunnerLane() klemmt am linken Rand auf Lane 0');
+
+  // v2→v3-Migration: ein v2-Save OHNE runner-Feld (vor feat(idle-runner)) bekommt defensiv einen gültigen runner-Zustand.
+  const v2Raw = { version: 2, km: 123, ownedBikeIds: ['z125pro'], currentBikeId: 'z125pro', bikeLevels: { z125pro: 0 } };
+  const migratedV2 = IdleCore.migrateState(v2Raw);
+  assert(migratedV2.version === IdleCore.IDLE_STATE_VERSION, 'migrateState() hebt ein v2-Save auf die aktuelle Version (3) an');
+  assert(migratedV2.runner && typeof migratedV2.runner === 'object', 'migrateState() füllt ein fehlendes runner-Feld (Save vor feat(idle-runner)) defensiv auf');
+  assert(
+    migratedV2.runner.lane === Math.floor(IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
+    'migrateState(): frisch aufgefüllte runner.lane startet mittig'
+  );
+  assert(migratedV2.runner.collisionMalusExpiresAt === null, 'migrateState(): frisch aufgefüllte runner.collisionMalusExpiresAt ist null (kein aktiver Malus)');
+  assert(migratedV2.km === 123, 'migrateState(): bestehende km bleiben bei der runner-Migration unangetastet');
+
+  // Ein bereits vorhandener, gültiger runner-Zustand bleibt bei erneuter Migration exakt erhalten.
+  const withRunnerRaw = { version: 3, km: 5, runner: { lane: 2, lastInputAt: 9999, collisionMalusExpiresAt: 12345 } };
+  const migratedWithRunner = IdleCore.migrateState(withRunnerRaw);
+  assert(
+    migratedWithRunner.runner.lane === 2 && migratedWithRunner.runner.lastInputAt === 9999 && migratedWithRunner.runner.collisionMalusExpiresAt === 12345,
+    'migrateState(): ein bereits vorhandener gültiger runner-Zustand bleibt exakt erhalten'
+  );
+
+  // Ein runner.lane ausserhalb des gültigen Bereichs wird defensiv auf die mittige Standard-Lane korrigiert.
+  const invalidLaneRaw = { version: 3, runner: { lane: 99, lastInputAt: null, collisionMalusExpiresAt: null } };
+  const migratedInvalidLane = IdleCore.migrateState(invalidLaneRaw);
+  assert(
+    migratedInvalidLane.runner.lane >= 0 && migratedInvalidLane.runner.lane < IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT,
+    'migrateState(): eine ungültige runner.lane wird defensiv auf den gültigen Bereich korrigiert'
+  );
+})();
+
 // ============================================================
 // Results
 // ============================================================

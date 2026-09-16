@@ -44,6 +44,20 @@
  * smashPiggybank) — ein zeitkritisches, rein optionales Extra (Verpassen
  * hat KEINE Strafe) mit einem km-Bonus + derselben wiederverwendeten
  * Gear-Drop-Chance wie payBill().
+ *
+ * Teil 1 (IDLE_STATE_VERSION 3) ersetzt die Oval-Renn-Strecke durch einen
+ * ENDLESS-RUNNER: eine 2–3-Lane-Straße, auf der Hindernisse Richtung
+ * Spieler vorrücken (Rendering + Steuerung/Touch/Tastatur lebt in
+ * idle.js, siehe dessen tickRunner()). Diese Datei liefert NUR die reinen
+ * Bausteine: Speed-Cap/Vorlaufzeit (runnerLeadSeconds — nie unter
+ * RUNNER_MIN_LEAD_SECONDS, unabhängig von der Bike-Geschwindigkeit),
+ * Hindernis-Dichte (obstacleDensity — steigt ÜBER den Speed-Cap hinaus
+ * stärker an, statt die Reaktionszeit zu gefährden), den rein VISUELLEN
+ * Kollisions-Geschwindigkeits-Malus (collisionSpeedMalus/
+ * applyCollisionMalus — NIEMALS ein Reset/Fail-State, NIEMALS ein Effekt
+ * auf passiveEarn()) sowie den Idle-Auto-Run (runnerActivityState/
+ * runnerAutoRunSpeedPct — passiver Ertrag läuft UNABHÄNGIG vom
+ * Steuerungs-/Kollisions-Zustand immer weiter, siehe passiveEarn()).
  */
 'use strict';
 
@@ -51,7 +65,7 @@
 var IDLE_STATE_KEY = 'vroooom_idle_state';
 
 /** Aktuelle Zustands-Versionsnummer (für migrateState). */
-var IDLE_STATE_VERSION = 2;
+var IDLE_STATE_VERSION = 3;
 
 /**
  * IDLE_BALANCE — zentrale Balancing-Konstanten für die gesamte Idle-Economy.
@@ -224,6 +238,64 @@ var IDLE_BALANCE = {
   PIGGY_KM_BONUS_MULTIPLIER: 6,
   /** Wahrscheinlichkeit (0–1), dass ein zerschlagenes Sparschwein zusätzlich ein Gear-Item dropt. */
   GEAR_DROP_CHANCE_ON_PIGGY_SMASH: 0.22,
+
+  /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße statt Oval-Strecke ──
+   * Ersetzt renderTrack()'s Oval durch eine perspektivische Lane-Straße
+   * (siehe idle.js): das Bike wechselt zwischen Lanes (Tastatur ←/→ bzw.
+   * A/D, Touch-Swipe), Hindernisse spawnen am Horizont und rücken
+   * Richtung Spieler vor. EIN Treffer verursacht NUR einen KURZEN,
+   * REIN VISUELLEN Geschwindigkeits-Einbruch (siehe collisionSpeedMalus()
+   * / applyCollisionMalus()) — NIEMALS einen Reset oder Fail-State; der
+   * passive km-Ertrag (passiveEarn()) ist davon komplett entkoppelt.
+   * Speed-Cap: die visuelle Scroll-Geschwindigkeit (runnerScrollSpeed())
+   * steigt mit geschwindigkeitPct bis RUNNER_SPEED_CAP_PCT, danach bleibt
+   * sie flach — das garantiert runnerLeadSeconds() >= RUNNER_MIN_LEAD_
+   * SECONDS für JEDES Bike/Tuning-Level (RUNNER_SPAWN_LEAD_DISTANCE ist
+   * bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_
+   * SECONDS exakt RUNNER_SPAWN_LEAD_DISTANCE ergibt). Oberhalb des Caps
+   * steigt stattdessen obstacleDensity() stärker an — schnellere Bikes
+   * bleiben dadurch spürbar anspruchsvoller, ohne die Reaktionszeit zu
+   * gefährden. Idle-Auto-Run: ohne Lane-Wechsel-Eingabe für RUNNER_IDLE_
+   * TIMEOUT_SECONDS gilt runnerActivityState() als 'idle' — das Bike fährt
+   * automatisch mit einer gedeckelten, aber VERLÄSSLICHEN Geschwindigkeit
+   * (runnerAutoRunSpeedPct()) weiter, Kollisionen werden im Idle-Modus
+   * grundsätzlich nicht ausgewertet (siehe idle.js tickRunner()) — Idle-
+   * Spieler:innen dürfen NIEMALS gegenüber aktivem Ausweichen benachteiligt
+   * werden (passiveEarn() lief ohnehin schon immer unabhängig davon). */
+  /** Anzahl der Fahrspuren der Runner-Straße. */
+  RUNNER_LANE_COUNT: 3,
+  /** Untere Schranke der Hindernis-Vorlaufzeit (Sekunden) — garantiert eine faire Reaktionszeit unabhängig von der Bike-Geschwindigkeit (siehe runnerLeadSeconds()). */
+  RUNNER_MIN_LEAD_SECONDS: 0.6,
+  /** Prozentsatz von geschwindigkeitPct, ab dem die visuelle Scroll-Geschwindigkeit der Straße nicht mehr weiter ansteigt (siehe runnerScrollSpeed()). */
+  RUNNER_SPEED_CAP_PCT: 70,
+  /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) bei geschwindigkeitPct=0. */
+  RUNNER_SCROLL_SPEED_BASE: 70,
+  /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) am/ab RUNNER_SPEED_CAP_PCT (Deckel). */
+  RUNNER_SCROLL_SPEED_MAX: 260,
+  /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position. Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (156 = 260 × 0.6) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. */
+  RUNNER_SPAWN_LEAD_DISTANCE: 156,
+  /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=0 (Basis-Spawnrate, siehe obstacleDensity()). */
+  RUNNER_OBSTACLE_DENSITY_BASE: 1,
+  /** Hindernis-Dichte-Multiplikator genau am Speed-Cap (RUNNER_SPEED_CAP_PCT). */
+  RUNNER_OBSTACLE_DENSITY_AT_CAP: 1.3,
+  /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=100 — steigt ÜBER den Speed-Cap hinaus stärker an, kompensiert die gedeckelte Scroll-Geschwindigkeit. */
+  RUNNER_OBSTACLE_DENSITY_MAX: 2.4,
+  /** Basis-Spawnintervall (Sekunden) für Hindernisse bei Dichte 1 (wird durch obstacleDensity() geteilt, siehe nextObstacleSpawnIntervalSeconds()). */
+  RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS: 1.8,
+  /** Zufälliger Jitter-Faktor (untere Grenze) auf das berechnete Spawnintervall — verhindert einen metronomartig gleichmässigen Rhythmus. */
+  RUNNER_OBSTACLE_SPAWN_JITTER_MIN: 0.8,
+  /** Zufälliger Jitter-Faktor (obere Grenze) auf das berechnete Spawnintervall. */
+  RUNNER_OBSTACLE_SPAWN_JITTER_MAX: 1.25,
+  /** Zurückgelegte Distanz (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*), nach der ein Distanz-Meilenstein erreicht ist — ersetzt die frühere rundenbasierte onLapCompleted()-Auslösung durch einen äquivalenten, geschwindigkeitsabhängigen Distanz-Trigger (siehe idle.js tickRunner()). */
+  RUNNER_LAP_DISTANCE_UNITS: 1000,
+  /** Multiplikator (<1), der die visuelle Geschwindigkeit für RUNNER_COLLISION_MALUS_DURATION_MS nach einer Kollision reduziert (siehe collisionSpeedMalus()). NUR visuell — passiveEarn()/activeEarn() sind unberührt. */
+  RUNNER_COLLISION_MALUS_MULTIPLIER: 0.55,
+  /** Dauer (ms) des kurzen visuellen Geschwindigkeits-Einbruchs nach einer Kollision. */
+  RUNNER_COLLISION_MALUS_DURATION_MS: 1200,
+  /** Sekunden ohne Lane-Wechsel-Eingabe, nach denen der Auto-Run (Idle-Modus) greift (siehe runnerActivityState()). */
+  RUNNER_IDLE_TIMEOUT_SECONDS: 4,
+  /** Deckel der visuellen Geschwindigkeit (%) im Auto-Run-/Idle-Modus — "reduziert, aber verlässlich" (siehe runnerAutoRunSpeedPct()); Kollisionen werden im Idle-Modus grundsätzlich nicht ausgewertet (siehe idle.js tickRunner()). */
+  RUNNER_AUTO_RUN_SPEED_CAP_PCT: 45,
 };
 
 /**
@@ -568,6 +640,24 @@ function createInitialState() {
      * Lebenszeit-Zähler, überlebt Saison-Resets (siehe finishSeason()),
      * genutzt für die "10 Sparschweine zerschlagen"-Achievement. */
     piggy: { smashedCount: 0 },
+
+    /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße ───────────────────
+     * lane = aktuell gewählte Fahrspur (0-basiert, startet mittig).
+     * lastInputAt = Zeitstempel (ms) der letzten Lane-Wechsel-Eingabe,
+     * null = noch nie gesteuert (→ runnerActivityState() liefert sofort
+     * 'idle', der Auto-Run greift also von Anfang an, siehe idle.js).
+     * collisionMalusExpiresAt = Zeitstempel (ms), bis zu dem der rein
+     * visuelle Kollisions-Geschwindigkeits-Malus aktiv ist (null = kein
+     * aktiver Malus, siehe collisionSpeedMalus()/applyCollisionMalus()).
+     * Hindernisse selbst werden bewusst NICHT persistiert (transienter
+     * Laufzeit-Zustand in idle.js, identisches Muster zu trackTrail/
+     * piggyState/shiftState) — ein Reload startet einfach mit einer
+     * leeren Straße, ohne die Runner-Mechanik zu beeinträchtigen. */
+    runner: {
+      lane: Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
+      lastInputAt: null,
+      collisionMalusExpiresAt: null,
+    },
   };
 }
 
@@ -653,6 +743,27 @@ function migratePiggy(raw, fresh) {
 }
 
 /**
+ * Migriert das runner-Feld (Teil 1: Endless-Runner-Lane/Kollisions-Malus)
+ * defensiv — u. a. für v2→v3-Saves (vor feat(idle-runner)), die dieses
+ * Feld noch gar nicht kennen. Eine runner.lane ausserhalb des gültigen
+ * Bereichs (z. B. aus einem Save mit einer inzwischen geänderten
+ * RUNNER_LANE_COUNT) wird auf die mittige Standard-Lane zurückgesetzt.
+ * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
+ * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
+ * @returns {Object} Gültiges runner-Objekt.
+ */
+function migrateRunner(raw, fresh) {
+  var rr = raw && raw.runner && typeof raw.runner === 'object' ? raw.runner : {};
+  var laneCount = IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var laneValid = typeof rr.lane === 'number' && rr.lane >= 0 && rr.lane < laneCount;
+  return {
+    lane: laneValid ? rr.lane : fresh.runner.lane,
+    lastInputAt: typeof rr.lastInputAt === 'number' ? rr.lastInputAt : fresh.runner.lastInputAt,
+    collisionMalusExpiresAt: typeof rr.collisionMalusExpiresAt === 'number' ? rr.collisionMalusExpiresAt : fresh.runner.collisionMalusExpiresAt,
+  };
+}
+
+/**
  * Migriert das offline-Feld (Zeitstempel der letzten Sichtung) defensiv.
  * @param {*} raw - Rohes Zustandsobjekt (evtl. null/korrupt).
  * @param {Object} fresh - Frischer Referenzzustand für Standardwerte.
@@ -719,6 +830,7 @@ function migrateState(raw) {
     finance: migrateFinance(raw, fresh),
     gear: migrateGear(raw, fresh),
     piggy: migratePiggy(raw, fresh),
+    runner: migrateRunner(raw, fresh),
   };
 
   if (state.ownedBikeIds.length === 0) state.ownedBikeIds = fresh.ownedBikeIds.slice();
@@ -1785,6 +1897,195 @@ function smashPiggybank(state, rng) {
 }
 
 /* ============================================================
+   TEIL 1 — ENDLESS-RUNNER: 2–3-Lane-Straße — feat(idle-runner)
+   ============================================================ */
+
+/**
+ * Stellt sicher, dass state.runner ein gültiges Objekt ist (defensiv, für
+ * Zustände, die nicht über createInitialState()/migrateState() gelaufen
+ * sind, z. B. handgebaute Test-Zustände — mirrors ensureComboState()).
+ * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
+ * @returns {void}
+ */
+function ensureRunnerState(state) {
+  if (!state.runner || typeof state.runner !== 'object') {
+    state.runner = {
+      lane: Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2),
+      lastInputAt: null,
+      collisionMalusExpiresAt: null,
+    };
+  }
+}
+
+/**
+ * Wechselt die aktuelle Fahrspur um EINE Lane in die gegebene Richtung,
+ * geklemmt auf [0, RUNNER_LANE_COUNT-1] (kein Wechsel über den Rand
+ * hinaus möglich). Aktualisiert zusätzlich lastInputAt — jede Steuerungs-
+ * Eingabe zählt dadurch automatisch als "aktiv" (siehe runnerActivityState()).
+ * Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} direction - Richtung: <0 = eine Lane nach links, >0 = eine Lane nach rechts, 0 = keine Änderung (nur lastInputAt wird aktualisiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Die neue, geklemmte Lane.
+ */
+function steerRunnerLane(state, direction, nowMs) {
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  var delta = direction < 0 ? -1 : (direction > 0 ? 1 : 0);
+  var next = Math.max(0, Math.min(IDLE_BALANCE.RUNNER_LANE_COUNT - 1, state.runner.lane + delta));
+  state.runner.lane = next;
+  state.runner.lastInputAt = now;
+  return next;
+}
+
+/**
+ * Liefert den aktuellen Aktivitäts-Zustand des Runners: 'active', solange
+ * die letzte Lane-Wechsel-Eingabe weniger als RUNNER_IDLE_TIMEOUT_SECONDS
+ * zurückliegt, sonst 'idle' (Auto-Run, siehe runnerAutoRunSpeedPct()).
+ * Ein frischer Zustand (lastInputAt === null, noch nie gesteuert) gilt
+ * SOFORT als 'idle' — Idle-Spieler:innen starten dadurch ohne jede
+ * Eingabe direkt im verlässlichen Auto-Run. Reine Funktion.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {('active'|'idle')} Aktueller Aktivitäts-Zustand.
+ */
+function runnerActivityState(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  if (!state || !state.runner || typeof state.runner.lastInputAt !== 'number') return 'idle';
+  var elapsedSeconds = (now - state.runner.lastInputAt) / 1000;
+  return elapsedSeconds >= IDLE_BALANCE.RUNNER_IDLE_TIMEOUT_SECONDS ? 'idle' : 'active';
+}
+
+/**
+ * Deckelt die visuelle Geschwindigkeit (%) im Auto-Run-/Idle-Modus auf
+ * RUNNER_AUTO_RUN_SPEED_CAP_PCT — "reduziert, aber verlässlich": ein
+ * bereits langsameres Bike wird NICHT künstlich verlangsamt, ein
+ * schnelleres Bike wird auf den Deckel gebremst. Reine Funktion.
+ * @param {number} speedPct - Rohe Bike-Geschwindigkeit (0–100%, siehe deriveBikeStats().geschwindigkeitPct).
+ * @returns {number} Gedeckelte Auto-Run-Geschwindigkeit (0–100%).
+ */
+function runnerAutoRunSpeedPct(speedPct) {
+  return Math.min(clampPct(speedPct), IDLE_BALANCE.RUNNER_AUTO_RUN_SPEED_CAP_PCT);
+}
+
+/**
+ * Berechnet die visuelle Scroll-Geschwindigkeit der Runner-Straße
+ * (abstrakte Einheiten/Sekunde) für eine gegebene Bike-Geschwindigkeit:
+ * steigt linear mit speedPct bis RUNNER_SPEED_CAP_PCT, danach bleibt sie
+ * konstant bei RUNNER_SCROLL_SPEED_MAX (Speed-Cap, siehe runnerLeadSeconds()).
+ * Reine Funktion.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @returns {number} Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde, > 0).
+ */
+function runnerScrollSpeed(speedPct) {
+  var cap = IDLE_BALANCE.RUNNER_SPEED_CAP_PCT;
+  var cappedPct = Math.min(clampPct(speedPct), cap);
+  var ratio = cap > 0 ? cappedPct / cap : 0;
+  return IDLE_BALANCE.RUNNER_SCROLL_SPEED_BASE + (IDLE_BALANCE.RUNNER_SCROLL_SPEED_MAX - IDLE_BALANCE.RUNNER_SCROLL_SPEED_BASE) * ratio;
+}
+
+/**
+ * Berechnet die Hindernis-Vorlaufzeit (Sekunden) für eine gegebene
+ * Bike-Geschwindigkeit: die Zeit, die ein Hindernis vom Spawn (Horizont)
+ * bis zur Spieler-Position benötigt (RUNNER_SPAWN_LEAD_DISTANCE geteilt
+ * durch runnerScrollSpeed()). NIE unter RUNNER_MIN_LEAD_SECONDS geklemmt —
+ * dank des Speed-Caps in runnerScrollSpeed() greift dieser Boden ab
+ * RUNNER_SPEED_CAP_PCT ohnehin automatisch (die Konstanten sind bewusst
+ * so gewählt, dass beide exakt zusammenfallen), der explizite Math.max()
+ * ist die zusätzliche Sicherheits-Garantie. Reine Funktion.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @returns {number} Vorlaufzeit in Sekunden (>= RUNNER_MIN_LEAD_SECONDS).
+ */
+function runnerLeadSeconds(speedPct) {
+  var scrollSpeed = runnerScrollSpeed(speedPct);
+  var raw = scrollSpeed > 0 ? IDLE_BALANCE.RUNNER_SPAWN_LEAD_DISTANCE / scrollSpeed : Infinity;
+  return Math.max(IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS, raw);
+}
+
+/**
+ * Berechnet den Hindernis-Dichte-Multiplikator für eine gegebene
+ * Bike-Geschwindigkeit: steigt sanft von RUNNER_OBSTACLE_DENSITY_BASE
+ * (bei 0%) auf RUNNER_OBSTACLE_DENSITY_AT_CAP (bei RUNNER_SPEED_CAP_PCT),
+ * und darüber hinaus STÄRKER weiter auf RUNNER_OBSTACLE_DENSITY_MAX (bei
+ * 100%) — kompensiert so die ab dem Speed-Cap gedeckelte Scroll-
+ * Geschwindigkeit (siehe runnerScrollSpeed()), damit schnellere Bikes
+ * trotzdem spürbar anspruchsvoller bleiben, ohne die durch
+ * runnerLeadSeconds() garantierte Reaktionszeit zu gefährden. Monoton
+ * nicht-fallend über den gesamten 0–100%-Bereich. Reine Funktion.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @returns {number} Dichte-Multiplikator (>= RUNNER_OBSTACLE_DENSITY_BASE).
+ */
+function obstacleDensity(speedPct) {
+  var pct = clampPct(speedPct);
+  var cap = IDLE_BALANCE.RUNNER_SPEED_CAP_PCT;
+  var base = IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_BASE;
+  var atCap = IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_AT_CAP;
+  var max = IDLE_BALANCE.RUNNER_OBSTACLE_DENSITY_MAX;
+  if (pct <= cap) {
+    return cap > 0 ? base + (atCap - base) * (pct / cap) : atCap;
+  }
+  var overCapFraction = (100 - cap) > 0 ? (pct - cap) / (100 - cap) : 1;
+  return atCap + (max - atCap) * overCapFraction;
+}
+
+/**
+ * Würfelt das nächste Zufallsintervall (Sekunden) bis zum nächsten
+ * Hindernis, skaliert mit obstacleDensity(speedPct) (höhere Dichte →
+ * kürzeres Intervall) PLUS einem zufälligen Jitter-Faktor (verhindert
+ * einen metronomartig gleichmässigen Rhythmus — identisches Prinzip zu
+ * nextPiggyIntervalSeconds()/nextShiftIntervalSeconds()). Zufälligkeit
+ * wird als Parameter übergeben, damit die Funktion deterministisch
+ * testbar bleibt.
+ * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
+ * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {number} Sekunden bis zum nächsten Hindernis (> 0).
+ */
+function nextObstacleSpawnIntervalSeconds(speedPct, randomFn) {
+  var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
+  var density = obstacleDensity(speedPct);
+  var base = density > 0 ? IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS / density : IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS;
+  var jitterMin = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MIN;
+  var jitterMax = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MAX;
+  return base * (jitterMin + rnd() * (jitterMax - jitterMin));
+}
+
+/**
+ * Löst den rein VISUELLEN Kollisions-Geschwindigkeits-Malus aus: setzt
+ * einen Ablauf-Zeitstempel (state.runner.collisionMalusExpiresAt), bis zu
+ * dem collisionSpeedMalus() den konfigurierten Malus-Multiplikator
+ * liefert. Betrifft ausschliesslich die Anzeige (Strecke/Tacho/Sound,
+ * siehe idle.js tickRunner()) — NIEMALS passiveEarn()/activeEarn(), NIE
+ * ein Reset/Fail-State. Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Der neue Ablauf-Zeitstempel (ms).
+ */
+function applyCollisionMalus(state, nowMs) {
+  ensureRunnerState(state);
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  state.runner.collisionMalusExpiresAt = now + IDLE_BALANCE.RUNNER_COLLISION_MALUS_DURATION_MS;
+  return state.runner.collisionMalusExpiresAt;
+}
+
+/**
+ * Liefert den aktuell aktiven, rein visuellen Kollisions-Geschwindigkeits-
+ * Multiplikator: 1 (kein Malus), solange keine Kollision aktiv/noch nicht
+ * abgelaufen ist, sonst IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER
+ * (< 1). Erholt sich automatisch nach RUNNER_COLLISION_MALUS_DURATION_MS —
+ * identisches Erholungs-Muster wie activeComboMultiplier(). Reine
+ * Funktion — mutiert state NICHT.
+ * @param {Object} state - Zentraler Idle-Zustand.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now().
+ * @returns {number} Aktiver Malus-Multiplikator (RUNNER_COLLISION_MALUS_MULTIPLIER oder 1).
+ */
+function collisionSpeedMalus(state, nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  if (!state || !state.runner || typeof state.runner.collisionMalusExpiresAt !== 'number') return 1;
+  if (now >= state.runner.collisionMalusExpiresAt) return 1;
+  return IDLE_BALANCE.RUNNER_COLLISION_MALUS_MULTIPLIER;
+}
+
+/* ============================================================
    OFFLINE-ERTRAG — feat(idle-offline)
    ============================================================ */
 
@@ -1940,6 +2241,18 @@ var IdleCore = {
   piggyVisibleSeconds: piggyVisibleSeconds,
   piggybankReward: piggybankReward,
   smashPiggybank: smashPiggybank,
+
+  /* ── Teil 1: ENDLESS-RUNNER — 2–3-Lane-Straße — feat(idle-runner) ──── */
+  ensureRunnerState: ensureRunnerState,
+  steerRunnerLane: steerRunnerLane,
+  runnerActivityState: runnerActivityState,
+  runnerAutoRunSpeedPct: runnerAutoRunSpeedPct,
+  runnerScrollSpeed: runnerScrollSpeed,
+  runnerLeadSeconds: runnerLeadSeconds,
+  obstacleDensity: obstacleDensity,
+  nextObstacleSpawnIntervalSeconds: nextObstacleSpawnIntervalSeconds,
+  applyCollisionMalus: applyCollisionMalus,
+  collisionSpeedMalus: collisionSpeedMalus,
 
   /* ── Phase C: Offline-Ertrag ──────────────────────────────────────── */
   offlineEarn: offlineEarn,
