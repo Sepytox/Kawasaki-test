@@ -154,6 +154,111 @@
   border-color: var(--accent-dim);
 }
 
+/* ── Score-/Highscore-HUD (Teil 4) — feat(score) ─────────────────────
+   Oben rechts über der Strecke (spiegelbildlich zu .idle-track-mode
+   oben links) — der Score-Wert selbst wird von idle.js schnell
+   getweent (RUN_SCORE_DISPLAY_EASE), hier nur statisch gestylt. */
+.idle-run-score-hud {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  padding: 0.3rem 0.65rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  pointer-events: none;
+  z-index: 4;
+}
+.idle-run-score-hud-label {
+  font-size: 0.68em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-wide, 0.04em);
+}
+.idle-run-score-hud-value {
+  font-family: var(--font-display);
+  font-weight: var(--fw-black);
+  font-size: 1.3em;
+  color: var(--accent);
+  line-height: 1.1;
+}
+.idle-run-score-hud-highscore {
+  font-size: 0.7em;
+  color: var(--text-subtle);
+}
+.idle-run-score-hud-highscore strong {
+  color: var(--text-muted);
+}
+
+/* ── Near-Miss-Popup (Teil 4) — feat(nearmiss) ───────────────────────
+   Kurzer, zentrierter "Knapp vorbei!"-Text über der Strecke, blendet
+   sich ein und wieder aus (siehe idle.js showNearMissPopup()). */
+.idle-near-miss-popup {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0.35rem 0.9rem;
+  font-weight: var(--fw-bold);
+  font-size: 1em;
+  color: #fff;
+  background: rgba(0, 112, 243, 0.85);
+  border-radius: var(--radius-full, 999px);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: opacity var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              transform var(--dur-base, 0.25s) var(--ease-spring, ease);
+}
+.idle-near-miss-popup.is-visible {
+  opacity: 1;
+  transform: translate(-50%, -140%);
+}
+
+/* ── Powerup-Timer-HUD (Teil 4) — feat(powerups) ─────────────────────
+   Reihe kleiner Icon+Timer-Badges, EINS je aktivem Effekt (siehe
+   idle.js updatePowerupHud()) — leer/unsichtbar, solange kein Effekt
+   aktiv ist (.is-empty setzt keinen sichtbaren Container-Rahmen). */
+.idle-powerup-hud {
+  position: absolute;
+  bottom: 0.6rem;
+  left: 0.6rem;
+  display: flex;
+  gap: 0.35rem;
+  z-index: 4;
+  pointer-events: none;
+}
+.idle-powerup-hud-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8em;
+  font-family: var(--font-mono);
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full, 999px);
+}
+.idle-powerup-hud-badge[hidden] {
+  display: none;
+}
+.idle-powerup-hud-timer {
+  color: var(--text-muted);
+}
+
+/* Near-Miss-Combo-Badge (Teil 4) — reused .idle-combo-badge-Basis, siehe
+   idle.html — eigenständig von der Schaltpunkt-Combo, gleiche Optik. */
+.idle-run-combo-badge #idleRunComboMultiplier {
+  color: var(--accent);
+  font-weight: var(--fw-bold);
+}
+
 /* Steuerungs-Hinweis unter der Strecke (Teil 1) — dezent, informativ. */
 .idle-track-hint {
   text-align: center;
@@ -1156,4 +1261,11 @@
   /* is-shielded ist ohnehin nur eine statische Regel (kein @keyframes) — nichts zu deaktivieren. */
   .idle-run-summary,
   .idle-run-summary-card { transition: none; }
+  /* Near-Miss-Popup (Teil 4): nur das Ein-/Ausblenden bleibt, der zusätzliche Aufstiegs-Transform entfällt. */
+  .idle-near-miss-popup {
+    transition: opacity var(--dur-fast, 0.15s) var(--ease-standard, ease);
+  }
+  .idle-near-miss-popup.is-visible {
+    transform: translate(-50%, -50%);
+  }
 }

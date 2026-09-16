@@ -139,10 +139,22 @@
   var POWERUP_COLLECT_ANIM_MS = 220;
   /** Anzeigedauer (ms) des kurzen Schild-Block-Flash/Toasts (siehe triggerShieldFeedback()). */
   var POWERUP_SHIELD_FLASH_MS = 320;
-  /** Emoji je Powerup-Typ, rein dekorativ. */
-  var POWERUP_ICONS = { magnet: '🧲', schild: '🛡️', turbo: '🚀', muenzregen: '💰' };
-  /** Deutsche Anzeigenamen je Powerup-Typ (Toasts/aria-label). */
-  var POWERUP_NAMES = { magnet: 'Magnet', schild: 'Schild', turbo: 'Turbo', muenzregen: 'Münzregen' };
+  /** Emoji je Powerup-Typ, rein dekorativ (Teil 4: 'muenzregen' durch 'scoreX2' ersetzt). */
+  var POWERUP_ICONS = { magnet: '🧲', schild: '🛡️', turbo: '🚀', scoreX2: '✨' };
+  /** Deutsche Anzeigenamen je Powerup-Typ (Toasts/aria-label/HUD). */
+  var POWERUP_NAMES = { magnet: 'Magnet', schild: 'Schild', turbo: 'Turbo', scoreX2: 'Score x2' };
+
+  /* ── Teil 4: RUN-FEEL — Score-HUD/Münz-Trails/Near-Miss-Combo/Powerup-
+   * Timer-HUD/Schwierigkeitskurve — feat(score)/feat(coins)/
+   * feat(nearmiss)/feat(powerups)/feat(difficulty) ──────────────────── */
+  /** Glättungsfaktor pro Frame für die "schnell hochzählende" Score-Anzeige (0..1, höher = schneller — bewusst deutlich schneller als KM_DISPLAY_EASE). */
+  var RUN_SCORE_DISPLAY_EASE = 0.35;
+  /** Differenz-Schwelle (Score-Punkte), unterhalb derer die Score-Anzeige direkt auf den Zielwert springt. */
+  var RUN_SCORE_DISPLAY_SNAP_THRESHOLD = 0.5;
+  /** Anzeigedauer (ms) des "Knapp vorbei!"-Near-Miss-Popups, bevor es wieder ausblendet. */
+  var NEAR_MISS_POPUP_MS = 850;
+  /** Reihenfolge/Icons der Powerup-Timer-HUD-Badges (Teil 4) — identisch zu POWERUP_ICONS, aber als feste Liste für eine stabile HUD-Reihenfolge. */
+  var POWERUP_HUD_TYPES = ['magnet', 'schild', 'turbo', 'scoreX2'];
 
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = ApiClient.loadIdleState();
@@ -218,9 +230,17 @@
    * Kollisionsauswertung desselben Hindernisses. */
   var runnerObstacles = [];
   /** Sekunden bis zum nächsten Hindernis-Spawn (siehe tickRunner()). */
-  var runnerSpawnTimerSeconds = IdleCore.nextObstacleSpawnIntervalSeconds(0, Math.random);
+  var runnerSpawnTimerSeconds = IdleCore.nextObstacleSpawnIntervalSeconds(0, Math.random, 0);
   /** Aufsummierte Scroll-Distanz seit dem letzten Distanz-Meilenstein (ersetzt die frühere Runden-Erkennung, siehe onLapCompleted()). */
   var runnerLapProgressUnits = 0;
+  /* ── Teil 4: Münz-Trails — Laufzeit-Zustand (feat(coins)) ─────────
+   * Analog zu runnerObstacles: {lane, displayLane, t, resolved} — t läuft
+   * von <=0 (noch nicht erschienen, gestaffelter Trail-Versatz via
+   * generateCoinTrail()'s offsetT) bis >1 (vorbeigefahren, entfernt). NICHT
+   * persistiert (identisches Muster zu runnerObstacles). */
+  var runnerCoins = [];
+  /** Sekunden bis zum nächsten Münz-Trail-Spawn (siehe tickRunner()). */
+  var runnerCoinSpawnTimerSeconds = IdleCore.nextCoinTrailIntervalSeconds(Math.random);
   /** Weich nachlaufende (getweente) Lane-Position des Bike-Markers (Float, für einen sanften Lane-Wechsel statt eines harten Sprungs). */
   var runnerBikeDisplayLane = state.runner.lane;
   /** Timeout-Handle des aktuell angezeigten Kollisions-Flash/Shake-Effekts (für Re-Trigger bei schnell aufeinanderfolgenden Treffern). */
@@ -230,6 +250,12 @@
   /** DOM-Referenzen für Canvas + 2D-Kontext (einmalig aufgelöst, siehe initCanvases()). */
   var trackCanvas = null, trackCtx = null;
   var tachoCanvas = null, tachoCtx = null;
+
+  /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
+  /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
+  var displayedRunScore = 0;
+  /** Timeout-Handle des aktuell angezeigten Near-Miss-Popups (für Re-Trigger bei schnell aufeinanderfolgenden Near-Misses). */
+  var nearMissPopupTimeoutId = null;
 
   /* ── Tacho: Laufzeit-Zustand ─────────────────────────────────────── */
   /** Aktuell angezeigter (weich nachlaufender) Tacho-Nadel-Prozentwert. */
@@ -706,21 +732,50 @@
   }
 
   /**
-   * Fügt ein neues Hindernis am Horizont (t=0) auf einer zufälligen Lane
-   * hinzu (siehe tickRunner()). `lane` ist die für die Kollisionsprüfung
-   * massgebliche (unveränderliche) Lane, `displayLane` die für das
-   * Zeichnen genutzte, ggf. vom Magnet-Effekt weich Richtung Bike-Lane
-   * gezogene Lane (siehe tickRunner()/renderTrack()). `type` (Teil 3,
-   * feat(obstacles)) bestimmt die passende Ausweich-Aktion: 'side'
-   * (Lane wechseln), 'lowBar' (springen, IdleCore.jumpRunner()) oder
-   * 'highBarrier' (ducken, IdleCore.duckRunner()) — siehe
-   * IdleCore.rollObstacleType()/detectRunCollision().
+   * Fügt eine neue Hindernis-WELLE am Horizont (t=0) hinzu (Teil 3+4,
+   * feat(obstacles)/feat(difficulty)): die Wellen-GRÖSSE (1 bis
+   * laneCount-1 gleichzeitige Hindernisse auf UNTERSCHIEDLICHEN Lanes,
+   * siehe IdleCore.runDifficultyWaveSize()) steigt mit der bereits
+   * zurückgelegten In-Run-Distanz (state.run.distanceUnits) — ab Distanz-
+   * Schwellenwerten spawnen dadurch KOMBINIERTE Muster (z. B. 'side' auf
+   * einer Lane UND 'lowBar' auf einer anderen), IMMER mit mindestens
+   * einer garantiert freien Lane (nie unmöglich/unfair). `lane` ist die
+   * für die Kollisionsprüfung massgebliche (unveränderliche) Lane,
+   * `displayLane` die für das Zeichnen genutzte, ggf. vom Magnet-Effekt
+   * weich Richtung Bike-Lane gezogene Lane (siehe tickRunner()/
+   * renderTrack()). `type` (Teil 3, feat(obstacles)) bestimmt die
+   * passende Ausweich-Aktion: 'side' (Lane wechseln), 'lowBar'
+   * (springen, IdleCore.jumpRunner()) oder 'highBarrier' (ducken,
+   * IdleCore.duckRunner()) — siehe IdleCore.rollObstacleType()/
+   * detectRunCollision().
    * @returns {void}
    */
   function spawnRunnerObstacle() {
-    var lane = Math.floor(Math.random() * IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
-    var type = IdleCore.rollObstacleType(Math.random);
-    runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false, type: type });
+    var laneCount = IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT;
+    var waveSize = IdleCore.runDifficultyWaveSize(state.run.distanceUnits, laneCount);
+    var availableLanes = [];
+    for (var i = 0; i < laneCount; i++) availableLanes.push(i);
+    for (var w = 0; w < waveSize && availableLanes.length > 0; w++) {
+      var pickIndex = Math.floor(Math.random() * availableLanes.length);
+      var lane = availableLanes.splice(pickIndex, 1)[0];
+      var type = IdleCore.rollObstacleType(Math.random);
+      runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false, type: type });
+    }
+  }
+
+  /**
+   * Fügt einen neuen Münz-Trail hinzu (Teil 4, feat(coins)) — eine
+   * gerade Linie oder ein über Lanes wandernder Bogen (IdleCore.
+   * generateCoinTrail()), gestaffelt in der Tiefe (negatives Start-`t`
+   * pro Münze, siehe deren offsetT), sodass der Trail wie eine Perlen-
+   * kette Richtung Spieler auf die Strecke läuft (siehe tickRunner()).
+   * @returns {void}
+   */
+  function spawnCoinTrail() {
+    var pattern = IdleCore.generateCoinTrail(Math.random, IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
+    pattern.forEach(function (coinDef) {
+      runnerCoins.push({ lane: coinDef.lane, displayLane: coinDef.lane, t: -coinDef.offsetT, resolved: false });
+    });
   }
 
   /**
@@ -784,6 +839,134 @@
   }
 
   /**
+   * Aktualisiert die live SCORE-HUD + die persistente Highscore-Anzeige
+   * (Teil 4, feat(score)) — der angezeigte Score-Wert "tweent" (RUN_
+   * SCORE_DISPLAY_EASE, bewusst deutlich schneller als die km-Anzeige,
+   * damit ein Score-Zuwachs "auffällig schnell" hochzählt) Richtung des
+   * tatsächlichen state.run.score, springt aber bei einer sehr kleinen
+   * Restdifferenz (RUN_SCORE_DISPLAY_SNAP_THRESHOLD) direkt auf den
+   * Zielwert (identisches Prinzip zu updateKmDisplay()). Die Highscore-
+   * Anzeige selbst wird nicht getweent (sie ändert sich ohnehin nur beim
+   * Run-Ende, siehe IdleCore.endRun()).
+   * @returns {void}
+   */
+  function updateRunScoreHud() {
+    var target = state.run.score;
+    var diff = target - displayedRunScore;
+    if (Math.abs(diff) < RUN_SCORE_DISPLAY_SNAP_THRESHOLD) {
+      displayedRunScore = target;
+    } else {
+      displayedRunScore += diff * RUN_SCORE_DISPLAY_EASE;
+    }
+    var scoreEl = document.getElementById('idleRunScore');
+    if (scoreEl) scoreEl.textContent = String(Math.floor(displayedRunScore));
+    var highscoreEl = document.getElementById('idleRunHighscore');
+    if (highscoreEl) highscoreEl.textContent = String(Math.floor(state.runHighscore));
+  }
+
+  /**
+   * Aktualisiert die Near-Miss-Combo-HUD (Teil 4, feat(nearmiss)) —
+   * zeigt die aktuelle Combo-Anzahl + den daraus abgeleiteten Score-
+   * Multiplikator (state.run.comboMult, siehe IdleCore.
+   * runComboMultiplier()), versteckt sich komplett bei Combo 0 (kein
+   * Near-Miss seit Run-Start bzw. seit dem letzten Crash).
+   * @returns {void}
+   */
+  function updateRunComboHud() {
+    var badge = document.getElementById('idleRunComboBadge');
+    if (!badge) return;
+    var combo = state.run.combo || 0;
+    badge.hidden = combo <= 0;
+    if (combo <= 0) return;
+    var countEl = document.getElementById('idleRunComboCount');
+    var multEl = document.getElementById('idleRunComboMultiplier');
+    if (countEl) countEl.textContent = '💨 Near-Miss ×' + combo;
+    var activeMultiplier = state.run.comboMult || 1;
+    if (multEl) multEl.textContent = activeMultiplier > 1 ? ('· Score ×' + formatMultiplier(activeMultiplier)) : '';
+  }
+
+  /**
+   * Zeigt das kurze "Knapp vorbei!"-Near-Miss-Popup über der Strecke
+   * (Teil 4, feat(nearmiss)) — respektiert prefers-reduced-motion (nur
+   * ein sanftes Ein-/Ausblenden statt der zusätzlichen Aufstiegs-
+   * Bewegung, siehe idle.css).
+   * @param {number} bonus - Gutgeschriebener Score-Bonus (siehe IdleCore.registerNearMiss()).
+   * @returns {void}
+   */
+  function showNearMissPopup(bonus) {
+    var popup = document.getElementById('idleNearMissPopup');
+    if (!popup) return;
+    popup.textContent = '💨 Knapp vorbei! +' + Math.floor(bonus);
+    popup.classList.remove('is-visible');
+    void popup.offsetWidth;
+    popup.classList.add('is-visible');
+    if (nearMissPopupTimeoutId) clearTimeout(nearMissPopupTimeoutId);
+    nearMissPopupTimeoutId = setTimeout(function () {
+      popup.classList.remove('is-visible');
+    }, NEAR_MISS_POPUP_MS);
+  }
+
+  /**
+   * Verbucht einen erkannten Near-Miss (Teil 4, feat(nearmiss)) —
+   * IdleCore.registerNearMiss() (Combo/Score-Bonus, reine Zustands-
+   * Mutation) + die dazugehörige UI (Popup + Combo-HUD).
+   * @param {number} nowMs - Zeitstempel "jetzt" in ms.
+   * @returns {void}
+   */
+  function triggerNearMiss(nowMs) {
+    var result = IdleCore.registerNearMiss(state, nowMs);
+    showNearMissPopup(result.bonus);
+    updateRunComboHud();
+  }
+
+  /**
+   * Berechnet die verbleibenden Sekunden eines Powerup-Effekts bis zu
+   * seinem *ExpiresAt-Zeitstempel (Teil 4, feat(powerups)) — 0, falls
+   * inaktiv/abgelaufen. Reine Hilfsfunktion für die Timer-HUD.
+   * @param {?number} expiresAt - Ablauf-Zeitstempel (ms) oder null.
+   * @param {number} nowMs - Zeitstempel "jetzt" in ms.
+   * @returns {number} Verbleibende Sekunden (>= 0).
+   */
+  function powerupRemainingSeconds(expiresAt, nowMs) {
+    if (typeof expiresAt !== 'number' || nowMs >= expiresAt) return 0;
+    return (expiresAt - nowMs) / 1000;
+  }
+
+  /**
+   * Aktualisiert die Powerup-Timer-HUD (Teil 4, feat(powerups)) — jeder
+   * der 4 Typen (Magnet/Schild/Turbo/Score-x2) zeigt EIN Badge mit Icon +
+   * verbleibenden Sekunden, NUR solange sein Effekt aktiv ist (mirrors
+   * das bestehende "kein UI ohne aktiven Zustand"-Prinzip, siehe
+   * .idle-combo-badge[hidden]).
+   * @param {number} nowMs - Zeitstempel "jetzt" in ms.
+   * @returns {void}
+   */
+  function updatePowerupHud(nowMs) {
+    var hud = document.getElementById('idlePowerupHud');
+    if (!hud) return;
+    var expiresAtByType = {
+      magnet: state.powerups.magnetExpiresAt,
+      schild: state.powerups.shieldExpiresAt,
+      turbo: state.powerups.turboExpiresAt,
+      scoreX2: state.powerups.scoreX2ExpiresAt,
+    };
+    var anyActive = false;
+    POWERUP_HUD_TYPES.forEach(function (type) {
+      var badge = document.getElementById('idlePowerupHud-' + type);
+      if (!badge) return;
+      var remaining = powerupRemainingSeconds(expiresAtByType[type], nowMs);
+      var active = remaining > 0;
+      badge.hidden = !active;
+      if (active) {
+        anyActive = true;
+        var timerEl = badge.querySelector('.idle-powerup-hud-timer');
+        if (timerEl) timerEl.textContent = Math.ceil(remaining) + 's';
+      }
+    });
+    hud.classList.toggle('is-empty', !anyActive);
+  }
+
+  /**
    * Behandelt einen tatsächlichen Crash (Teil 3, feat(crash)) — beendet
    * den laufenden Run (IdleCore.endRun(), der EINZIGE Punkt, an dem
    * gesammelte Run-Coins der PROGRESS-Schicht gutgeschrieben werden),
@@ -800,6 +983,10 @@
     triggerCollisionFeedback();
     renderAll();
     checkIdleAchievements();
+    // Teil 4 (feat(nearmiss)): endRun() resettet state.run.combo auf 0 —
+    // die Combo-HUD soll das SOFORT widerspiegeln (nicht erst beim
+    // nächsten Near-Miss nach dem Neustart).
+    updateRunComboHud();
     showCrashSummary(summary);
   }
 
@@ -845,9 +1032,16 @@
   function restartRunAndResume() {
     IdleCore.restartRun(state, Date.now());
     runnerObstacles = [];
-    runnerSpawnTimerSeconds = IdleCore.nextObstacleSpawnIntervalSeconds(0, Math.random);
+    runnerSpawnTimerSeconds = IdleCore.nextObstacleSpawnIntervalSeconds(0, Math.random, 0);
     runnerLapProgressUnits = 0;
     runnerBikeDisplayLane = state.runner.lane;
+    // Teil 4 (feat(coins)/feat(score)/feat(nearmiss)): Münz-Trails + Score-
+    // Anzeige + Near-Miss-Combo-HUD gehören zur transienten RUN-Schicht und
+    // resetten dadurch identisch zu runnerObstacles/runnerLapProgressUnits.
+    runnerCoins = [];
+    runnerCoinSpawnTimerSeconds = IdleCore.nextCoinTrailIntervalSeconds(Math.random);
+    displayedRunScore = 0;
+    updateRunComboHud();
     hideCrashSummary();
     ApiClient.saveIdleState(state);
   }
@@ -940,16 +1134,27 @@
         obstacle.displayLane = obstacle.lane;
       }
 
+      // Teil 4 (feat(nearmiss)): JEDES Hindernis, das die HIT-Zone erreicht
+      // (nicht nur solche in der Bike-Lane), wird auf einen Near-Miss
+      // geprüft — 'side' in einer benachbarten Lane, ODER (im sameLane-
+      // Zweig unten) ein 'lowBar'/'highBarrier' sauber per Sprung/Ducken/
+      // Turbo pariert. Near-Misses zählen NUR im aktiven Modus (Auto-Pilot
+      // evaluiert grundsätzlich keine Kollision, siehe Teil-1-Invariante).
       if (!obstacle.resolved && obstacle.t >= RUNNER_HIT_ZONE_T) {
         obstacle.resolved = true;
-        if (!crashedThisTick && activity === 'active' && !magnetSaved && obstacle.lane === state.runner.lane) {
+        var sameLane = !magnetSaved && obstacle.lane === state.runner.lane;
+        if (activity === 'active' && !crashedThisTick && sameLane) {
           var collisionResult = IdleCore.detectRunCollision(state, obstacle.type, now);
           if (collisionResult.shielded) {
             triggerShieldFeedback();
           } else if (collisionResult.crashed) {
             crashedThisTick = true;
             handleRunCrash(now);
+          } else if (IdleCore.isNearMiss(state, obstacle, now)) {
+            triggerNearMiss(now);
           }
+        } else if (activity === 'active' && !magnetSaved && IdleCore.isNearMiss(state, obstacle, now)) {
+          triggerNearMiss(now);
         }
       }
       if (obstacle.t >= RUNNER_OBSTACLE_REMOVE_T) runnerObstacles.splice(i, 1);
@@ -959,16 +1164,54 @@
       return visualSpeedPct;
     }
 
+    // Münz-Trails (Teil 4, feat(coins)): vorrücken, bei Lane-Überlappung
+    // (oder aktivem Magnet-Effekt — zieht nahegelegene Münzen zusätzlich
+    // zu Hindernissen ein, siehe magnetOn oben) automatisch einsammeln,
+    // vorbeigefahrene entfernen. Läuft UNABHÄNGIG vom Aktivitäts-Zustand —
+    // Münzen sind reine Belohnungen ohne Kollisionsrisiko, daher auch im
+    // Auto-Pilot eingesammelt (identisches "Idle-Spieler:innen nie
+    // benachteiligen"-Prinzip wie an anderer Stelle im Idle-Racer).
+    for (var ci = runnerCoins.length - 1; ci >= 0; ci--) {
+      var coin = runnerCoins[ci];
+      coin.t += progressDelta;
+
+      var coinMagnetSaved = magnetOn && coin.t >= magnetRangeT;
+      if (coinMagnetSaved) {
+        coin.displayLane += (state.runner.lane - coin.displayLane) * pullEase;
+      } else {
+        coin.displayLane = coin.lane;
+      }
+
+      if (!coin.resolved && coin.t >= RUNNER_HIT_ZONE_T) {
+        coin.resolved = true;
+        if (coin.lane === state.runner.lane || coinMagnetSaved) {
+          IdleCore.collectRunCoin(state, now);
+        }
+      }
+      if (coin.t >= RUNNER_OBSTACLE_REMOVE_T) runnerCoins.splice(ci, 1);
+    }
+
     // Run-Wirtschaft (Teil 3, feat(run)): bankt Score/Coins für die in
-    // diesem Tick zurückgelegte Distanz (siehe IdleCore.tickRunEconomy()).
-    IdleCore.tickRunEconomy(state, scrollSpeed * dtSeconds, activity);
+    // diesem Tick zurückgelegte Distanz (siehe IdleCore.tickRunEconomy()) —
+    // Teil 4: der Score-Zuwachs berücksichtigt jetzt automatisch den
+    // aktuellen Near-Miss-Combo-Multiplikator + einen ggf. aktiven
+    // Score-x2-Effekt (siehe deren Docblock).
+    IdleCore.tickRunEconomy(state, scrollSpeed * dtSeconds, activity, now);
 
     // Spawn-Timer (mit Restzeit-Übertrag, falls ein einzelner Tick mehrere Intervalle überspringt).
+    // Teil 4 (feat(difficulty)): die In-Run-Distanz (state.run.distanceUnits)
+    // fliesst über runDifficultyDensity() zusätzlich in die Dichte ein —
+    // wirkt NUR auf dieses Intervall, NIEMALS auf runnerLeadSeconds()' Boden.
     if (dtSeconds > 0) {
       runnerSpawnTimerSeconds -= dtSeconds;
       while (runnerSpawnTimerSeconds <= 0) {
         spawnRunnerObstacle();
-        runnerSpawnTimerSeconds += IdleCore.nextObstacleSpawnIntervalSeconds(visualSpeedPct, Math.random);
+        runnerSpawnTimerSeconds += IdleCore.nextObstacleSpawnIntervalSeconds(visualSpeedPct, Math.random, state.run.distanceUnits);
+      }
+      runnerCoinSpawnTimerSeconds -= dtSeconds;
+      while (runnerCoinSpawnTimerSeconds <= 0) {
+        spawnCoinTrail();
+        runnerCoinSpawnTimerSeconds += IdleCore.nextCoinTrailIntervalSeconds(Math.random);
       }
     }
 
@@ -1042,6 +1285,26 @@
       trackCtx.lineWidth = Math.max(1, h * 0.004);
       trackCtx.stroke();
     }
+
+    // Münz-Trails (Teil 4, feat(coins)): VOR den Hindernissen gezeichnet
+    // (kleine goldene Kreise, dieselbe Lane-Geometrie wie Hindernisse) —
+    // t < 0 (noch nicht "erschienen", siehe spawnCoinTrail()' gestaffelter
+    // Versatz) wird schlicht nicht gezeichnet.
+    var sortedCoins = runnerCoins.slice().sort(function (a, b) { return a.t - b.t; });
+    sortedCoins.forEach(function (coin) {
+      if (coin.t < 0) return;
+      var ct = Math.min(1, Math.max(0, coin.t));
+      var cx2 = laneCenterX(w, coin.displayLane, ct);
+      var cy2 = laneRowY(h, ct);
+      var coinSize = lerpValue(RUNNER_OBSTACLE_MIN_SIZE_PX, RUNNER_OBSTACLE_MAX_SIZE_PX, ct) * 0.55;
+      trackCtx.beginPath();
+      trackCtx.arc(cx2, cy2, coinSize, 0, Math.PI * 2);
+      trackCtx.fillStyle = 'rgba(234,179,8,0.9)';
+      trackCtx.strokeStyle = 'rgba(161,98,7,0.9)';
+      trackCtx.lineWidth = 1;
+      trackCtx.fill();
+      trackCtx.stroke();
+    });
 
     // Hindernisse: weiter entfernte zuerst zeichnen, damit näherliegende oben liegen.
     // Teil 3 (feat(obstacles)): DREI Typen, jeweils eine eigene Form/Position
@@ -2205,19 +2468,23 @@
   }
 
   /* ============================================================
-     TEIL 2 — POWERUPS: Magnet/Schild/Turbo/Münzregen — feat(powerups)
+     TEIL 2/4 — POWERUPS: Magnet/Schild/Turbo/Score-x2 — feat(powerups)
      Wiederverwendet EXAKT das obige Sparschwein-Muster (spawnPiggy/
      tickPiggy/smashPiggy) — Unterschied: LANE-gebunden (via laneCenterX()/
      laneRowY() aus Teil 1, statt frei-%-positioniert) UND 4 statt 1
      Effekt-Typ (siehe IdleCore.rollPowerupDrop()/activatePowerupEffect()).
+     Teil 4 ersetzt 'muenzregen' im selben Gewichtungs-Slot durch
+     'scoreX2' (Magnet zieht seither zusätzlich Münzen ein, siehe
+     tickRunner(); Turbo lässt 'lowBar'-Hindernisse ohne Sprung passieren,
+     siehe IdleCore.obstacleCausesCrash()).
      ============================================================ */
 
   /**
    * Zeigt einen kurzen Toast für ein eingesammeltes Powerup (Effekt-
    * abhängiger Text). Nutzt denselben Toast-Container/dieselbe CSS-Klasse
    * wie showPartToast()/showGearToast()/showPiggyToast().
-   * @param {('magnet'|'schild'|'turbo'|'muenzregen')} type - Eingesammelter Powerup-Typ.
-   * @param {{type: string, kmBonus: number}} result - Ergebnis von IdleCore.activatePowerupEffect().
+   * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Eingesammelter Powerup-Typ.
+   * @param {{type: string}} result - Ergebnis von IdleCore.activatePowerupEffect().
    * @returns {void}
    */
   function showPowerupToast(type, result) {
@@ -2225,10 +2492,10 @@
     if (!container) return;
 
     var messages = {
-      magnet: '🧲 Magnet aktiviert — zieht Hindernisse aus dem Weg!',
+      magnet: '🧲 Magnet aktiviert — zieht Hindernisse & Münzen an!',
       schild: '🛡️ Schild aktiviert — blockt die nächste Kollision!',
-      turbo: '🚀 Turbo aktiviert — kurzer Speed- &amp; Ertragsboost!',
-      muenzregen: '💰 Münzregen — +' + formatKm(result && result.kmBonus ? result.kmBonus : 0) + ' km',
+      turbo: '🚀 Turbo aktiviert — Speedboost & fährt durch niedrige Hindernisse!',
+      scoreX2: '✨ Score x2 aktiviert — doppelter Score für kurze Zeit!',
     };
 
     var toast = document.createElement('div');
@@ -2273,7 +2540,7 @@
    * dieselben Lane-Geometrie-Helfer (laneCenterX()/laneRowY()) wie die
    * Hindernis-/Bike-Darstellung, umgerechnet auf %-Position innerhalb von
    * #idleTrackWrap (identisches Overlay-Prinzip wie #idlePiggy).
-   * @param {('magnet'|'schild'|'turbo'|'muenzregen')} type - Zu spawnender Powerup-Typ.
+   * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Zu spawnender Powerup-Typ.
    * @returns {void}
    */
   function spawnPowerup(type) {
@@ -2335,7 +2602,6 @@
 
     if (el) el.classList.add('is-collected');
     showPowerupToast(type, result);
-    if (type === 'muenzregen') renderAll();
     checkIdleAchievements();
 
     setTimeout(despawnPowerup, reducedMotion ? 0 : POWERUP_COLLECT_ANIM_MS);
@@ -2513,6 +2779,12 @@
     tickPiggy(clampedDt);
     tickPowerup(clampedDt);
     updateComboBadge();
+    // Teil 4 (feat(score)/feat(powerups)): live Score-/Highscore-HUD +
+    // Powerup-Timer-HUD, jeden Frame aktualisiert (rein lesend bzgl.
+    // state — beide spiegeln nur, was tickRunner()/collectPowerup()
+    // bereits mutiert haben).
+    updateRunScoreHud();
+    updatePowerupHud(Date.now());
 
     window.requestAnimationFrame(tick);
   }
@@ -2559,12 +2831,18 @@
     // dadurch bewusst NICHT als noch offene Zusammenfassung fortgeführt.
     IdleCore.startRun(state, Date.now());
     runnerBikeDisplayLane = state.runner.lane;
+    // Teil 4 (feat(score)/feat(nearmiss)): Score-HUD-Tween + Combo-HUD
+    // synchron zum frischen Run starten (beide sind 0 direkt nach startRun()).
+    displayedRunScore = state.run.score;
+    updateRunComboHud();
 
     renderAll();
     updateKmDisplay();
     initCanvases();
     tachoDisplayPct = getCurrentBikeInfo().stats.geschwindigkeitPct;
     updateComboBadge();
+    updateRunScoreHud();
+    updatePowerupHud(Date.now());
     showOfflineBanner();
     wireGasButton();
     wireUpgradeButton();
