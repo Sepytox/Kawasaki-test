@@ -250,6 +250,8 @@
   /** DOM-Referenzen für Canvas + 2D-Kontext (einmalig aufgelöst, siehe initCanvases()). */
   var trackCanvas = null, trackCtx = null;
   var tachoCanvas = null, tachoCtx = null;
+  /** DOM-Overlay-Container über dem Runner-Canvas (Teil 5, feat(juice-overlay)) — Anker für transiente Partikel/Popups, siehe juice.js ensureOverlay(). Bleibt null ohne window.Juice (defensiv, z.B. falls juice.js nicht eingebunden ist). */
+  var juiceOverlayEl = null;
 
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
@@ -679,6 +681,9 @@
   /**
    * Löst die Canvas-Elemente (Strecke + Tacho) einmalig auf und skaliert
    * sie initial. Wird zusätzlich bei jedem Fenster-Resize erneut aufgerufen.
+   * Legt bei dieser Gelegenheit (Teil 5, feat(juice-overlay)) auch den
+   * DOM-Overlay-Container für transiente Partikel/Popups an (juiceOverlayEl),
+   * verschachtelt als Kind von #idleTrackWrap — siehe juice.js ensureOverlay().
    * @returns {void}
    */
   function initCanvases() {
@@ -686,6 +691,9 @@
     tachoCanvas = document.getElementById('idleTachoCanvas');
     trackCtx = resizeCanvasToDisplaySize(trackCanvas);
     tachoCtx = resizeCanvasToDisplaySize(tachoCanvas);
+    if (window.Juice) {
+      juiceOverlayEl = window.Juice.ensureOverlay(document.getElementById('idleTrackWrap'));
+    }
     window.addEventListener('resize', function () {
       trackCtx = resizeCanvasToDisplaySize(trackCanvas);
       tachoCtx = resizeCanvasToDisplaySize(tachoCanvas);

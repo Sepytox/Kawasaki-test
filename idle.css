@@ -1316,3 +1316,20 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-overlay): Runner-Game-Feel — Teil 5
+   DOM-Overlay-Layer über dem Runner-Canvas, siehe juice.js/idle.js
+   ensureOverlay()/initCanvases() — Anker für transiente Partikel/
+   Popups (Coin-Flug, Near-Miss, Combo-Pulse), die in den folgenden
+   feat(juice-*)-Schritten ergänzt werden. Der Container selbst
+   animiert nichts, blockiert keine Klicks (pointer-events: none) und
+   überdeckt exakt die Canvas-Box (inset: 0 innerhalb des bereits
+   position:relative + overflow:hidden gesetzten #idleTrackWrap).
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
