@@ -155,6 +155,10 @@
   var RUN_SCORE_DISPLAY_EASE = 0.35;
   /** Differenz-Schwelle (Score-Punkte), unterhalb derer die Score-Anzeige direkt auf den Zielwert springt. */
   var RUN_SCORE_DISPLAY_SNAP_THRESHOLD = 0.5;
+  /** Glättungsfaktor pro Frame für die "km gesammelt"-Live-Anzeige (feat(live-km)) — zählt zwischen zwei Live-km-Flushes (siehe IdleCore.tickRunEconomy()) sichtbar sanft hoch, statt hart zu springen. */
+  var RUN_LIVE_KM_DISPLAY_EASE = 0.15;
+  /** Differenz-Schwelle (km), unterhalb derer die "km gesammelt"-Anzeige direkt auf den Zielwert springt (bewusst klein, da Live-km-Beträge selbst klein sind). */
+  var RUN_LIVE_KM_DISPLAY_SNAP_THRESHOLD = 0.005;
   /** Anzeigedauer (ms) des "Knapp vorbei!"-Near-Miss-Popups, bevor es wieder ausblendet. */
   var NEAR_MISS_POPUP_MS = 850;
   /** Reihenfolge/Icons der Powerup-Timer-HUD-Badges (Teil 4) — identisch zu POWERUP_ICONS, aber als feste Liste für eine stabile HUD-Reihenfolge. */
@@ -258,6 +262,8 @@
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
   var displayedRunScore = 0;
+  /** Aktuell angezeigter (weich nachlaufender) "km gesammelt (dieser Run)"-Wert für die Tween-Animation (feat(live-km), spiegelt state.run.liveKmCredited). */
+  var displayedRunLiveKm = 0;
   /** Timeout-Handle des aktuell angezeigten Near-Miss-Popups (für Re-Trigger bei schnell aufeinanderfolgenden Near-Misses). */
   var nearMissPopupTimeoutId = null;
 
@@ -312,6 +318,19 @@
    */
   function formatKm(value) {
     return Math.floor(Math.max(0, value)).toLocaleString('de-DE');
+  }
+
+  /**
+   * Formatiert einen Live-km-Wert für die "km gesammelt"-Run-HUD
+   * (feat(live-km)) — im Unterschied zu formatKm() MIT zwei
+   * Nachkommastellen (deutsches Zahlenformat), da die Beträge innerhalb
+   * eines einzelnen Runs meist deutlich unter 1 km liegen und sonst
+   * lange bei "0" verharren würden.
+   * @param {number} value - Roh-km-Wert (dieser Run, >= 0).
+   * @returns {string} Formatierte Zeichenkette, z. B. "0,42".
+   */
+  function formatRunLiveKm(value) {
+    return Math.max(0, value).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   /**
@@ -919,6 +938,27 @@
   }
 
   /**
+   * Aktualisiert die "km gesammelt (dieser Run)"-HUD (feat(live-km)) —
+   * tweent (RUN_LIVE_KM_DISPLAY_EASE) Richtung state.run.liveKmCredited,
+   * dem tatsächlich bereits gebankten Live-km-Betrag DIESES Runs (siehe
+   * IdleCore.tickRunEconomy()). Macht sichtbar, dass während der Fahrt
+   * PARALLEL zum Score/Coin-System bereits echter km-Fortschritt
+   * entsteht — rein lesend/spiegelnd, mutiert state NICHT.
+   * @returns {void}
+   */
+  function updateRunLiveKmHud() {
+    var target = (state.run && state.run.liveKmCredited) || 0;
+    var diff = target - displayedRunLiveKm;
+    if (Math.abs(diff) < RUN_LIVE_KM_DISPLAY_SNAP_THRESHOLD) {
+      displayedRunLiveKm = target;
+    } else {
+      displayedRunLiveKm += diff * RUN_LIVE_KM_DISPLAY_EASE;
+    }
+    var el = document.getElementById('idleRunLiveKm');
+    if (el) el.textContent = formatRunLiveKm(displayedRunLiveKm);
+  }
+
+  /**
    * Aktualisiert die Near-Miss-Combo-HUD (Teil 4, feat(nearmiss)) —
    * zeigt die aktuelle Combo-Anzahl + den daraus abgeleiteten Score-
    * Multiplikator (state.run.comboMult, siehe IdleCore.
@@ -1119,6 +1159,10 @@
     runnerCoins = [];
     runnerCoinSpawnTimerSeconds = IdleCore.nextCoinTrailIntervalSeconds(Math.random);
     displayedRunScore = 0;
+    // feat(live-km): die "km gesammelt"-Run-HUD startet ebenfalls bei 0 —
+    // state.run.liveKmCredited wurde bereits über IdleCore.restartRun()
+    // zurückgesetzt (mirrors run.coins/run.score).
+    displayedRunLiveKm = 0;
     updateRunComboHud();
     hideCrashSummary();
     ApiClient.saveIdleState(state);
@@ -2852,8 +2896,12 @@
     // Teil 4 (feat(score)/feat(powerups)): live Score-/Highscore-HUD +
     // Powerup-Timer-HUD, jeden Frame aktualisiert (rein lesend bzgl.
     // state — beide spiegeln nur, was tickRunner()/collectPowerup()
-    // bereits mutiert haben).
+    // bereits mutiert haben). feat(live-km): "km gesammelt"-HUD direkt
+    // daneben, spiegelt state.run.liveKmCredited (siehe IdleCore.
+    // tickRunEconomy()) — macht sichtbar, dass Fahren UND km-Fortschritt
+    // gleichzeitig laufen.
     updateRunScoreHud();
+    updateRunLiveKmHud();
     updatePowerupHud(Date.now());
 
     window.requestAnimationFrame(tick);
@@ -2903,7 +2951,10 @@
     runnerBikeDisplayLane = state.runner.lane;
     // Teil 4 (feat(score)/feat(nearmiss)): Score-HUD-Tween + Combo-HUD
     // synchron zum frischen Run starten (beide sind 0 direkt nach startRun()).
+    // feat(live-km): "km gesammelt"-Tween ebenfalls synchron starten
+    // (state.run.liveKmCredited ist 0 direkt nach startRun()).
     displayedRunScore = state.run.score;
+    displayedRunLiveKm = state.run.liveKmCredited;
     updateRunComboHud();
 
     renderAll();
@@ -2912,6 +2963,7 @@
     tachoDisplayPct = getCurrentBikeInfo().stats.geschwindigkeitPct;
     updateComboBadge();
     updateRunScoreHud();
+    updateRunLiveKmHud();
     updatePowerupHud(Date.now());
     showOfflineBanner();
     wireGasButton();

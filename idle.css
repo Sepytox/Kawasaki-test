@@ -193,6 +193,16 @@
 .idle-run-score-hud-highscore strong {
   color: var(--text-muted);
 }
+/* Live-km-Zähler (feat(live-km)) — dieselbe unauffällige Zeilen-Optik
+   wie die Highscore-Zeile; macht die parallel laufende km-Gutschrift
+   sichtbar, ohne den Score optisch zu überstrahlen. */
+.idle-run-score-hud-km {
+  font-size: 0.7em;
+  color: var(--text-subtle);
+}
+.idle-run-score-hud-km strong {
+  color: var(--text-muted);
+}
 
 /* ── Near-Miss-Popup (Teil 4) — feat(nearmiss) ───────────────────────
    Kurzer, zentrierter "Knapp vorbei!"-Text über der Strecke, blendet
