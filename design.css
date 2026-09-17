@@ -718,3 +718,30 @@ summary:focus-visible,
   transition: opacity var(--dur-slow) var(--ease-out);
 }
 .bike-photo.is-loaded { opacity: 1; }
+
+/* ── Zentrales Modal-System (modal.js) — Glassmorphism ──────────
+   Rein additive Ergänzung zu .modal-overlay/.modal-content
+   (styles.css:396-436) — keine bestehende Deklaration wird verändert,
+   nur eine Glass-Oberfläche + stärkere Elevation ergänzt. Ohne
+   backdrop-filter-Unterstützung bleibt der bereits vorhandene solide
+   Fallback aus styles.css unverändert lesbar (progressive enhancement).
+   Betrifft ausschliesslich die Klassen ".modal-overlay"/".modal-content"
+   — soundcheck.html nutzt eigene, andere Klassennamen ("sc-modal-*")
+   und ist von dieser Regel nicht betroffen (GOLDEN_PRINCIPLES_KE.md
+   Regel 6). */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .modal-overlay {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
+  .modal-content {
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    border-color: var(--glass-border);
+  }
+}
+
+.modal-content {
+  box-shadow: var(--shadow-xl);
+}
