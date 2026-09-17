@@ -1942,6 +1942,25 @@
   }
 
   /**
+   * Verdrahtet den dedizierten Mobile-Button für die Schaltpunkt-Combo
+   * (feat(shiftpoint-key)): ruft dieselbe evaluateShiftAttempt()-Auswertung
+   * wie die Leertaste auf. Der Button liegt AUSSERHALB von #idleTrackWrap
+   * (siehe idle.html) und stört damit die Swipe-Zone für den Lane-Wechsel
+   * nicht — ein Daumen steuert per Swipe, der andere tippt den Button. Auf
+   * Desktop bleibt er per CSS ausgeblendet (idle.css), dort übernimmt die
+   * Leertaste.
+   * @returns {void}
+   */
+  function wireShiftMobileButton() {
+    var btn = document.getElementById('idleShiftMobileBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function (event) {
+      event.preventDefault();
+      evaluateShiftAttempt();
+    });
+  }
+
+  /**
    * EIN Game-Loop-Tick der Schaltpunkt-Leiste: zählt entweder bis zur
    * nächsten zufälligen Leiste herunter, oder lässt den Marker der
    * aktiven Leiste weiterwandern und wertet ein unbeklicktes Ablaufen
@@ -2995,6 +3014,7 @@
     wireUpgradeButton();
     wireRunnerControls();
     wireShiftInteraction();
+    wireShiftMobileButton();
     wireSoundControls();
     wireSeasonControls();
     wireBillPayButton();

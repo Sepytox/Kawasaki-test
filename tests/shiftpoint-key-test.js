@@ -30,6 +30,10 @@
  *    keydown-Handler mehr (verhindert Doppel-Auswertung pro Tastendruck),
  *    Enter bleibt für Tab-Fokus-Zugänglichkeit erhalten. Ausserdem: kein
  *    Pointer-Cursor mehr auf der (nicht mehr klickbaren) Leiste (idle.css).
+ *  - wireShiftMobileButton(): existiert, ruft dieselbe
+ *    evaluateShiftAttempt()-Auswertung wie die Leertaste auf, wird beim
+ *    Start verdrahtet. idle.html/idle.css enthalten den Mobile-Button
+ *    strukturell (deutsches aria-label, ausserhalb von #idleTrackWrap).
  *  - RUNNER_CONTROL_EXEMPT_IDS enthält #idleShiftTrack NICHT mehr (die
  *    Leertaste soll dort GENAUSO wie überall sonst die Schaltpunkt-
  *    Auswertung auslösen).
@@ -99,6 +103,7 @@ function extractFunctionBody(source, fnName) {
 }
 
 const idleJsSource = fs.readFileSync(path.join(__dirname, '..', 'idle.js'), 'utf8');
+const idleHtmlSource = fs.readFileSync(path.join(__dirname, '..', 'idle.html'), 'utf8');
 const idleCssSource = fs.readFileSync(path.join(__dirname, '..', 'idle.css'), 'utf8');
 
 // ============================================================
@@ -214,6 +219,31 @@ section('5 · idle.js — evaluateShiftAttempt() delegiert an IdleCore.evaluateS
   assert(body !== null, 'evaluateShiftAttempt() ist in idle.js auffindbar (Umbenennung von evaluateShiftClick())');
   assert(body.includes('IdleCore.evaluateShiftHit('), 'evaluateShiftAttempt() delegiert die Zonen-Entscheidung an die reine IdleCore.evaluateShiftHit()-Funktion');
   assert(!idleJsSource.includes('function evaluateShiftClick'), 'Die alte Funktion evaluateShiftClick() existiert nicht mehr (umbenannt, da nicht mehr Klick-spezifisch)');
+})();
+
+// ============================================================
+section('6 · idle.js/idle.html/idle.css — dedizierter Mobile-Button für die Schaltpunkt-Combo');
+// ============================================================
+(function () {
+  const body = extractFunctionBody(idleJsSource, 'wireShiftMobileButton');
+  assert(body !== null, 'wireShiftMobileButton() ist in idle.js auffindbar');
+  assert(body.includes("getElementById('idleShiftMobileBtn')"), 'wireShiftMobileButton() greift auf #idleShiftMobileBtn zu');
+  assert(body.includes('evaluateShiftAttempt()'), 'Der Mobile-Button ruft dieselbe evaluateShiftAttempt()-Auswertung wie die Leertaste auf');
+
+  assert(idleJsSource.includes('wireShiftInteraction();\n    wireShiftMobileButton();'), 'wireShiftMobileButton() wird beim Start direkt nach wireShiftInteraction() verdrahtet');
+
+  assert(idleHtmlSource.includes('id="idleShiftMobileBtn"'), 'idle.html enthält den Mobile-Button mit der erwarteten id');
+  assert(/id="idleShiftMobileBtn"[^>]*aria-label="[^"]+"/.test(idleHtmlSource), 'Der Mobile-Button hat ein deutsches aria-label');
+  // Der Mobile-Button muss ausserhalb von #idleTrackWrap liegen (Swipe-Zone
+  // für den Lane-Wechsel), aber innerhalb desselben #idleShift-Wrappers wie
+  // die Schaltpunkt-Leiste (idleShiftTrack) — NICHT vor #idleTrackWrap.
+  const trackWrapCloseIdx = idleHtmlSource.indexOf('id="idleShiftTrack"');
+  const mobileBtnIdx = idleHtmlSource.indexOf('id="idleShiftMobileBtn"');
+  assert(trackWrapCloseIdx !== -1 && mobileBtnIdx !== -1, 'Sowohl #idleShiftTrack als auch #idleShiftMobileBtn sind im HTML auffindbar');
+  assert(mobileBtnIdx > trackWrapCloseIdx, 'Der Mobile-Button steht im Markup NACH der Schaltpunkt-Leiste, also klar ausserhalb von #idleTrackWrap (keine Swipe-Zonen-Überlappung)');
+
+  assert(idleCssSource.includes('.idle-shift-mobile-btn'), 'idle.css enthält Styling für .idle-shift-mobile-btn');
+  assert(/@media \(max-width: 600px\) \{\s*\.idle-shift-mobile-btn \{ display: block; \}/.test(idleCssSource), 'Der Mobile-Button ist per default ausgeblendet und wird nur auf schmalen Viewports eingeblendet');
 })();
 
 // ============================================================

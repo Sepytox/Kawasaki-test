@@ -113,8 +113,9 @@
 
                     <!-- Schaltpunkt-Leiste (MECHANIK A, feat(shiftpoint-key)): erscheint
                          alle 15–30s, Leertaste im grünen Bereich = Treffer (Combo +
-                         Multiplikator). Ausschliesslich per Leertaste auslösbar — ein Klick
-                         auf die Leiste selbst löst bewusst NICHTS aus (siehe idle.js
+                         Multiplikator). Ausschliesslich per Leertaste (Desktop) oder dem
+                         Mobile-Button #idleShiftMobileBtn (Touch) auslösbar — ein Klick auf
+                         die Leiste selbst löst bewusst NICHTS aus (siehe idle.js
                          evaluateShiftAttempt()/wireShiftInteraction()). -->
                     <div class="idle-shift" id="idleShift" aria-hidden="true">
                         <div class="idle-shift-track" id="idleShiftTrack" role="button" tabindex="0" aria-label="Schaltpunkt — Leertaste im grünen Bereich drücken">
@@ -122,6 +123,12 @@
                             <div class="idle-shift-marker" id="idleShiftMarker"></div>
                         </div>
                         <span class="idle-shift-hint">🎯 Jetzt schalten! (Leertaste)</span>
+                        <!-- Mobile-Button (feat(shiftpoint-key)): dieselbe Auswertung wie
+                             die Leertaste, ausserhalb von #idleTrackWrap platziert, damit die
+                             Swipe-Zone für den Lane-Wechsel unberührt bleibt (ein Daumen
+                             wischt, der andere tippt). Nur auf schmalen Viewports sichtbar
+                             (siehe idle.css) — auf Desktop übernimmt die Leertaste. -->
+                        <button type="button" class="idle-shift-mobile-btn" id="idleShiftMobileBtn" aria-label="Schaltpunkt jetzt auslösen">🎯 Schalten</button>
                     </div>
 
                     <div class="idle-combo-badge" id="idleComboBadge" hidden>

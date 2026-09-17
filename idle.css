@@ -658,6 +658,39 @@
 .idle-shift-track.is-hit .idle-shift-zone { background: rgba(47, 160, 107, 0.75); }
 .idle-shift-track.is-miss .idle-shift-zone { background: rgba(200, 60, 60, 0.55); border-color: rgba(200, 60, 60, 0.8); }
 
+/* feat(shiftpoint-key): dedizierter Mobile-Button für die Schaltpunkt-
+   Combo — auf Desktop per default ausgeblendet (dort übernimmt die
+   Leertaste), nur auf schmalen Viewports sichtbar/fokussierbar. Liegt
+   ausserhalb von #idleTrackWrap, stört daher die Swipe-Zone nicht. */
+.idle-shift-mobile-btn {
+  display: none;
+  width: 100%;
+  margin-top: 0.6rem;
+  padding: 0.85rem 1.2rem;
+  font-size: 1rem;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full, 999px);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: transform var(--dur-fast, 0.15s) var(--ease-spring, ease),
+              box-shadow var(--dur-base, 0.25s) var(--ease-standard, ease),
+              border-color var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.idle-shift-mobile-btn:hover,
+.idle-shift-mobile-btn:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-glow, var(--shadow-md));
+}
+.idle-shift-mobile-btn:active {
+  transform: scale(0.97);
+}
+@media (max-width: 600px) {
+  .idle-shift-mobile-btn { display: block; }
+}
+
 .idle-combo-badge {
   display: flex;
   align-items: center;
@@ -1269,6 +1302,7 @@
   .idle-piggy.is-smashed { transition: none; transform: none; }
   .idle-powerup,
   .idle-powerup.is-collected { transition: none; transform: none; }
+  .idle-shift-mobile-btn { transition: none; transform: none; }
   /* is-shielded ist ohnehin nur eine statische Regel (kein @keyframes) — nichts zu deaktivieren. */
   .idle-run-summary,
   .idle-run-summary-card { transition: none; }
