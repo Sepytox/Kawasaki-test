@@ -3245,22 +3245,54 @@ function pickSolvableWaveLanes(occupiedLanes, waveSize, laneCount, rng) {
  * Versatz (offsetT, Vielfaches von RUN_COIN_TRAIL_SPACING_T) relativ zum
  * Trail-Start — der Aufrufer (idle.js) setzt daraus tatsächliche,
  * gestaffelt erscheinende Collectibles auf der Strecke (reused
- * laneCenterX()/laneRowY()). Reine Funktion.
+ * laneCenterX()/laneRowY()). fix(spawning): der optionale `blockedLanes`-
+ * Parameter macht die Erzeugung HINDERNIS-BEWUSST — die Start-Lane wird
+ * NUR aus aktuell unbelegten Lanes gewählt (sofern mindestens eine
+ * existiert), und ein BOGEN weicht beim Lane-Wechsel auf die
+ * Gegenrichtung aus, falls die vorgesehene Ziel-Lane blockiert UND eine
+ * freie Alternative vorhanden ist — verhindert, dass ein ganzer Trail
+ * NUR auf einer durch ein Hindernis blockierten Lane liegt, ohne dass
+ * eine erreichbare Alternative existiert ("keine Münze, die nur per
+ * Kollision erreichbar ist"). Reine Funktion.
  * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
  * @param {number} [laneCount] - Anzahl Fahrspuren; Standard IDLE_BALANCE.RUNNER_LANE_COUNT.
+ * @param {Array<number>} [blockedLanes] - Lanes, die aktuell durch noch nicht resolvte Hindernisse belegt sind (Duplikate erlaubt); Standard keine.
  * @returns {Array<{lane: number, offsetT: number}>} Münz-Positionen des Trails.
  */
-function generateCoinTrail(rng, laneCount) {
+function generateCoinTrail(rng, laneCount, blockedLanes) {
   var rnd = typeof rng === 'function' ? rng : Math.random;
   var lanes = typeof laneCount === 'number' && laneCount > 0 ? laneCount : IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var blockedSet = {};
+  (Array.isArray(blockedLanes) ? blockedLanes : []).forEach(function (lane) { blockedSet[lane] = true; });
+  var freeLaneList = [];
+  for (var li = 0; li < lanes; li++) {
+    if (!blockedSet[li]) freeLaneList.push(li);
+  }
+  // Bevorzugt eine aktuell freie Lane als Start — gibt es keine (Grenzfall,
+  // sollte durch pickSolvableWaveLanes() praktisch nie vorkommen), fällt
+  // die Funktion defensiv auf den gesamten Lane-Bereich zurück statt
+  // gar keinen Trail zu erzeugen.
+  var startPool = freeLaneList.length > 0 ? freeLaneList : (function () {
+    var all = [];
+    for (var i = 0; i < lanes; i++) all.push(i);
+    return all;
+  })();
   var length = IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH;
   var isArc = rnd() < IDLE_BALANCE.RUN_COIN_TRAIL_ARC_CHANCE && lanes > 1;
   var direction = rnd() < 0.5 ? -1 : 1;
-  var lane = Math.floor(rnd() * lanes);
+  var lane = startPool[Math.floor(rnd() * startPool.length)];
   var coins = [];
   for (var i = 0; i < length; i++) {
     if (isArc && i > 0 && i % 2 === 0) {
-      lane = Math.min(lanes - 1, Math.max(0, lane + direction));
+      var nextLane = Math.min(lanes - 1, Math.max(0, lane + direction));
+      if (blockedSet[nextLane] && freeLaneList.length > 0) {
+        var altLane = Math.min(lanes - 1, Math.max(0, lane - direction));
+        if (!blockedSet[altLane]) {
+          nextLane = altLane;
+          direction = -direction;
+        }
+      }
+      lane = nextLane;
     }
     coins.push({ lane: lane, offsetT: i * IDLE_BALANCE.RUN_COIN_TRAIL_SPACING_T });
   }

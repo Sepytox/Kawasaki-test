@@ -776,10 +776,15 @@
    * generateCoinTrail()), gestaffelt in der Tiefe (negatives Start-`t`
    * pro Münze, siehe deren offsetT), sodass der Trail wie eine Perlen-
    * kette Richtung Spieler auf die Strecke läuft (siehe tickRunner()).
+   * fix(spawning): übergibt die Lanes noch nicht resolvter Hindernisse
+   * (analog zu spawnRunnerObstacle()) an IdleCore.generateCoinTrail(),
+   * damit Münzen nicht nur auf einer aktuell blockierten Lane ohne
+   * erreichbare Alternative platziert werden.
    * @returns {void}
    */
   function spawnCoinTrail() {
-    var pattern = IdleCore.generateCoinTrail(Math.random, IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
+    var occupiedLanes = runnerObstacles.filter(function (obstacle) { return !obstacle.resolved; }).map(function (obstacle) { return obstacle.lane; });
+    var pattern = IdleCore.generateCoinTrail(Math.random, IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT, occupiedLanes);
     pattern.forEach(function (coinDef) {
       runnerCoins.push({ lane: coinDef.lane, displayLane: coinDef.lane, t: -coinDef.offsetT, resolved: false });
     });

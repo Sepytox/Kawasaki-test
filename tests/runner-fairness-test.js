@@ -23,6 +23,10 @@
  *     Hindernis auf der AKTUELLEN Spieler-Lane auswertet (siehe
  *     idle.js:1155 `sameLane`), kann eine Spielerin NIE gleichzeitig
  *     Lane wechseln UND springen UND ducken müssen.
+ *  5. `IdleCore.generateCoinTrail()` platziert bei Übergabe der aktuell
+ *     blockierten Lanes NIE einen ganzen Münz-Trail NUR auf einer Lane,
+ *     die zugleich blockiert ist, solange mindestens eine freie Lane
+ *     existiert (fix(spawning): Coins immer erreichbar platzieren).
  *
  * Run: node tests/runner-fairness-test.js
  * Exit 0 = alle Tests bestanden, Exit 1 = mindestens ein Fehler.
@@ -203,6 +207,53 @@ section('4 · nextObstacleSpawnIntervalSeconds() — Mindestabstand zwischen Wel
   }
   // Der Boden ist bewusst identisch zur Mindest-Vorlaufzeit gewählt (Konsistenz mit Schritt 2 der Aufgabe).
   assert(floor === IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS, 'RUNNER_MIN_WAVE_SPACING_SECONDS ist bewusst identisch zu RUNNER_MIN_LEAD_SECONDS (konsistente Reaktionszeit-Garantie)');
+})();
+
+// ============================================================
+section('5 · generateCoinTrail() — Münzen immer erreichbar platzieren (fix(spawning))');
+// ============================================================
+(function () {
+  const rng = makeSeededRandom(999);
+  const SAMPLE_COUNT = 500;
+
+  for (let i = 0; i < SAMPLE_COUNT; i++) {
+    const laneCount = 2 + Math.floor(rng() * 4); // 2..5 Lanes
+    // blockedLanes respektiert die reale Invariante aus Sektion 1/3: NIE alle Lanes blockiert.
+    const blockedCount = Math.floor(rng() * laneCount); // 0..laneCount-1
+    const blocked = [];
+    const blockedSet = {};
+    while (blocked.length < blockedCount) {
+      const lane = Math.floor(rng() * laneCount);
+      if (!blockedSet[lane]) {
+        blockedSet[lane] = true;
+        blocked.push(lane);
+      }
+    }
+    const trail = IdleCore.generateCoinTrail(rng, laneCount, blocked);
+
+    assert(trail.length === IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH, `generateCoinTrail() liefert weiterhin genau RUN_COIN_TRAIL_LENGTH Münzen (Sample ${i})`);
+    trail.forEach(function (coin) {
+      assert(coin.lane >= 0 && coin.lane < laneCount, `generateCoinTrail(): jede Münze hat eine gültige Lane (Sample ${i})`);
+    });
+
+    // Kern-Garantie: solange mindestens eine Lane frei ist, liegt die START-Lane
+    // des Trails NIE auf einer blockierten Lane (kein Trail, der NUR über eine
+    // Kollision erreichbar wäre).
+    const hasFreeLane = blockedCount < laneCount;
+    if (hasFreeLane) {
+      assert(!blockedSet[trail[0].lane], `generateCoinTrail(): Start-Lane des Trails ist nicht blockiert, solange eine freie Lane existiert (Sample ${i})`);
+    }
+  }
+
+  // Degenerierter Grenzfall: ALLE Lanes blockiert (sollte laut pickSolvableWaveLanes()
+  // real nie vorkommen) — generateCoinTrail() bleibt trotzdem robust (kein Crash, korrekte Länge).
+  const allBlocked = [0, 1, 2];
+  const fallbackTrail = IdleCore.generateCoinTrail(rng, 3, allBlocked);
+  assert(fallbackTrail.length === IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH, 'generateCoinTrail() bleibt auch im (praktisch nie erreichten) Grenzfall "alle Lanes blockiert" robust und liefert die volle Trail-Länge');
+
+  // Rückwärts-Kompatibilität: ohne blockedLanes-Argument (bestehende Aufrufe/Tests) unverändertes Verhalten.
+  const legacyTrail = IdleCore.generateCoinTrail(rng, 3);
+  assert(legacyTrail.length === IdleCore.IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH, 'generateCoinTrail() bleibt ohne blockedLanes-Argument rückwärtskompatibel (bestehende Aufrufstellen unverändert)');
 })();
 
 // ============================================================
