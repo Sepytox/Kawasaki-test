@@ -921,16 +921,29 @@
 
   /**
    * Zeigt das kurze "Knapp vorbei!"-Near-Miss-Popup über der Strecke
-   * (Teil 4, feat(nearmiss)) — respektiert prefers-reduced-motion (nur
-   * ein sanftes Ein-/Ausblenden statt der zusätzlichen Aufstiegs-
-   * Bewegung, siehe idle.css).
+   * (Teil 4, feat(nearmiss); Teil 5, feat(juice-nearmiss)) — respektiert
+   * prefers-reduced-motion (nur ein sanftes Ein-/Ausblenden statt der
+   * zusätzlichen Aufstiegs-Bewegung, siehe idle.css). Ohne
+   * prefers-reduced-motion wird das Popup bei vorhandenem point EXAKT an
+   * der Canvas-Position des knapp verpassten Hindernisses positioniert
+   * (statt der festen zentrierten CSS-Position) — bei fehlendem point
+   * ODER prefers-reduced-motion fällt es auf die feste zentrierte
+   * CSS-Basisposition zurück (bewusst simpler/statischer Fallback).
    * @param {number} bonus - Gutgeschriebener Score-Bonus (siehe IdleCore.registerNearMiss()).
+   * @param {?{x: number, y: number}} [point] - Overlay-Pixel-Position des Hindernisses (siehe runnerCanvasPoint()), oder null/undefined für die zentrierte Standardposition.
    * @returns {void}
    */
-  function showNearMissPopup(bonus) {
+  function showNearMissPopup(bonus, point) {
     var popup = document.getElementById('idleNearMissPopup');
     if (!popup) return;
     popup.textContent = '💨 Knapp vorbei! +' + Math.floor(bonus);
+    if (!reducedMotion && point) {
+      popup.style.left = point.x + 'px';
+      popup.style.top = point.y + 'px';
+    } else {
+      popup.style.left = '';
+      popup.style.top = '';
+    }
     popup.classList.remove('is-visible');
     void popup.offsetWidth;
     popup.classList.add('is-visible');
@@ -943,13 +956,16 @@
   /**
    * Verbucht einen erkannten Near-Miss (Teil 4, feat(nearmiss)) —
    * IdleCore.registerNearMiss() (Combo/Score-Bonus, reine Zustands-
-   * Mutation) + die dazugehörige UI (Popup + Combo-HUD).
+   * Mutation) + die dazugehörige UI (Popup positioniert am Hindernis +
+   * Combo-HUD, Teil 5 feat(juice-nearmiss)).
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
+   * @param {{displayLane: number, t: number}} obstacle - Das knapp verpasste Hindernis (für die Popup-Position, siehe runnerCanvasPoint()).
    * @returns {void}
    */
-  function triggerNearMiss(nowMs) {
+  function triggerNearMiss(nowMs, obstacle) {
     var result = IdleCore.registerNearMiss(state, nowMs);
-    showNearMissPopup(result.bonus);
+    var point = obstacle ? runnerCanvasPoint(obstacle.displayLane, obstacle.t) : null;
+    showNearMissPopup(result.bonus, point);
     updateRunComboHud();
   }
 
@@ -1370,10 +1386,10 @@
             crashedThisTick = true;
             handleRunCrash(now);
           } else if (IdleCore.isNearMiss(state, obstacle, now)) {
-            triggerNearMiss(now);
+            triggerNearMiss(now, obstacle);
           }
         } else if (activity === 'active' && IdleCore.isNearMiss(state, obstacle, now)) {
-          triggerNearMiss(now);
+          triggerNearMiss(now, obstacle);
         }
       }
       if (obstacle.t >= RUNNER_OBSTACLE_REMOVE_T) runnerObstacles.splice(i, 1);

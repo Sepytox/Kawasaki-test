@@ -194,9 +194,17 @@
   color: var(--text-muted);
 }
 
-/* ── Near-Miss-Popup (Teil 4) — feat(nearmiss) ───────────────────────
-   Kurzer, zentrierter "Knapp vorbei!"-Text über der Strecke, blendet
-   sich ein und wieder aus (siehe idle.js showNearMissPopup()). */
+/* ── Near-Miss-Popup (Teil 4, feat(nearmiss); Teil 5, feat(juice-nearmiss)) ──
+   Kurzer "Knapp vorbei!"-Text, blendet sich ein und wieder aus (siehe
+   idle.js showNearMissPopup()). Standardmässig zentriert (top/left in %)
+   — idle.js überschreibt left/top per Inline-Style mit der exakten
+   Canvas-Position des knapp verpassten Hindernisses (ausser bei
+   prefers-reduced-motion, siehe idle.js), das translate(-50%, -50%)
+   zentriert dabei unverändert auf dem jeweiligen Punkt. Glassmorphism:
+   halbtransparente Akzentfarbe + backdrop-filter-Blur + feiner
+   Rahmen (progressive enhancement, siehe @supports unten) — der solide
+   rgba()-Fallback bleibt ohne backdrop-filter-Unterstützung weiterhin
+   gut lesbar. */
 .idle-near-miss-popup {
   position: absolute;
   top: 38%;
@@ -206,7 +214,9 @@
   font-weight: var(--fw-bold);
   font-size: 1em;
   color: #fff;
-  background: rgba(0, 112, 243, 0.85);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  background: rgba(0, 112, 243, 0.72);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
   border-radius: var(--radius-full, 999px);
   white-space: nowrap;
   opacity: 0;
@@ -214,6 +224,12 @@
   z-index: 6;
   transition: opacity var(--dur-fast, 0.15s) var(--ease-standard, ease),
               transform var(--dur-base, 0.25s) var(--ease-spring, ease);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .idle-near-miss-popup {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
 }
 .idle-near-miss-popup.is-visible {
   opacity: 1;

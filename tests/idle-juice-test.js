@@ -234,6 +234,51 @@ section('6. feat(juice-coins): Coin-Sammel-Feedback (Burst/Flug/Puls/Ton)');
 }
 
 // ============================================================
+section('7. feat(juice-nearmiss): Near-Miss-Popup an der Hindernis-Position');
+// ============================================================
+{
+  const idleJs = read('idle.js');
+  const idleCss = read('idle.css');
+
+  // Deutscher Text bleibt exakt erhalten (bestehende Regression, jetzt zusätzlich explizit geprüft).
+  assert(idleJs.includes("'💨 Knapp vorbei! +'"), "idle.js behält den deutschen Text '💨 Knapp vorbei! +' exakt bei");
+
+  // triggerNearMiss() bekommt jetzt das Hindernis übergeben und reicht dessen Canvas-Position weiter.
+  assert(/function triggerNearMiss\(nowMs, obstacle\)/.test(idleJs), 'triggerNearMiss() nimmt jetzt (nowMs, obstacle) entgegen');
+  assert(/var point = obstacle \? runnerCanvasPoint\(obstacle\.displayLane, obstacle\.t\) : null;/.test(idleJs),
+    'triggerNearMiss() berechnet die Canvas-Position des Hindernisses über runnerCanvasPoint()');
+  assert((idleJs.match(/triggerNearMiss\(now, obstacle\)/g) || []).length === 2,
+    'Beide Aufrufstellen in tickRunner() übergeben jetzt das Hindernis an triggerNearMiss()');
+
+  // showNearMissPopup() positioniert NUR ohne reducedMotion + mit point — sonst der bestehende zentrierte Fallback.
+  const popupFnMatch = idleJs.match(/function showNearMissPopup\(bonus, point\) \{([\s\S]*?)\n  \}/);
+  assert(popupFnMatch !== null, 'showNearMissPopup(bonus, point)-Funktionskörper gefunden');
+  assert(popupFnMatch && /if \(!reducedMotion && point\)/.test(popupFnMatch[1]),
+    'showNearMissPopup() positioniert nur ohne prefers-reduced-motion UND mit vorhandenem point');
+  assert(popupFnMatch && /popup\.style\.left = ''/.test(popupFnMatch[1]) && /popup\.style\.top = ''/.test(popupFnMatch[1]),
+    'showNearMissPopup() setzt ohne point/bei reducedMotion die Inline-Position zurück (fällt auf die zentrierte CSS-Basisposition zurück)');
+
+  // idle-core.js bleibt unangetastet — nur idle.js (Präsentationsschicht) wurde geändert.
+  const idleCoreJs = read('idle-core.js');
+  assert(/function isNearMiss\(state, obstacle, nowMs\)/.test(idleCoreJs) || /isNearMiss\s*=\s*function/.test(idleCoreJs) || idleCoreJs.includes('function isNearMiss('),
+    'idle-core.js definiert isNearMiss() weiterhin unverändert (Signatur vorhanden)');
+
+  // Glassmorphism: halbtransparenter Hintergrund + backdrop-filter (progressive enhancement) + feiner Rahmen aus Glass-Tokens.
+  const popupCssMatch = idleCss.match(/\.idle-near-miss-popup \{([\s\S]*?)\n\}/);
+  assert(popupCssMatch !== null, '.idle-near-miss-popup CSS-Regel gefunden');
+  assert(popupCssMatch && /rgba\(0, 112, 243, 0\.\d+\)/.test(popupCssMatch[1]), '.idle-near-miss-popup hat einen halbtransparenten (nicht voll-deckenden) Hintergrund');
+  assert(popupCssMatch && /border:\s*1px solid var\(--glass-border/.test(popupCssMatch[1]), '.idle-near-miss-popup nutzt --glass-border für einen feinen Rahmen');
+  assert(/@supports \(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\) \{\s*\n\s*\.idle-near-miss-popup \{[\s\S]*?backdrop-filter: blur\(var\(--glass-blur-sm\)\) saturate\(var\(--glass-saturate\)\);/.test(idleCss),
+    '.idle-near-miss-popup bekommt per @supports progressiv einen backdrop-filter-Blur (Glass-Tokens)');
+
+  // Weiterhin nur EIN reduced-motion-Block, keine neuen Klassen dafür nötig (nur Positionierung + Glass, keine neue Bewegung).
+  assert((idleCss.match(/@media \(prefers-reduced-motion: reduce\)/g) || []).length === 1,
+    'idle.css hat weiterhin nur EINEN @media (prefers-reduced-motion: reduce)-Block');
+
+  assert(!/console\.log/.test(idleJs), 'idle.js enthält weiterhin kein console.log');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);
