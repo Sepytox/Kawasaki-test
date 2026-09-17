@@ -194,9 +194,17 @@
   color: var(--text-muted);
 }
 
-/* ── Near-Miss-Popup (Teil 4) — feat(nearmiss) ───────────────────────
-   Kurzer, zentrierter "Knapp vorbei!"-Text über der Strecke, blendet
-   sich ein und wieder aus (siehe idle.js showNearMissPopup()). */
+/* ── Near-Miss-Popup (Teil 4, feat(nearmiss); Teil 5, feat(juice-nearmiss)) ──
+   Kurzer "Knapp vorbei!"-Text, blendet sich ein und wieder aus (siehe
+   idle.js showNearMissPopup()). Standardmässig zentriert (top/left in %)
+   — idle.js überschreibt left/top per Inline-Style mit der exakten
+   Canvas-Position des knapp verpassten Hindernisses (ausser bei
+   prefers-reduced-motion, siehe idle.js), das translate(-50%, -50%)
+   zentriert dabei unverändert auf dem jeweiligen Punkt. Glassmorphism:
+   halbtransparente Akzentfarbe + backdrop-filter-Blur + feiner
+   Rahmen (progressive enhancement, siehe @supports unten) — der solide
+   rgba()-Fallback bleibt ohne backdrop-filter-Unterstützung weiterhin
+   gut lesbar. */
 .idle-near-miss-popup {
   position: absolute;
   top: 38%;
@@ -206,7 +214,9 @@
   font-weight: var(--fw-bold);
   font-size: 1em;
   color: #fff;
-  background: rgba(0, 112, 243, 0.85);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  background: rgba(0, 112, 243, 0.72);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.2));
   border-radius: var(--radius-full, 999px);
   white-space: nowrap;
   opacity: 0;
@@ -214,6 +224,12 @@
   z-index: 6;
   transition: opacity var(--dur-fast, 0.15s) var(--ease-standard, ease),
               transform var(--dur-base, 0.25s) var(--ease-spring, ease);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .idle-near-miss-popup {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
 }
 .idle-near-miss-popup.is-visible {
   opacity: 1;
@@ -234,6 +250,8 @@
   pointer-events: none;
 }
 .idle-powerup-hud-badge {
+  position: relative;
+  z-index: 0;
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -252,11 +270,67 @@
   color: var(--text-muted);
 }
 
+/* Teil 6, feat(juice-powerup): Restdauer-Ring + Eintritts-Animation.
+   Der Ring (::before) ist eine REINE Zustandsanzeige — --powerup-
+   progress wird synchron pro Frame in updatePowerupHud() gesetzt
+   (KEINE CSS-transition auf der Eigenschaft selbst, siehe deren
+   Docblock), daher unverändert bei prefers-reduced-motion. `mask`
+   schneidet den vollflächigen conic-gradient auf einen dünnen Ring
+   entlang der Pill-Form des Badges zurück; z-index:-1 platziert ihn
+   HINTER dem eigenen Badge-Inhalt, aber innerhalb dessen per z-index:0
+   oben eigens erzeugtem Stacking-Context (bleibt so unter ALLEN
+   anderen Badges, statt versehentlich unter deren Inhalt zu rutschen). */
+.idle-powerup-hud-badge::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: var(--radius-full, 999px);
+  background: conic-gradient(var(--accent) calc(var(--powerup-progress, 0) * 360deg), transparent 0deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  pointer-events: none;
+}
+.idle-powerup-hud-badge.is-entering {
+  animation: idle-juice-powerup-enter var(--dur-slow, 0.32s) var(--ease-spring, ease);
+}
+@keyframes idle-juice-powerup-enter {
+  0% { opacity: 0; transform: scale(0.4); }
+  60% { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
 /* Near-Miss-Combo-Badge (Teil 4) — reused .idle-combo-badge-Basis, siehe
    idle.html — eigenständig von der Schaltpunkt-Combo, gleiche Optik. */
 .idle-run-combo-badge #idleRunComboMultiplier {
   color: var(--accent);
   font-weight: var(--fw-bold);
+}
+
+/* Teil 5, feat(juice-combo): Farb-Intensität + kurzer Skalier-Puls bei
+   JEDEM Near-Miss-Combo-Zuwachs (siehe idle.js updateRunComboHud()/
+   triggerComboPulse()) — ausschliesslich auf .idle-run-combo-badge
+   (NICHT auf der gemeinsamen .idle-combo-badge-Basis, die auch die
+   unrelated Schaltpunkt-Combo #idleComboBadge stylt). --combo-intensity
+   (0..1, von idle.js aus state.run.comboMult abgeleitet) treibt eine
+   REINE Zustandsanzeige (Sättigung/Helligkeit/Farbton per filter) —
+   diese bleibt auch bei prefers-reduced-motion vollständig erhalten
+   (eine Farbänderung ist keine Bewegung); NUR der Skalier-Puls
+   (.is-combo-pulse) wird dort deaktiviert (siehe Media-Query unten). */
+.idle-run-combo-badge {
+  --combo-intensity: 0;
+  filter: saturate(calc(1 + var(--combo-intensity) * 1.4))
+          brightness(calc(1 + var(--combo-intensity) * 0.12))
+          hue-rotate(calc(var(--combo-intensity) * 25deg));
+  transition: filter var(--dur-base, 0.25s) var(--ease-standard, ease);
+}
+.idle-run-combo-badge.is-combo-pulse {
+  animation: idle-juice-combo-pulse var(--dur-slow, 0.32s) var(--ease-spring, ease);
+}
+@keyframes idle-juice-combo-pulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.18); }
+  100% { transform: scale(1); }
 }
 
 /* Steuerungs-Hinweis unter der Strecke (Teil 1) — dezent, informativ. */
@@ -1268,6 +1342,31 @@
   .idle-near-miss-popup.is-visible {
     transform: translate(-50%, -50%);
   }
+  /* feat(juice-coins): idle.js löst diese Klassen ohnehin bereits gar
+     nicht erst aus, wenn reducedMotion true ist — hier zusätzlich als
+     defensive CSS-Ebene (identisches Vorsichtsprinzip wie oben bei
+     .idle-track-wrap.is-collision). */
+  .idle-juice-coin-particle.is-bursting { animation: none; }
+  .idle-juice-coin-fly { transition: none; }
+  .idle-run-score-hud-value.is-coin-pulse { animation: none; }
+  /* feat(juice-combo): NUR der Skalier-Puls entfällt — die Farb-
+     Intensität (filter, siehe .idle-run-combo-badge oben) ist eine reine
+     Zustandsanzeige und bleibt bewusst erhalten. */
+  .idle-run-combo-badge.is-combo-pulse { animation: none; }
+  /* Teil 6, feat(juice-powerup): idle.js löst den Wash/die Eintritts-
+     Animation ohnehin bereits gar nicht erst aus, wenn reducedMotion
+     true ist (siehe triggerPowerupWash()/triggerPowerupHudEnter()) —
+     hier zusätzlich als defensive CSS-Ebene. Der Ring (--powerup-
+     progress, siehe .idle-powerup-hud-badge::before oben) ist KEINE
+     Animation (kein @keyframes/transition) und bleibt daher unverändert
+     erhalten. */
+  .idle-juice-powerup-wash.is-active { animation: none; }
+  .idle-powerup-hud-badge.is-entering { animation: none; }
+  /* Teil 6, feat(juice-crash): NUR der Slowmo-Filter-Puls entfällt — der
+     stattdessen ausgelöste, kurze Opacity-Flash (.is-crash-flash, siehe
+     triggerCrashJuice()) ist bewusst die REDUZIERTE Alternative selbst
+     und bleibt daher unangetastet aktiv. */
+  .idle-track-wrap.is-crash-slowmo { animation: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -1315,4 +1414,231 @@
 .idle-stat-tile:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-overlay): Runner-Game-Feel — Teil 5
+   DOM-Overlay-Layer über dem Runner-Canvas, siehe juice.js/idle.js
+   ensureOverlay()/initCanvases() — Anker für transiente Partikel/
+   Popups (Coin-Flug, Near-Miss, Combo-Pulse), die in den folgenden
+   feat(juice-*)-Schritten ergänzt werden. Der Container selbst
+   animiert nichts, blockiert keine Klicks (pointer-events: none) und
+   überdeckt exakt die Canvas-Box (inset: 0 innerhalb des bereits
+   position:relative + overflow:hidden gesetzten #idleTrackWrap).
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-coins): Coin-Sammel-Feedback — Teil 5
+   Partikel-Burst + "Ghost-Münze" Richtung Score-Anzeige (siehe idle.js
+   spawnCoinBurst()/flyCoinToScore()) — beide leben im Overlay-Container
+   (.idle-juice-overlay) und animieren ausschliesslich transform/opacity
+   (nie width/height/left/top als ANIMIERTE Eigenschaft — die initiale
+   Positionierung per JS-gesetztem left/top ist ein einmaliger, nicht
+   animierter Wert). Farblich identisch zum bereits Canvas-gezeichneten
+   Münz-Kreis (rgba(234,179,8,...), siehe renderTrack()).
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-coin-particle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  margin-top: -3px;
+  border-radius: var(--radius-full, 999px);
+  background: rgba(234, 179, 8, 0.95);
+  box-shadow: 0 0 4px rgba(234, 179, 8, 0.55);
+  opacity: 0;
+  pointer-events: none;
+}
+.idle-juice-coin-particle.is-bursting {
+  animation: idle-juice-coin-burst 420ms var(--ease-standard, ease) forwards;
+}
+@keyframes idle-juice-coin-burst {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--juice-burst-dx, 0) * 26px), calc(var(--juice-burst-dy, 0) * 26px)) scale(0.4);
+  }
+}
+.idle-juice-coin-fly {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
+  border-radius: var(--radius-full, 999px);
+  background: rgba(234, 179, 8, 0.95);
+  border: 1px solid rgba(161, 98, 7, 0.9);
+  opacity: 0;
+  pointer-events: none;
+}
+/* Skalier-Puls auf der Score-Anzeige bei Ankunft der Ghost-Münze (siehe
+   idle.js pulseScoreOnCoinArrival()) — ergänzt die bestehende
+   .idle-run-score-hud-value-Basisregel oben rein additiv. */
+.idle-run-score-hud-value.is-coin-pulse {
+  animation: idle-juice-score-pulse 260ms var(--ease-spring, ease);
+}
+@keyframes idle-juice-score-pulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-powerup): Bildschirmweiter Aktivierungs-Wash — Teil 6
+   Sehr dezenter, max. 200ms langer Farb-Wash (siehe idle.js
+   triggerPowerupWash()) über dem gesamten Overlay (.idle-juice-
+   overlay) — Farbton je Typ über die JS-gesetzte CSS-Variable
+   --juice-wash-color, animiert wird AUSSCHLIESSLICH opacity (siehe
+   Prinzip-Kommentar bei .idle-juice-overlay oben).
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-powerup-wash {
+  position: absolute;
+  inset: 0;
+  background: var(--juice-wash-color, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.idle-juice-powerup-wash.is-active {
+  animation: idle-juice-powerup-wash 200ms var(--ease-standard, ease);
+}
+@keyframes idle-juice-powerup-wash {
+  0% { opacity: 0; }
+  35% { opacity: 0.22; }
+  100% { opacity: 0; }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-crash): Kurzer Slowmo-Filter-Puls vor der Crash-
+   Zusammenfassung — Teil 6
+   idle.js verzögert das Öffnen des Dialogs (Modal.openModal) um
+   CRASH_SLOWMO_MS (siehe triggerCrashJuice()/handleRunCrash()) und
+   spielt WÄHREND dieser Verzögerung einen kurzen, dezenten Filter-Puls
+   auf #idleTrackWrap ab (rein visuell — ändert niemals Score/Coins,
+   siehe idle.js-Docblock). Bei prefers-reduced-motion entfällt dieser
+   Puls (idle.js löst ihn dann gar nicht erst aus), stattdessen ein noch
+   kürzerer, reiner Opacity-Flash (is-crash-flash) OHNE Verzögerung.
+   ════════════════════════════════════════════════════════════════ */
+.idle-track-wrap.is-crash-slowmo {
+  animation: idle-juice-crash-slowmo 300ms var(--ease-standard, ease);
+}
+@keyframes idle-juice-crash-slowmo {
+  0% { filter: saturate(1) brightness(1); }
+  30% { filter: saturate(0.35) brightness(0.72); }
+  100% { filter: saturate(1) brightness(1); }
+}
+.idle-track-wrap.is-crash-flash {
+  animation: idle-juice-crash-flash 120ms var(--ease-standard, ease);
+}
+@keyframes idle-juice-crash-flash {
+  0% { opacity: 1; }
+  50% { opacity: 0.55; }
+  100% { opacity: 1; }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-summary): Highscore-Konfetti in der Crash-Zusammenfassung
+   — Teil 6
+   Gedeckelter, einmaliger Partikel-Effekt (siehe idle.js
+   triggerHighscoreConfetti(), CONFETTI_PIECE_COUNT), NUR bei neuem
+   Highscore ausgelöst — animiert ausschliesslich transform (Fall-
+   bewegung + Rotation) und opacity. Lebt in .modal-content (position:
+   relative, siehe styles.css), oben begrenzt auf die obere Hälfte der
+   Karte, damit der "Nochmal fahren"-Button (unten) frei bleibt.
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-confetti {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 55%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.idle-juice-confetti-piece {
+  position: absolute;
+  top: -10px;
+  left: var(--juice-confetti-x, 50%);
+  width: 6px;
+  height: 10px;
+  border-radius: 1px;
+  opacity: 0;
+  animation-name: idle-juice-confetti-fall;
+  animation-duration: 900ms;
+  animation-timing-function: var(--ease-standard, ease);
+  animation-delay: var(--juice-confetti-delay, 0ms);
+  animation-fill-mode: forwards;
+}
+@keyframes idle-juice-confetti-fall {
+  0% { opacity: 0; transform: translateY(0) rotate(0deg); }
+  15% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(160px) rotate(var(--juice-confetti-rotate, 180deg)); }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-summary): "Nochmal fahren" als prominente Primär-Aktion +
+   grössere, glühende Score-/Coins-Count-up-Werte — Teil 6
+   Rein additive/überschreibende Ergänzung — #idleRunSummaryRestartBtn
+   ist die von modal.js (buildActionButton) tatsächlich erzeugte
+   Schaltflächen-id (siehe showCrashSummary()), NICHT die inzwischen
+   verwaiste .idle-run-summary-restart-btn-Klasse aus der Vor-modal.js-
+   Ära (bleibt unangetastet). data-count-up/id="idleRunSummaryScore"/
+   "idleRunSummaryCoins" bleiben von count-up-test.js exakt gesperrt —
+   hier werden NUR Optik-Eigenschaften ergänzt, keine Struktur/ids
+   verändert.
+   ════════════════════════════════════════════════════════════════ */
+#idleRunSummaryRestartBtn {
+  width: 100%;
+  padding: 0.75rem 1.25rem;
+  font-size: 1.05em;
+  font-weight: var(--fw-bold);
+  box-shadow: var(--shadow-glow, none);
+}
+.idle-run-summary-stat-value {
+  font-size: 1.7em;
+  color: var(--accent);
+  text-shadow: 0 0 12px var(--accent-dim);
+}
+.idle-run-summary-highscore {
+  display: inline-block;
+  padding: 0.35rem 0.9rem;
+  border-radius: var(--radius-full, 999px);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   style(juice-hud): Glassmorphism-Politur der Runner-HUD — Teil 6
+   Rein additive Überschreibung von background auf den BESTEHENDEN
+   Selektoren (siehe deren Basis-Regeln weiter oben) — keine neuen ids/
+   Klassen, keine bestehende Zeile entfernt, nur nachträglich (spätere
+   Kaskaden-Regel, gleiche Spezifität) ergänzt. Betrifft NUR die
+   Runner-eigene HUD (Score/Powerup/Near-Miss-Combo) — die unrelated
+   Schaltpunkt-Combo (.idle-combo-badge-Basis, #idleComboBadge) bleibt
+   unangetastet (Selektor exakt .idle-run-combo-badge, nicht die Basis).
+   Konsistent in beiden Themes über die theme-abhängigen --glass-*-
+   Tokens (siehe design.css).
+   ════════════════════════════════════════════════════════════════ */
+.idle-run-score-hud,
+.idle-powerup-hud-badge,
+.idle-run-combo-badge {
+  background: var(--glass-bg, var(--card-bg));
+}
+.idle-run-combo-badge {
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius-full, 999px);
+  border: 1px solid var(--glass-border, var(--border));
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .idle-run-score-hud,
+  .idle-powerup-hud-badge,
+  .idle-run-combo-badge {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
 }

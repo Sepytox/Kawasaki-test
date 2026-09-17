@@ -156,6 +156,61 @@
   /** Reihenfolge/Icons der Powerup-Timer-HUD-Badges (Teil 4) — identisch zu POWERUP_ICONS, aber als feste Liste für eine stabile HUD-Reihenfolge. */
   var POWERUP_HUD_TYPES = ['magnet', 'schild', 'turbo', 'scoreX2'];
 
+  /* ── Teil 5: RUNNER-JUICE — Coin-Fly/Near-Miss-Popup/Combo-Pulse —
+   * feat(juice-coins)/feat(juice-nearmiss)/feat(juice-combo) — reine
+   * Präsentations-Politur auf dem Teil-1/4-Overlay (siehe juice.js),
+   * ändert NIEMALS Coin-Werte/Combo-Mathematik/Spawn-Logik selbst. ── */
+  /** Anzahl Partikel eines Coin-Sammel-Bursts (siehe triggerCoinCollectJuice()). */
+  var COIN_BURST_PARTICLE_COUNT = 6;
+  /** Anzeigedauer (ms) EINES Burst-Partikels (mirrors die CSS-Keyframe-Dauer in idle.css). */
+  var COIN_BURST_PARTICLE_MS = 420;
+  /** Flugdauer (ms) der fliegenden Münze von ihrer Canvas-Position zur Score-Anzeige. */
+  var COIN_FLY_DURATION_MS = 480;
+  /** Anzeigedauer (ms) des kurzen Skalier-Pulses auf der Score-Anzeige bei Ankunft der fliegenden Münze. */
+  var COIN_SCORE_PULSE_MS = 260;
+  /** Frequenz (Hz) des kurzen Coin-Sammel-Signaltons (WebAudio, siehe playCoinChime()). */
+  var COIN_CHIME_FREQ_HZ = 880;
+  /** Dauer (s) des kurzen Coin-Sammel-Signaltons. */
+  var COIN_CHIME_DURATION_SECONDS = 0.14;
+  /** Ziel-Spitzenlautstärke (0..1) des Coin-Sammel-Signaltons, zusätzlich mit state.sound.volume skaliert. */
+  var COIN_CHIME_PEAK_GAIN = 0.22;
+  /** Anzeigedauer (ms) des kurzen Skalier-Pulses auf #idleRunComboBadge bei jedem Near-Miss-Combo-Zuwachs (siehe triggerComboPulse()). */
+  var COMBO_PULSE_MS = 320;
+
+  /* ── Teil 6: RUNNER-JUICE PHASE B — Powerup-Wash/Ring, Crash-Slowmo,
+   * Highscore-Konfetti — feat(juice-powerup)/feat(juice-crash)/
+   * feat(juice-summary) — reine Präsentations-Politur, ändert NIEMALS
+   * Powerup-Wirkdauern/Kollisions-Erkennung/Highscore-Vergleich selbst
+   * (liest nur bereits vorhandene IdleCore.*-Werte). ── */
+  /** Anzeigedauer (ms) des bildschirmweiten Farb-Wash bei Powerup-Aktivierung (siehe triggerPowerupWash()) — mirrors die CSS-Keyframe-Dauer in idle.css. */
+  var POWERUP_WASH_MS = 200;
+  /** Anzeigedauer (ms) der Eintritts-Animation eines Powerup-HUD-Badges (siehe triggerPowerupHudEnter()). */
+  var POWERUP_HUD_ENTER_MS = 320;
+  /** Bildschirmweite Wash-Farbe je Powerup-Typ (halbtransparent, siehe triggerPowerupWash()). */
+  var POWERUP_WASH_COLORS = {
+    magnet: 'rgba(0, 112, 243, 0.9)',
+    schild: 'rgba(34, 197, 94, 0.9)',
+    turbo: 'rgba(249, 115, 22, 0.9)',
+    scoreX2: 'rgba(168, 85, 247, 0.9)',
+  };
+  /** Reine Lesefunktion je Powerup-Typ für dessen Tuning-abhängige GESAMT-Wirkdauer (Sekunden) — Nenner für den Progress-Ring in updatePowerupHud(), mutiert niemals state. */
+  var POWERUP_TOTAL_DURATION_FN = {
+    magnet: IdleCore.powerupMagnetDurationSeconds,
+    schild: IdleCore.powerupShieldDurationSeconds,
+    turbo: IdleCore.powerupTurboDurationSeconds,
+    scoreX2: IdleCore.powerupScoreX2DurationSeconds,
+  };
+  /** Verzögerung (ms) vor dem Öffnen der Crash-Zusammenfassung bei VOLLER Bewegung — dezenter Slowmo-Moment (siehe triggerCrashJuice()/handleRunCrash()), rein visuell, ändert niemals Score/Coins/Zeitschritt der Spiellogik. */
+  var CRASH_SLOWMO_MS = 300;
+  /** Anzeigedauer (ms) des kurzen Opacity-Flashs bei prefers-reduced-motion (ERSATZ für Shake+Slowmo, keine künstliche Verzögerung vor der Crash-Zusammenfassung). */
+  var CRASH_FLASH_MS = 120;
+  /** Anzahl der Konfetti-Partikel bei einem neuen Highscore (siehe triggerHighscoreConfetti()) — bewusst klein/gedeckelt, da einmaliges Ereignis pro Dialog-Öffnung (kein rAF-Loop). */
+  var CONFETTI_PIECE_COUNT = 18;
+  /** Farbpalette der Konfetti-Partikel — identisch in beiden Themes (feste Akzent-/Signalfarben statt Theme-Tokens, damit die "Feier"-Optik nicht mit dem Glass-Look verschwimmt). */
+  var CONFETTI_COLORS = ['#0070f3', '#facc15', '#22c55e', '#f97316', '#a855f7'];
+  /** Fallzeit (ms) EINES Konfetti-Partikels (mirrors die CSS-Keyframe-Dauer in idle.css). */
+  var CONFETTI_FALL_MS = 900;
+
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = ApiClient.loadIdleState();
 
@@ -250,6 +305,20 @@
   /** DOM-Referenzen für Canvas + 2D-Kontext (einmalig aufgelöst, siehe initCanvases()). */
   var trackCanvas = null, trackCtx = null;
   var tachoCanvas = null, tachoCtx = null;
+  /** DOM-Overlay-Container über dem Runner-Canvas (Teil 5, feat(juice-overlay)) — Anker für transiente Partikel/Popups, siehe juice.js ensureOverlay(). Bleibt null ohne window.Juice (defensiv, z.B. falls juice.js nicht eingebunden ist). */
+  var juiceOverlayEl = null;
+  /** Gedeckelter DOM-Partikel-Pool (siehe juice.js) für Coin-Sammel-Bursts (Teil 5, feat(juice-coins)) — verhindert unbegrenztes DOM-Wachstum bei vielen Coins, z.B. während des Auto-Piloten. Bleibt null ohne window.Juice. */
+  var coinBurstParticlePool = window.Juice ? window.Juice.createParticlePool() : null;
+  /** Gedeckelter DOM-Partikel-Pool für die "fliegende Münze" Richtung Score-Anzeige — kleinere Kapazität reicht, da praktisch nie viele Ghosts gleichzeitig unterwegs sind. */
+  var coinFlyGhostPool = window.Juice ? window.Juice.createParticlePool(8) : null;
+  /** Timeout-Handle des aktuell angezeigten Score-Skalier-Pulses (für Re-Trigger bei schnell aufeinanderfolgenden Coins). */
+  var coinScorePulseTimeoutId = null;
+  /** Timeout-Handle des aktuell angezeigten Combo-Badge-Pulses (für Re-Trigger bei schnell aufeinanderfolgenden Near-Misses). */
+  var comboPulseTimeoutId = null;
+  /** Timeout-Handle des aktuell angezeigten Powerup-Aktivierungs-Washs (Teil 6, feat(juice-powerup); für Re-Trigger bei schnell aufeinanderfolgenden Powerups). */
+  var powerupWashTimeoutId = null;
+  /** Timeout-Handle der aktuell aufgeschobenen Crash-Zusammenfassung (Teil 6, feat(juice-crash); siehe handleRunCrash()/triggerCrashJuice()). */
+  var crashSummaryTimeoutId = null;
 
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
@@ -679,6 +748,9 @@
   /**
    * Löst die Canvas-Elemente (Strecke + Tacho) einmalig auf und skaliert
    * sie initial. Wird zusätzlich bei jedem Fenster-Resize erneut aufgerufen.
+   * Legt bei dieser Gelegenheit (Teil 5, feat(juice-overlay)) auch den
+   * DOM-Overlay-Container für transiente Partikel/Popups an (juiceOverlayEl),
+   * verschachtelt als Kind von #idleTrackWrap — siehe juice.js ensureOverlay().
    * @returns {void}
    */
   function initCanvases() {
@@ -686,6 +758,9 @@
     tachoCanvas = document.getElementById('idleTachoCanvas');
     trackCtx = resizeCanvasToDisplaySize(trackCanvas);
     tachoCtx = resizeCanvasToDisplaySize(tachoCanvas);
+    if (window.Juice) {
+      juiceOverlayEl = window.Juice.ensureOverlay(document.getElementById('idleTrackWrap'));
+    }
     window.addEventListener('resize', function () {
       trackCtx = resizeCanvasToDisplaySize(trackCanvas);
       tachoCtx = resizeCanvasToDisplaySize(tachoCanvas);
@@ -824,6 +899,29 @@
   }
 
   /**
+   * Löst den kurzen visuellen Crash-Moment aus (Teil 6, feat(juice-
+   * crash)) — BEI VOLLER Bewegung ein dezenter Filter-Puls (Sättigung/
+   * Helligkeit, siehe .idle-track-wrap.is-crash-slowmo in idle.css), der
+   * ZEITLICH mit der um CRASH_SLOWMO_MS verzögerten Crash-Zusammenfassung
+   * synchron läuft (siehe handleRunCrash()) — rein visuell, MUTIERT
+   * niemals state/Score/Coins und skaliert KEINEN Logik-Zeitschritt (der
+   * Run ist über IdleCore.endRun() bereits vollständig abgerechnet,
+   * bevor diese Funktion überhaupt aufgerufen wird). Bei prefers-
+   * reduced-motion entfällt der Filter-Puls vollständig (KEIN Shake/
+   * Slowmo) — stattdessen ein deutlich kürzerer, reiner Opacity-Flash
+   * (.is-crash-flash), ohne die Zusammenfassung künstlich zu verzögern.
+   * @returns {void}
+   */
+  function triggerCrashJuice() {
+    var wrap = document.getElementById('idleTrackWrap');
+    if (!wrap) return;
+    var flashClass = reducedMotion ? 'is-crash-flash' : 'is-crash-slowmo';
+    wrap.classList.remove('is-crash-slowmo', 'is-crash-flash');
+    void wrap.offsetWidth;
+    wrap.classList.add(flashClass);
+  }
+
+  /**
    * Aktualisiert den kleinen "Aktiv"/"Auto-Pilot"-Badge über der Strecke,
    * NUR wenn sich der Aktivitäts-Zustand tatsächlich geändert hat
    * (vermeidet unnötige DOM-Schreibzugriffe in jedem Frame).
@@ -870,7 +968,13 @@
    * zeigt die aktuelle Combo-Anzahl + den daraus abgeleiteten Score-
    * Multiplikator (state.run.comboMult, siehe IdleCore.
    * runComboMultiplier()), versteckt sich komplett bei Combo 0 (kein
-   * Near-Miss seit Run-Start bzw. seit dem letzten Crash).
+   * Near-Miss seit Run-Start bzw. seit dem letzten Crash). Setzt
+   * zusätzlich (Teil 5, feat(juice-combo)) die CSS-Variable
+   * --combo-intensity (0..1, aus dem aktuellen Multiplikator relativ zu
+   * RUN_COMBO_MULTIPLIER_MAX abgeleitet) auf dem Badge — das steuert per
+   * idle.css EINE reine Zustandsanzeige (Farb-/Sättigungs-Intensität via
+   * filter), die IMMER gilt, auch bei prefers-reduced-motion (eine
+   * Farbänderung ist keine Bewegung, siehe idle.css-Kommentar dort).
    * @returns {void}
    */
   function updateRunComboHud() {
@@ -878,26 +982,67 @@
     if (!badge) return;
     var combo = state.run.combo || 0;
     badge.hidden = combo <= 0;
-    if (combo <= 0) return;
+    if (combo <= 0) {
+      badge.style.setProperty('--combo-intensity', '0');
+      return;
+    }
     var countEl = document.getElementById('idleRunComboCount');
     var multEl = document.getElementById('idleRunComboMultiplier');
     if (countEl) countEl.textContent = '💨 Near-Miss ×' + combo;
     var activeMultiplier = state.run.comboMult || 1;
     if (multEl) multEl.textContent = activeMultiplier > 1 ? ('· Score ×' + formatMultiplier(activeMultiplier)) : '';
+    var maxMultiplier = IdleCore.IDLE_BALANCE.RUN_COMBO_MULTIPLIER_MAX;
+    var intensity = maxMultiplier > 1 ? Math.max(0, Math.min(1, (activeMultiplier - 1) / (maxMultiplier - 1))) : 0;
+    badge.style.setProperty('--combo-intensity', intensity.toFixed(3));
+  }
+
+  /**
+   * Löst einen kurzen Skalier-Puls (transform: scale, KEIN Layout-
+   * Property) auf #idleRunComboBadge aus — Feedback für JEDEN
+   * Near-Miss-Combo-Zuwachs (Teil 5, feat(juice-combo)). No-op bei
+   * prefers-reduced-motion (die Farb-Intensität aus updateRunComboHud()
+   * bleibt davon unabhängig erhalten — reine Zustandsanzeige, keine
+   * Bewegung).
+   * @returns {void}
+   */
+  function triggerComboPulse() {
+    if (reducedMotion) return;
+    var badge = document.getElementById('idleRunComboBadge');
+    if (!badge || badge.hidden) return;
+    badge.classList.remove('is-combo-pulse');
+    void badge.offsetWidth;
+    badge.classList.add('is-combo-pulse');
+    if (comboPulseTimeoutId) clearTimeout(comboPulseTimeoutId);
+    comboPulseTimeoutId = setTimeout(function () {
+      badge.classList.remove('is-combo-pulse');
+    }, COMBO_PULSE_MS);
   }
 
   /**
    * Zeigt das kurze "Knapp vorbei!"-Near-Miss-Popup über der Strecke
-   * (Teil 4, feat(nearmiss)) — respektiert prefers-reduced-motion (nur
-   * ein sanftes Ein-/Ausblenden statt der zusätzlichen Aufstiegs-
-   * Bewegung, siehe idle.css).
+   * (Teil 4, feat(nearmiss); Teil 5, feat(juice-nearmiss)) — respektiert
+   * prefers-reduced-motion (nur ein sanftes Ein-/Ausblenden statt der
+   * zusätzlichen Aufstiegs-Bewegung, siehe idle.css). Ohne
+   * prefers-reduced-motion wird das Popup bei vorhandenem point EXAKT an
+   * der Canvas-Position des knapp verpassten Hindernisses positioniert
+   * (statt der festen zentrierten CSS-Position) — bei fehlendem point
+   * ODER prefers-reduced-motion fällt es auf die feste zentrierte
+   * CSS-Basisposition zurück (bewusst simpler/statischer Fallback).
    * @param {number} bonus - Gutgeschriebener Score-Bonus (siehe IdleCore.registerNearMiss()).
+   * @param {?{x: number, y: number}} [point] - Overlay-Pixel-Position des Hindernisses (siehe runnerCanvasPoint()), oder null/undefined für die zentrierte Standardposition.
    * @returns {void}
    */
-  function showNearMissPopup(bonus) {
+  function showNearMissPopup(bonus, point) {
     var popup = document.getElementById('idleNearMissPopup');
     if (!popup) return;
     popup.textContent = '💨 Knapp vorbei! +' + Math.floor(bonus);
+    if (!reducedMotion && point) {
+      popup.style.left = point.x + 'px';
+      popup.style.top = point.y + 'px';
+    } else {
+      popup.style.left = '';
+      popup.style.top = '';
+    }
     popup.classList.remove('is-visible');
     void popup.offsetWidth;
     popup.classList.add('is-visible');
@@ -910,14 +1055,195 @@
   /**
    * Verbucht einen erkannten Near-Miss (Teil 4, feat(nearmiss)) —
    * IdleCore.registerNearMiss() (Combo/Score-Bonus, reine Zustands-
-   * Mutation) + die dazugehörige UI (Popup + Combo-HUD).
+   * Mutation) + die dazugehörige UI (Popup positioniert am Hindernis +
+   * Combo-HUD + Combo-Badge-Puls, Teil 5 feat(juice-nearmiss)/
+   * feat(juice-combo)).
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
+   * @param {{displayLane: number, t: number}} obstacle - Das knapp verpasste Hindernis (für die Popup-Position, siehe runnerCanvasPoint()).
    * @returns {void}
    */
-  function triggerNearMiss(nowMs) {
+  function triggerNearMiss(nowMs, obstacle) {
     var result = IdleCore.registerNearMiss(state, nowMs);
-    showNearMissPopup(result.bonus);
+    var point = obstacle ? runnerCanvasPoint(obstacle.displayLane, obstacle.t) : null;
+    showNearMissPopup(result.bonus, point);
     updateRunComboHud();
+    triggerComboPulse();
+  }
+
+  /* ── Teil 5: RUNNER-JUICE — Coin-Sammel-Feedback (feat(juice-coins)) ──
+   * Reine Präsentations-Politur NACH IdleCore.collectRunCoin() (siehe
+   * Aufrufstelle in tickRunner()) — Partikel-Burst + fliegende
+   * "Ghost-Münze" Richtung Score-Anzeige + Skalier-Puls bei Ankunft +
+   * ein dezenter WebAudio-Signalton. Nutzt den gedeckelten Partikel-Pool
+   * aus juice.js (coinBurstParticlePool/coinFlyGhostPool oben), damit
+   * auch viele schnelle Coins nie unbegrenzt DOM-Knoten anlegen. ── */
+
+  /**
+   * Berechnet die aktuelle Canvas-CSS-Pixel-Position einer (fraktionalen)
+   * Fahrspur bei gegebenem Tiefen-Fortschritt t — exakt dieselbe Geometrie
+   * wie renderTrack() (laneCenterX()/laneRowY()), damit Juice-Effekte
+   * IMMER an der sichtbaren Zeichen-Position ansetzen. Da das Overlay
+   * (siehe juice.js ensureOverlay()) die Canvas-Box exakt überdeckt,
+   * ist diese Canvas-Position bereits die passende Overlay-Pixel-Position
+   * (Juice.canvasPointToOverlayPoint() würde hier nur einen Null-Versatz
+   * ausgleichen, siehe dessen Docblock).
+   * @param {number} laneIndexFloat - Fahrspur-Index (0-basiert, ggf. fraktional).
+   * @param {number} t - Tiefen-Fortschritt (0–1, wird geklemmt).
+   * @returns {?{x: number, y: number}} Canvas-/Overlay-CSS-Pixel-Position, oder null ohne aufgelöstes Canvas.
+   */
+  function runnerCanvasPoint(laneIndexFloat, t) {
+    if (!trackCanvas) return null;
+    var w = trackCanvas.clientWidth, h = trackCanvas.clientHeight;
+    if (w <= 0 || h <= 0) return null;
+    var ct = Math.min(1, Math.max(0, t));
+    return { x: laneCenterX(w, laneIndexFloat, ct), y: laneRowY(h, ct) };
+  }
+
+  /**
+   * Spielt einen sehr kurzen, dezenten Signalton beim Coin-Sammeln
+   * (EIN kurzlebiger Sinus-Oszillator, direkt an audioCtx.destination
+   * angeschlossen — unabhängig vom kontinuierlichen Motorsound-
+   * Signalgraph) — gated hinter der bestehenden Sound-EIN/AUS-Einstellung
+   * (state.sound.enabled). Legt selbst NIEMALS einen neuen AudioContext
+   * an (Autoplay-Policy: Coins können auch im Auto-Piloten OHNE
+   * Nutzer-Geste eingesammelt werden) — bleibt also stumm, bis der
+   * Motorsound-Toggle mindestens einmal per Klick aktiviert wurde.
+   * @returns {void}
+   */
+  function playCoinChime() {
+    if (!audioCtx || !state.sound.enabled) return;
+    try {
+      var now = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = COIN_CHIME_FREQ_HZ;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(COIN_CHIME_PEAK_GAIN * state.sound.volume, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + COIN_CHIME_DURATION_SECONDS);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + COIN_CHIME_DURATION_SECONDS + 0.02);
+    } catch (e) {
+      // Web-Audio-Fehler (z.B. bereits geschlossener Context) dürfen das
+      // Gameplay niemals unterbrechen — stiller Fallback ohne Ton.
+    }
+  }
+
+  /**
+   * Erzeugt einen kurzen Partikel-Burst am Overlay-Punkt (x,y) — mehrere
+   * kleine, aus coinBurstParticlePool wiederverwendete DOM-Knoten fliegen
+   * per CSS-Keyframe-Animation radial nach aussen und blassen dabei aus
+   * (siehe .idle-juice-coin-particle in idle.css — animiert wird
+   * ausschliesslich transform/opacity). No-op bei prefers-reduced-motion.
+   * @param {number} x - x-Position im Overlay-Pixel-Raum.
+   * @param {number} y - y-Position im Overlay-Pixel-Raum.
+   * @returns {void}
+   */
+  function spawnCoinBurst(x, y) {
+    if (reducedMotion || !window.Juice || !juiceOverlayEl || !coinBurstParticlePool) return;
+    for (var i = 0; i < COIN_BURST_PARTICLE_COUNT; i++) {
+      var node = window.Juice.acquireParticleNode(coinBurstParticlePool, juiceOverlayEl, 'idle-juice-coin-particle');
+      if (!node) return;
+      var angle = (Math.PI * 2 * i) / COIN_BURST_PARTICLE_COUNT;
+      node.style.left = x + 'px';
+      node.style.top = y + 'px';
+      node.style.setProperty('--juice-burst-dx', Math.cos(angle).toFixed(3));
+      node.style.setProperty('--juice-burst-dy', Math.sin(angle).toFixed(3));
+      // Reflow erzwingen, damit die Keyframe-Animation bei Wiederverwendung
+      // erneut startet (identisches Muster zu triggerCollisionFeedback()).
+      void node.offsetWidth;
+      node.classList.add('is-bursting');
+    }
+  }
+
+  /**
+   * Lässt eine kleine "Ghost-Münze" vom Overlay-Punkt (startX, startY)
+   * sichtbar Richtung der Score-Anzeige (#idleRunScore) fliegen — reine
+   * CSS-Transition auf transform/opacity (kein Layout-Property, siehe
+   * .idle-juice-coin-fly in idle.css) — und löst bei Ankunft
+   * pulseScoreOnCoinArrival() aus. Der Ghost-Knoten stammt aus
+   * coinFlyGhostPool (Wiederverwendung, siehe juice.js) und wird danach
+   * unsichtbar (nicht entfernt) für die nächste Münze bereitgehalten.
+   * @param {number} startX - Start-x-Position im Overlay-Pixel-Raum (Canvas-Punkt der Münze).
+   * @param {number} startY - Start-y-Position im Overlay-Pixel-Raum.
+   * @returns {void}
+   */
+  function flyCoinToScore(startX, startY) {
+    if (!window.Juice || !juiceOverlayEl || !coinFlyGhostPool) return;
+    var scoreEl = document.getElementById('idleRunScore');
+    if (!scoreEl) return;
+    var overlayRect = juiceOverlayEl.getBoundingClientRect();
+    var scoreRect = scoreEl.getBoundingClientRect();
+    var endX = (scoreRect.left - overlayRect.left) + scoreRect.width / 2;
+    var endY = (scoreRect.top - overlayRect.top) + scoreRect.height / 2;
+
+    var node = window.Juice.acquireParticleNode(coinFlyGhostPool, juiceOverlayEl, 'idle-juice-coin-fly');
+    if (!node) return;
+
+    node.style.transition = 'none';
+    node.style.left = startX + 'px';
+    node.style.top = startY + 'px';
+    node.style.opacity = '1';
+    node.style.transform = 'translate(0, 0) scale(1)';
+    // Reflow erzwingen, BEVOR die Ziel-Transformation gesetzt wird — sonst
+    // fasst der Browser Start-/Zielwert fälschlich zusammen und es gibt
+    // gar keine sichtbare Transition (identisches Muster zu anderen
+    // Re-Trigger-Effekten in dieser Datei).
+    void node.offsetWidth;
+    node.style.transition = 'transform ' + COIN_FLY_DURATION_MS + 'ms var(--ease-standard, ease), opacity ' + COIN_FLY_DURATION_MS + 'ms var(--ease-standard, ease)';
+    node.style.transform = 'translate(' + (endX - startX) + 'px, ' + (endY - startY) + 'px) scale(0.6)';
+    node.style.opacity = '0.85';
+
+    if (node._juiceFlyTimeoutId) clearTimeout(node._juiceFlyTimeoutId);
+    node._juiceFlyTimeoutId = setTimeout(function () {
+      node.style.transition = 'none';
+      node.style.opacity = '0';
+      pulseScoreOnCoinArrival();
+    }, COIN_FLY_DURATION_MS);
+  }
+
+  /**
+   * Löst einen kurzen Skalier-Puls (transform: scale, KEIN Layout-
+   * Property) auf der Score-Anzeige aus — Ankunfts-Feedback der
+   * fliegenden Münze (siehe flyCoinToScore()). Respektiert
+   * prefers-reduced-motion (No-op dort — die Score-Anzeige zählt
+   * ohnehin bereits unabhängig davon über updateRunScoreHud() hoch).
+   * @returns {void}
+   */
+  function pulseScoreOnCoinArrival() {
+    if (reducedMotion) return;
+    var scoreEl = document.getElementById('idleRunScore');
+    if (!scoreEl) return;
+    scoreEl.classList.remove('is-coin-pulse');
+    void scoreEl.offsetWidth;
+    scoreEl.classList.add('is-coin-pulse');
+    if (coinScorePulseTimeoutId) clearTimeout(coinScorePulseTimeoutId);
+    coinScorePulseTimeoutId = setTimeout(function () {
+      scoreEl.classList.remove('is-coin-pulse');
+    }, COIN_SCORE_PULSE_MS);
+  }
+
+  /**
+   * Löst das gesamte Coin-Sammel-Feedback aus — Partikel-Burst an der
+   * Canvas-Position der Münze + eine "Ghost-Münze", die zur Score-Anzeige
+   * fliegt und dort einen kurzen Skalier-Puls auslöst, plus einen
+   * dezenten Signalton (playCoinChime(), UNABHÄNGIG von
+   * prefers-reduced-motion — ein Ton ist keine Bewegung). Rein
+   * Präsentations-Politur NACH IdleCore.collectRunCoin() — ändert
+   * niemals Coin-Werte/state selbst. Bei prefers-reduced-motion entfällt
+   * die GESAMTE Zusatzbewegung (kein Burst, kein Flug, kein Puls).
+   * @param {{displayLane: number, t: number}} coin - Die gerade eingesammelte Münze (für ihre Canvas-Position).
+   * @returns {void}
+   */
+  function triggerCoinCollectJuice(coin) {
+    playCoinChime();
+    if (reducedMotion) return;
+    var point = runnerCanvasPoint(coin.displayLane, coin.t);
+    if (!point) return;
+    spawnCoinBurst(point.x, point.y);
+    flyCoinToScore(point.x, point.y);
   }
 
   /**
@@ -938,7 +1264,14 @@
    * der 4 Typen (Magnet/Schild/Turbo/Score-x2) zeigt EIN Badge mit Icon +
    * verbleibenden Sekunden, NUR solange sein Effekt aktiv ist (mirrors
    * das bestehende "kein UI ohne aktiven Zustand"-Prinzip, siehe
-   * .idle-combo-badge[hidden]).
+   * .idle-combo-badge[hidden]). Setzt zusätzlich (Teil 6, feat(juice-
+   * powerup)) die CSS-Variable --powerup-progress (0..1, verbleibende
+   * durch GESAMTE Wirkdauer, siehe POWERUP_TOTAL_DURATION_FN) auf dem
+   * Badge — treibt per idle.css EINEN reinen, synchron pro Frame
+   * NEU GESETZTEN (nicht animierten) conic-gradient-Ring, liest dafür
+   * nur bereits vorhandene, reine IdleCore.powerup*DurationSeconds()-
+   * Funktionen (KEINE neue Zustands-Mutation, KEINE Änderung der
+   * eigentlichen Ablauf-Zeitstempel).
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
    * @returns {void}
    */
@@ -962,9 +1295,84 @@
         anyActive = true;
         var timerEl = badge.querySelector('.idle-powerup-hud-timer');
         if (timerEl) timerEl.textContent = Math.ceil(remaining) + 's';
+        var totalDurationFn = POWERUP_TOTAL_DURATION_FN[type];
+        var totalSeconds = totalDurationFn ? totalDurationFn(state) : 0;
+        var progress = totalSeconds > 0 ? Math.max(0, Math.min(1, remaining / totalSeconds)) : 0;
+        badge.style.setProperty('--powerup-progress', progress.toFixed(3));
       }
     });
     hud.classList.toggle('is-empty', !anyActive);
+  }
+
+  /**
+   * Legt (einmalig, idempotent) den geteilten Overlay-Knoten für den
+   * bildschirmweiten Powerup-Aktivierungs-Wash an (Teil 6, feat(juice-
+   * powerup)) und hängt ihn an juiceOverlayEl. Ein einziger,
+   * wiederverwendeter Knoten reicht — anders als Coin-Bursts/Ghost-
+   * Münzen kann höchstens EIN Wash gleichzeitig laufen (Powerups werden
+   * nacheinander eingesammelt, nicht in Serie wie Münzen).
+   * @returns {?HTMLElement} Der Wash-Knoten, oder null ohne Overlay.
+   */
+  function ensurePowerupWashNode() {
+    if (!juiceOverlayEl) return null;
+    var existing = document.getElementById('idleJuicePowerupWash');
+    if (existing) return existing;
+    var node = document.createElement('div');
+    node.id = 'idleJuicePowerupWash';
+    node.className = 'idle-juice-powerup-wash';
+    node.setAttribute('aria-hidden', 'true');
+    juiceOverlayEl.appendChild(node);
+    return node;
+  }
+
+  /**
+   * Löst den sehr dezenten, bildschirmweiten Farb-Wash bei Powerup-
+   * Aktivierung aus (Teil 6, feat(juice-powerup)) — max. POWERUP_WASH_MS,
+   * ausschliesslich opacity animiert (siehe .idle-juice-powerup-wash in
+   * idle.css), Farbton passend zum aktivierten Typ (POWERUP_WASH_COLORS).
+   * No-op bei prefers-reduced-motion (kein Wash — die HUD-Badge-
+   * Aktualisierung selbst bleibt davon unabhängig).
+   * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Aktivierter Powerup-Typ.
+   * @returns {void}
+   */
+  function triggerPowerupWash(type) {
+    if (reducedMotion) return;
+    var wash = ensurePowerupWashNode();
+    if (!wash) return;
+    wash.style.setProperty('--juice-wash-color', POWERUP_WASH_COLORS[type] || 'transparent');
+    wash.classList.remove('is-active');
+    // Reflow erzwingen, damit die Keyframe-Animation bei schnell
+    // aufeinanderfolgenden Powerups erneut startet (identisches Muster
+    // zu triggerCollisionFeedback()/showNearMissPopup()).
+    void wash.offsetWidth;
+    wash.classList.add('is-active');
+    if (powerupWashTimeoutId) clearTimeout(powerupWashTimeoutId);
+    powerupWashTimeoutId = setTimeout(function () {
+      wash.classList.remove('is-active');
+    }, POWERUP_WASH_MS);
+  }
+
+  /**
+   * Löst die Eintritts-Animation (Skalier-/Opacity-Pop, KEIN Layout-
+   * Property) auf dem HUD-Badge des gerade aktivierten Powerup-Typs aus
+   * (Teil 6, feat(juice-powerup)) — reine Zusatz-Politur, das Badge wird
+   * ohnehin unabhängig davon beim nächsten updatePowerupHud()-Aufruf
+   * sichtbar. No-op bei prefers-reduced-motion (Badge erscheint dann
+   * beim nächsten Tick trotzdem sofort, nur ohne Animation).
+   * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Aktivierter Powerup-Typ.
+   * @returns {void}
+   */
+  function triggerPowerupHudEnter(type) {
+    if (reducedMotion) return;
+    var badge = document.getElementById('idlePowerupHud-' + type);
+    if (!badge) return;
+    badge.classList.remove('is-entering');
+    void badge.offsetWidth;
+    badge.classList.add('is-entering');
+    if (badge._juiceEnterTimeoutId) clearTimeout(badge._juiceEnterTimeoutId);
+    badge._juiceEnterTimeoutId = setTimeout(function () {
+      badge.classList.remove('is-entering');
+    }, POWERUP_HUD_ENTER_MS);
   }
 
   /**
@@ -975,6 +1383,13 @@
    * aktualisiert die Anzeige (km/Shop-Freischaltungen können sich durch
    * die Gutschrift ändern) und zeigt die Crash-Zusammenfassung mit
    * Score/Coins/ggf. neuem Highscore samt "Nochmal fahren"-Button.
+   * Teil 6 (feat(juice-crash)): der Run ist an dieser Stelle bereits
+   * VOLLSTÄNDIG über IdleCore.endRun() abgerechnet (Score/Coins/
+   * Highscore stehen fest) — das Öffnen des Dialogs wird NUR VISUELL um
+   * CRASH_SLOWMO_MS (bzw. bei prefers-reduced-motion CRASH_FLASH_MS,
+   * ohne künstliche Verzögerung) aufgeschoben, synchron mit dem kurzen
+   * Slowmo-/Flash-Effekt aus triggerCrashJuice() — es wird dabei
+   * NIEMALS ein zweites Mal state mutiert.
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
    * @returns {void}
    */
@@ -982,22 +1397,64 @@
     var summary = IdleCore.endRun(state, nowMs);
     ApiClient.saveIdleState(state);
     triggerCollisionFeedback();
+    triggerCrashJuice();
     renderAll();
     checkIdleAchievements();
     // Teil 4 (feat(nearmiss)): endRun() resettet state.run.combo auf 0 —
     // die Combo-HUD soll das SOFORT widerspiegeln (nicht erst beim
     // nächsten Near-Miss nach dem Neustart).
     updateRunComboHud();
-    showCrashSummary(summary);
+    if (crashSummaryTimeoutId) clearTimeout(crashSummaryTimeoutId);
+    crashSummaryTimeoutId = setTimeout(function () {
+      showCrashSummary(summary);
+    }, reducedMotion ? CRASH_FLASH_MS : CRASH_SLOWMO_MS);
+  }
+
+  /**
+   * Löst einen dezenten, gedeckelten Konfetti-Effekt IN der Crash-
+   * Zusammenfassung aus (Teil 6, feat(juice-summary)) — NUR bei einem
+   * neuen Highscore (liest ausschliesslich das bereits von IdleCore.
+   * endRun() berechnete summary.newHighscore-Signal, berechnet nichts
+   * neu, mutiert niemals state). Erzeugt höchstens CONFETTI_PIECE_COUNT
+   * Partikel — ein einmaliges Ereignis pro Dialog-Öffnung (kein rAF-
+   * Loop), daher wird hier bewusst NICHT der geteilte, dauerhafte
+   * juice.js-Partikel-Pool wiederverwendet: modal.js baut den Dialog-
+   * Inhalt bei JEDEM Öffnen komplett neu auf (renderModalContent()
+   * leert content.innerHTML), sodass ein aus einem vorherigen Dialog
+   * wiederverwendeter Pool-Knoten dort nicht mehr im DOM hängen würde.
+   * Animiert ausschliesslich transform (Fallbewegung + Rotation) und
+   * opacity (siehe .idle-juice-confetti-piece in idle.css). No-op bei
+   * prefers-reduced-motion — der statische "🏆 Neuer Highscore!"-Hinweis
+   * bleibt davon unabhängig als alleiniger Hinweis erhalten.
+   * @param {HTMLElement} container - Der Modal-Body-Container (wird per idle.css-Positionierung relativ zur umgebenden .modal-content-Karte platziert).
+   * @returns {void}
+   */
+  function triggerHighscoreConfetti(container) {
+    if (reducedMotion || !container) return;
+    var layer = document.createElement('div');
+    layer.className = 'idle-juice-confetti';
+    layer.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < CONFETTI_PIECE_COUNT; i++) {
+      var piece = document.createElement('span');
+      piece.className = 'idle-juice-confetti-piece';
+      piece.style.setProperty('--juice-confetti-x', (Math.random() * 100).toFixed(1) + '%');
+      piece.style.setProperty('--juice-confetti-delay', Math.round(Math.random() * (CONFETTI_FALL_MS * 0.3)) + 'ms');
+      piece.style.setProperty('--juice-confetti-rotate', Math.round(Math.random() * 360) + 'deg');
+      piece.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+      layer.appendChild(piece);
+    }
+    container.appendChild(layer);
   }
 
   /**
    * Zeigt die Crash-Zusammenfassung-Dialog (Teil 3, feat(crash); refactor
    * (modal): jetzt über das zentrale Modal-System, modal.js): Score,
    * gesammelte Coins (bereits über IdleCore.endRun() in km umgewandelt)
-   * und — falls erreicht — den "Neuer Highscore!"-Hinweis. variant
+   * und — falls erreicht — den "Neuer Highscore!"-Hinweis samt (Teil 6,
+   * feat(juice-summary)) dezentem Konfetti-Effekt. variant
    * "forced-choice" deaktiviert bewusst Escape UND Backdrop-Klick — der
-   * einzige Ausweg ist der "Nochmal fahren"-Button, exakt wie zuvor.
+   * einzige Ausweg ist der prominente "Nochmal fahren"-Button, exakt wie
+   * zuvor.
    * @param {{score: number, coins: number, newHighscore: boolean}} summary - Ergebnis von IdleCore.endRun().
    * @returns {void}
    */
@@ -1015,6 +1472,7 @@
           highscoreEl.className = 'idle-run-summary-highscore';
           highscoreEl.textContent = '🏆 Neuer Highscore!';
           container.appendChild(highscoreEl);
+          triggerHighscoreConfetti(container);
         }
         var stats = document.createElement('div');
         stats.className = 'idle-run-summary-stats';
@@ -1161,10 +1619,10 @@
             crashedThisTick = true;
             handleRunCrash(now);
           } else if (IdleCore.isNearMiss(state, obstacle, now)) {
-            triggerNearMiss(now);
+            triggerNearMiss(now, obstacle);
           }
         } else if (activity === 'active' && IdleCore.isNearMiss(state, obstacle, now)) {
-          triggerNearMiss(now);
+          triggerNearMiss(now, obstacle);
         }
       }
       if (obstacle.t >= RUNNER_OBSTACLE_REMOVE_T) runnerObstacles.splice(i, 1);
@@ -1197,6 +1655,7 @@
         coin.resolved = true;
         if (coin.lane === state.runner.lane || coinMagnetSaved) {
           IdleCore.collectRunCoin(state, now);
+          triggerCoinCollectJuice(coin);
         }
       }
       if (coin.t >= RUNNER_OBSTACLE_REMOVE_T) runnerCoins.splice(ci, 1);
@@ -2601,7 +3060,9 @@
    * Sammelt das aktuell sichtbare Powerup ein: aktiviert dessen Effekt
    * (IdleCore.activatePowerupEffect()), zeigt einen entsprechenden Toast +
    * einen kurzen, dezenten "Eingesammelt"-Effekt (respektiert prefers-
-   * reduced-motion via CSS) und despawnt danach.
+   * reduced-motion via CSS) + (Teil 6, feat(juice-powerup)) einen
+   * bildschirmweiten Farb-Wash + eine HUD-Badge-Eintritts-Animation, und
+   * despawnt danach.
    * @returns {void}
    */
   function collectPowerup() {
@@ -2615,6 +3076,8 @@
     if (el) el.classList.add('is-collected');
     showPowerupToast(type, result);
     checkIdleAchievements();
+    triggerPowerupWash(type);
+    triggerPowerupHudEnter(type);
 
     setTimeout(despawnPowerup, reducedMotion ? 0 : POWERUP_COLLECT_ANIM_MS);
   }
