@@ -3179,6 +3179,54 @@ function runDifficultyWaveSize(distanceUnits, laneCount) {
 }
 
 /**
+ * Wählt die Lanes für eine NEUE Hindernis-Welle aus — und schliesst dabei
+ * die CROSS-WAVE-Lücke der reinen Pro-Welle-Garantie von
+ * runDifficultyWaveSize(): diese deckelt eine einzelne Welle zwar auf
+ * höchstens laneCount-1 Lanes, weiss aber nichts von Hindernissen
+ * VORHERIGER, noch nicht resolvter Wellen — überlappen sich zwei Wellen
+ * zeitlich, könnten sie gemeinsam ALLE Lanes belegen, obwohl jede für
+ * sich genommen mindestens eine Lane frei liess. Diese Funktion nimmt
+ * daher zusätzlich die Lanes entgegen, die von bereits in Flug
+ * befindlichen ("noch nicht resolvten") Hindernissen belegt sind
+ * (`occupiedLanes`), wählt die neue Welle NUR aus den WEITEREN, aktuell
+ * unbelegten Lanes, und lässt davon zwingend mindestens EINE Lane
+ * UNGEWÄHLT — dadurch bleibt über beliebig viele überlappende Wellen
+ * hinweg immer mindestens eine Lane vollständig frei von JEDEM
+ * Hindernis (stärker als "nur passierbar", siehe Docblock
+ * tests/runner-fairness-test.js). Reine, deterministische Funktion
+ * (ausser der injizierten Zufallsfunktion) — die Wellen-GRÖSSE wird bei
+ * Bedarf automatisch auf das tatsächlich verfügbare Lane-Kontingent
+ * gekürzt (im Extremfall auf 0, d. h. dieser Spawn-Versuch entfällt
+ * ersatzlos, statt die Fairness-Garantie zu brechen).
+ * @param {Array<number>} occupiedLanes - Lanes, die von noch nicht resolvten Hindernissen früherer Wellen belegt sind (Duplikate erlaubt).
+ * @param {number} waveSize - Gewünschte Wellen-Grösse (z. B. aus runDifficultyWaveSize()), wird ggf. gekürzt.
+ * @param {number} [laneCount] - Anzahl Fahrspuren; Standard IDLE_BALANCE.RUNNER_LANE_COUNT.
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {Array<number>} Die für die neue Welle gewählten, jeweils EINDEUTIGEN Lanes (kann kürzer als waveSize oder leer sein).
+ */
+function pickSolvableWaveLanes(occupiedLanes, waveSize, laneCount, rng) {
+  var rnd = typeof rng === 'function' ? rng : Math.random;
+  var lanes = typeof laneCount === 'number' && laneCount > 0 ? laneCount : IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var occupiedSet = {};
+  (Array.isArray(occupiedLanes) ? occupiedLanes : []).forEach(function (lane) { occupiedSet[lane] = true; });
+  var freeLanes = [];
+  for (var i = 0; i < lanes; i++) {
+    if (!occupiedSet[i]) freeLanes.push(i);
+  }
+  // Mindestens EINE der aktuell freien Lanes bleibt zwingend ungewählt,
+  // damit sie auch nach dieser Welle noch vollständig frei/passierbar ist.
+  var maxPickable = Math.max(0, freeLanes.length - 1);
+  var size = Math.max(0, Math.min(typeof waveSize === 'number' ? waveSize : 0, maxPickable));
+  var pool = freeLanes.slice();
+  var picked = [];
+  for (var w = 0; w < size && pool.length > 0; w++) {
+    var pickIndex = Math.floor(rnd() * pool.length);
+    picked.push(pool.splice(pickIndex, 1)[0]);
+  }
+  return picked;
+}
+
+/**
  * Generiert ein Münz-Trail-Muster (Teil 4, feat(coins)) — eine gerade
  * LINIE (alle Münzen dieselbe Lane) oder ein über Lanes wandernder BOGEN
  * (IDLE_BALANCE.RUN_COIN_TRAIL_ARC_CHANCE), IDLE_BALANCE.RUN_COIN_TRAIL_
@@ -3583,6 +3631,7 @@ var IdleCore = {
   runDifficultyDensity: runDifficultyDensity,
   runDifficultyPatternTier: runDifficultyPatternTier,
   runDifficultyWaveSize: runDifficultyWaveSize,
+  pickSolvableWaveLanes: pickSolvableWaveLanes,
 };
 
 if (typeof window !== 'undefined') {

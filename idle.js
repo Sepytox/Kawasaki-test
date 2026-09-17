@@ -748,20 +748,22 @@
    * passende Ausweich-Aktion: 'side' (Lane wechseln), 'lowBar'
    * (springen, IdleCore.jumpRunner()) oder 'highBarrier' (ducken,
    * IdleCore.duckRunner()) — siehe IdleCore.rollObstacleType()/
-   * detectRunCollision().
+   * detectRunCollision(). fix(spawning): die Lane-Wahl berücksichtigt
+   * jetzt zusätzlich noch nicht resolvte Hindernisse VORHERIGER, noch in
+   * Flug befindlicher Wellen (IdleCore.pickSolvableWaveLanes()) — schliesst
+   * die Cross-Wave-Lücke der reinen Pro-Welle-Garantie (überlappende
+   * Wellen könnten sonst gemeinsam alle Lanes belegen).
    * @returns {void}
    */
   function spawnRunnerObstacle() {
     var laneCount = IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT;
     var waveSize = IdleCore.runDifficultyWaveSize(state.run.distanceUnits, laneCount);
-    var availableLanes = [];
-    for (var i = 0; i < laneCount; i++) availableLanes.push(i);
-    for (var w = 0; w < waveSize && availableLanes.length > 0; w++) {
-      var pickIndex = Math.floor(Math.random() * availableLanes.length);
-      var lane = availableLanes.splice(pickIndex, 1)[0];
+    var occupiedLanes = runnerObstacles.filter(function (obstacle) { return !obstacle.resolved; }).map(function (obstacle) { return obstacle.lane; });
+    var lanes = IdleCore.pickSolvableWaveLanes(occupiedLanes, waveSize, laneCount, Math.random);
+    lanes.forEach(function (lane) {
       var type = IdleCore.rollObstacleType(Math.random);
       runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false, type: type });
-    }
+    });
   }
 
   /**
