@@ -879,8 +879,8 @@ body.page-bg-mesh {
    (race.html ".endless-result-banner"), Quiz-Ergebnis (quiz.html
    ".result-card"), Glücksrad-Ergebnis (wheel.html ".result-panel"),
    Garage-Karten (".garage-card"/".garage-ach-card") — rein additiv,
-   nutzt dieselben Phase-A-Tokens (--glass-blur-*/--glass-saturate/
-   --glass-bg-strong/--glass-border) wie das zentrale Modal-System.
+   nutzt dieselben Phase-A-Tokens (--glass-blur-sm/-md/-lg, --glass-saturate,
+   --glass-bg-strong, --glass-border) wie das zentrale Modal-System.
    Ohne backdrop-filter-Unterstützung bleibt der bereits vorhandene
    solide Kartenhintergrund unverändert lesbar (progressive
    enhancement, siehe @supports). Dark-Mode: --glass-bg-strong ist
