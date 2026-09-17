@@ -440,6 +440,47 @@ section('10. feat(juice-crash): Slowmo-Puls/Opacity-Flash VOR der verzögerten C
 }
 
 // ============================================================
+section('11. feat(juice-summary): Highscore-Konfetti + prominente Primär-Aktion, count-up-ids unangetastet');
+// ============================================================
+{
+  const idleJs = read('idle.js');
+  const idleCss = read('idle.css');
+
+  // Regression (Absicherung gegen count-up-test.js): beide ids + data-count-up bleiben exakt erhalten.
+  ['idleRunSummaryScore', 'idleRunSummaryCoins'].forEach((id) => {
+    const re = new RegExp('id="' + id + '"[^\']*data-count-up|data-count-up[^\']*id="' + id + '"');
+    assert(re.test(idleJs), `idle.js behält id="${id}" + data-count-up in showCrashSummary() exakt bei`);
+  });
+
+  // Konfetti wird NUR im newHighscore-Zweig ausgelöst, NACH dem bestehenden Highscore-Hinweis.
+  const showFnMatch = idleJs.match(/function showCrashSummary\(summary\) \{([\s\S]*?)\n  \}/);
+  assert(showFnMatch !== null, 'showCrashSummary()-Funktionskörper gefunden');
+  assert(showFnMatch && /highscoreEl\.textContent = '🏆 Neuer Highscore!';\s*\n\s*container\.appendChild\(highscoreEl\);\s*\n\s*triggerHighscoreConfetti\(container\);/.test(showFnMatch[1]),
+    'triggerHighscoreConfetti(container) wird direkt NACH dem bestehenden Highscore-Hinweis, NUR im if(summary.newHighscore)-Zweig aufgerufen');
+
+  const confettiFnMatch = idleJs.match(/function triggerHighscoreConfetti\(container\) \{([\s\S]*?)\n  \}/);
+  assert(confettiFnMatch !== null, 'triggerHighscoreConfetti()-Funktionskörper gefunden');
+  assert(confettiFnMatch && /if \(reducedMotion \|\| !container\) return;/.test(confettiFnMatch[1]),
+    'triggerHighscoreConfetti() bricht bei prefers-reduced-motion sofort ab (KEIN Konfetti — nur der statische Highscore-Hinweis bleibt)');
+  assert(confettiFnMatch && /for \(var i = 0; i < CONFETTI_PIECE_COUNT; i\+\+\)/.test(confettiFnMatch[1]),
+    'triggerHighscoreConfetti() erzeugt höchstens CONFETTI_PIECE_COUNT Partikel (gedeckelt)');
+
+  // "Nochmal fahren" bleibt die EINZIGE Aktion (prominente Primär-Aktion, kein zweiter Button).
+  assert(/actions: \[\{\s*\n\s*label: '🔄 Nochmal fahren',\s*\n\s*id: 'idleRunSummaryRestartBtn',/.test(idleJs),
+    "showCrashSummary() behält '🔄 Nochmal fahren' als einzige, autofokussierte Aktion bei");
+
+  // CSS: Konfetti animiert nur transform/opacity, die Primär-Aktion + Count-up-Werte werden rein optisch (nicht animiert) hervorgehoben.
+  assert(/@keyframes idle-juice-confetti-fall\s*\{[\s\S]*?transform: translateY\([\s\S]*?rotate\(/.test(idleCss),
+    'Der Konfetti-Keyframe animiert transform (translateY + rotate) und opacity');
+  assert(/#idleRunSummaryRestartBtn \{[\s\S]*?width: 100%;/.test(idleCss),
+    'idle.css hebt #idleRunSummaryRestartBtn (die tatsächliche Button-id aus modal.js buildActionButton) optisch als Primär-Aktion hervor');
+  assert(/\.idle-run-summary-stat-value \{[\s\S]*?font-size: 1\.7em;/.test(idleCss),
+    'idle.css macht .idle-run-summary-stat-value (Score/Coins-Count-up) optisch prominenter');
+
+  assert(!/console\.log/.test(idleJs), 'idle.js enthält weiterhin kein console.log');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);

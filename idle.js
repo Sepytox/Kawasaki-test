@@ -1411,12 +1411,50 @@
   }
 
   /**
+   * Löst einen dezenten, gedeckelten Konfetti-Effekt IN der Crash-
+   * Zusammenfassung aus (Teil 6, feat(juice-summary)) — NUR bei einem
+   * neuen Highscore (liest ausschliesslich das bereits von IdleCore.
+   * endRun() berechnete summary.newHighscore-Signal, berechnet nichts
+   * neu, mutiert niemals state). Erzeugt höchstens CONFETTI_PIECE_COUNT
+   * Partikel — ein einmaliges Ereignis pro Dialog-Öffnung (kein rAF-
+   * Loop), daher wird hier bewusst NICHT der geteilte, dauerhafte
+   * juice.js-Partikel-Pool wiederverwendet: modal.js baut den Dialog-
+   * Inhalt bei JEDEM Öffnen komplett neu auf (renderModalContent()
+   * leert content.innerHTML), sodass ein aus einem vorherigen Dialog
+   * wiederverwendeter Pool-Knoten dort nicht mehr im DOM hängen würde.
+   * Animiert ausschliesslich transform (Fallbewegung + Rotation) und
+   * opacity (siehe .idle-juice-confetti-piece in idle.css). No-op bei
+   * prefers-reduced-motion — der statische "🏆 Neuer Highscore!"-Hinweis
+   * bleibt davon unabhängig als alleiniger Hinweis erhalten.
+   * @param {HTMLElement} container - Der Modal-Body-Container (wird per idle.css-Positionierung relativ zur umgebenden .modal-content-Karte platziert).
+   * @returns {void}
+   */
+  function triggerHighscoreConfetti(container) {
+    if (reducedMotion || !container) return;
+    var layer = document.createElement('div');
+    layer.className = 'idle-juice-confetti';
+    layer.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < CONFETTI_PIECE_COUNT; i++) {
+      var piece = document.createElement('span');
+      piece.className = 'idle-juice-confetti-piece';
+      piece.style.setProperty('--juice-confetti-x', (Math.random() * 100).toFixed(1) + '%');
+      piece.style.setProperty('--juice-confetti-delay', Math.round(Math.random() * (CONFETTI_FALL_MS * 0.3)) + 'ms');
+      piece.style.setProperty('--juice-confetti-rotate', Math.round(Math.random() * 360) + 'deg');
+      piece.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+      layer.appendChild(piece);
+    }
+    container.appendChild(layer);
+  }
+
+  /**
    * Zeigt die Crash-Zusammenfassung-Dialog (Teil 3, feat(crash); refactor
    * (modal): jetzt über das zentrale Modal-System, modal.js): Score,
    * gesammelte Coins (bereits über IdleCore.endRun() in km umgewandelt)
-   * und — falls erreicht — den "Neuer Highscore!"-Hinweis. variant
+   * und — falls erreicht — den "Neuer Highscore!"-Hinweis samt (Teil 6,
+   * feat(juice-summary)) dezentem Konfetti-Effekt. variant
    * "forced-choice" deaktiviert bewusst Escape UND Backdrop-Klick — der
-   * einzige Ausweg ist der "Nochmal fahren"-Button, exakt wie zuvor.
+   * einzige Ausweg ist der prominente "Nochmal fahren"-Button, exakt wie
+   * zuvor.
    * @param {{score: number, coins: number, newHighscore: boolean}} summary - Ergebnis von IdleCore.endRun().
    * @returns {void}
    */
@@ -1434,6 +1472,7 @@
           highscoreEl.className = 'idle-run-summary-highscore';
           highscoreEl.textContent = '🏆 Neuer Highscore!';
           container.appendChild(highscoreEl);
+          triggerHighscoreConfetti(container);
         }
         var stats = document.createElement('div');
         stats.className = 'idle-run-summary-stats';

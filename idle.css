@@ -1540,3 +1540,74 @@
   50% { opacity: 0.55; }
   100% { opacity: 1; }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-summary): Highscore-Konfetti in der Crash-Zusammenfassung
+   — Teil 6
+   Gedeckelter, einmaliger Partikel-Effekt (siehe idle.js
+   triggerHighscoreConfetti(), CONFETTI_PIECE_COUNT), NUR bei neuem
+   Highscore ausgelöst — animiert ausschliesslich transform (Fall-
+   bewegung + Rotation) und opacity. Lebt in .modal-content (position:
+   relative, siehe styles.css), oben begrenzt auf die obere Hälfte der
+   Karte, damit der "Nochmal fahren"-Button (unten) frei bleibt.
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-confetti {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 55%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.idle-juice-confetti-piece {
+  position: absolute;
+  top: -10px;
+  left: var(--juice-confetti-x, 50%);
+  width: 6px;
+  height: 10px;
+  border-radius: 1px;
+  opacity: 0;
+  animation-name: idle-juice-confetti-fall;
+  animation-duration: 900ms;
+  animation-timing-function: var(--ease-standard, ease);
+  animation-delay: var(--juice-confetti-delay, 0ms);
+  animation-fill-mode: forwards;
+}
+@keyframes idle-juice-confetti-fall {
+  0% { opacity: 0; transform: translateY(0) rotate(0deg); }
+  15% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(160px) rotate(var(--juice-confetti-rotate, 180deg)); }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-summary): "Nochmal fahren" als prominente Primär-Aktion +
+   grössere, glühende Score-/Coins-Count-up-Werte — Teil 6
+   Rein additive/überschreibende Ergänzung — #idleRunSummaryRestartBtn
+   ist die von modal.js (buildActionButton) tatsächlich erzeugte
+   Schaltflächen-id (siehe showCrashSummary()), NICHT die inzwischen
+   verwaiste .idle-run-summary-restart-btn-Klasse aus der Vor-modal.js-
+   Ära (bleibt unangetastet). data-count-up/id="idleRunSummaryScore"/
+   "idleRunSummaryCoins" bleiben von count-up-test.js exakt gesperrt —
+   hier werden NUR Optik-Eigenschaften ergänzt, keine Struktur/ids
+   verändert.
+   ════════════════════════════════════════════════════════════════ */
+#idleRunSummaryRestartBtn {
+  width: 100%;
+  padding: 0.75rem 1.25rem;
+  font-size: 1.05em;
+  font-weight: var(--fw-bold);
+  box-shadow: var(--shadow-glow, none);
+}
+.idle-run-summary-stat-value {
+  font-size: 1.7em;
+  color: var(--accent);
+  text-shadow: 0 0 12px var(--accent-dim);
+}
+.idle-run-summary-highscore {
+  display: inline-block;
+  padding: 0.35rem 0.9rem;
+  border-radius: var(--radius-full, 999px);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+}
