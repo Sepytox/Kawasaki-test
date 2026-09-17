@@ -156,6 +156,25 @@
   /** Reihenfolge/Icons der Powerup-Timer-HUD-Badges (Teil 4) — identisch zu POWERUP_ICONS, aber als feste Liste für eine stabile HUD-Reihenfolge. */
   var POWERUP_HUD_TYPES = ['magnet', 'schild', 'turbo', 'scoreX2'];
 
+  /* ── Teil 5: RUNNER-JUICE — Coin-Fly/Near-Miss-Popup/Combo-Pulse —
+   * feat(juice-coins)/feat(juice-nearmiss)/feat(juice-combo) — reine
+   * Präsentations-Politur auf dem Teil-1/4-Overlay (siehe juice.js),
+   * ändert NIEMALS Coin-Werte/Combo-Mathematik/Spawn-Logik selbst. ── */
+  /** Anzahl Partikel eines Coin-Sammel-Bursts (siehe triggerCoinCollectJuice()). */
+  var COIN_BURST_PARTICLE_COUNT = 6;
+  /** Anzeigedauer (ms) EINES Burst-Partikels (mirrors die CSS-Keyframe-Dauer in idle.css). */
+  var COIN_BURST_PARTICLE_MS = 420;
+  /** Flugdauer (ms) der fliegenden Münze von ihrer Canvas-Position zur Score-Anzeige. */
+  var COIN_FLY_DURATION_MS = 480;
+  /** Anzeigedauer (ms) des kurzen Skalier-Pulses auf der Score-Anzeige bei Ankunft der fliegenden Münze. */
+  var COIN_SCORE_PULSE_MS = 260;
+  /** Frequenz (Hz) des kurzen Coin-Sammel-Signaltons (WebAudio, siehe playCoinChime()). */
+  var COIN_CHIME_FREQ_HZ = 880;
+  /** Dauer (s) des kurzen Coin-Sammel-Signaltons. */
+  var COIN_CHIME_DURATION_SECONDS = 0.14;
+  /** Ziel-Spitzenlautstärke (0..1) des Coin-Sammel-Signaltons, zusätzlich mit state.sound.volume skaliert. */
+  var COIN_CHIME_PEAK_GAIN = 0.22;
+
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = ApiClient.loadIdleState();
 
@@ -252,6 +271,12 @@
   var tachoCanvas = null, tachoCtx = null;
   /** DOM-Overlay-Container über dem Runner-Canvas (Teil 5, feat(juice-overlay)) — Anker für transiente Partikel/Popups, siehe juice.js ensureOverlay(). Bleibt null ohne window.Juice (defensiv, z.B. falls juice.js nicht eingebunden ist). */
   var juiceOverlayEl = null;
+  /** Gedeckelter DOM-Partikel-Pool (siehe juice.js) für Coin-Sammel-Bursts (Teil 5, feat(juice-coins)) — verhindert unbegrenztes DOM-Wachstum bei vielen Coins, z.B. während des Auto-Piloten. Bleibt null ohne window.Juice. */
+  var coinBurstParticlePool = window.Juice ? window.Juice.createParticlePool() : null;
+  /** Gedeckelter DOM-Partikel-Pool für die "fliegende Münze" Richtung Score-Anzeige — kleinere Kapazität reicht, da praktisch nie viele Ghosts gleichzeitig unterwegs sind. */
+  var coinFlyGhostPool = window.Juice ? window.Juice.createParticlePool(8) : null;
+  /** Timeout-Handle des aktuell angezeigten Score-Skalier-Pulses (für Re-Trigger bei schnell aufeinanderfolgenden Coins). */
+  var coinScorePulseTimeoutId = null;
 
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
@@ -928,6 +953,182 @@
     updateRunComboHud();
   }
 
+  /* ── Teil 5: RUNNER-JUICE — Coin-Sammel-Feedback (feat(juice-coins)) ──
+   * Reine Präsentations-Politur NACH IdleCore.collectRunCoin() (siehe
+   * Aufrufstelle in tickRunner()) — Partikel-Burst + fliegende
+   * "Ghost-Münze" Richtung Score-Anzeige + Skalier-Puls bei Ankunft +
+   * ein dezenter WebAudio-Signalton. Nutzt den gedeckelten Partikel-Pool
+   * aus juice.js (coinBurstParticlePool/coinFlyGhostPool oben), damit
+   * auch viele schnelle Coins nie unbegrenzt DOM-Knoten anlegen. ── */
+
+  /**
+   * Berechnet die aktuelle Canvas-CSS-Pixel-Position einer (fraktionalen)
+   * Fahrspur bei gegebenem Tiefen-Fortschritt t — exakt dieselbe Geometrie
+   * wie renderTrack() (laneCenterX()/laneRowY()), damit Juice-Effekte
+   * IMMER an der sichtbaren Zeichen-Position ansetzen. Da das Overlay
+   * (siehe juice.js ensureOverlay()) die Canvas-Box exakt überdeckt,
+   * ist diese Canvas-Position bereits die passende Overlay-Pixel-Position
+   * (Juice.canvasPointToOverlayPoint() würde hier nur einen Null-Versatz
+   * ausgleichen, siehe dessen Docblock).
+   * @param {number} laneIndexFloat - Fahrspur-Index (0-basiert, ggf. fraktional).
+   * @param {number} t - Tiefen-Fortschritt (0–1, wird geklemmt).
+   * @returns {?{x: number, y: number}} Canvas-/Overlay-CSS-Pixel-Position, oder null ohne aufgelöstes Canvas.
+   */
+  function runnerCanvasPoint(laneIndexFloat, t) {
+    if (!trackCanvas) return null;
+    var w = trackCanvas.clientWidth, h = trackCanvas.clientHeight;
+    if (w <= 0 || h <= 0) return null;
+    var ct = Math.min(1, Math.max(0, t));
+    return { x: laneCenterX(w, laneIndexFloat, ct), y: laneRowY(h, ct) };
+  }
+
+  /**
+   * Spielt einen sehr kurzen, dezenten Signalton beim Coin-Sammeln
+   * (EIN kurzlebiger Sinus-Oszillator, direkt an audioCtx.destination
+   * angeschlossen — unabhängig vom kontinuierlichen Motorsound-
+   * Signalgraph) — gated hinter der bestehenden Sound-EIN/AUS-Einstellung
+   * (state.sound.enabled). Legt selbst NIEMALS einen neuen AudioContext
+   * an (Autoplay-Policy: Coins können auch im Auto-Piloten OHNE
+   * Nutzer-Geste eingesammelt werden) — bleibt also stumm, bis der
+   * Motorsound-Toggle mindestens einmal per Klick aktiviert wurde.
+   * @returns {void}
+   */
+  function playCoinChime() {
+    if (!audioCtx || !state.sound.enabled) return;
+    try {
+      var now = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = COIN_CHIME_FREQ_HZ;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(COIN_CHIME_PEAK_GAIN * state.sound.volume, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + COIN_CHIME_DURATION_SECONDS);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + COIN_CHIME_DURATION_SECONDS + 0.02);
+    } catch (e) {
+      // Web-Audio-Fehler (z.B. bereits geschlossener Context) dürfen das
+      // Gameplay niemals unterbrechen — stiller Fallback ohne Ton.
+    }
+  }
+
+  /**
+   * Erzeugt einen kurzen Partikel-Burst am Overlay-Punkt (x,y) — mehrere
+   * kleine, aus coinBurstParticlePool wiederverwendete DOM-Knoten fliegen
+   * per CSS-Keyframe-Animation radial nach aussen und blassen dabei aus
+   * (siehe .idle-juice-coin-particle in idle.css — animiert wird
+   * ausschliesslich transform/opacity). No-op bei prefers-reduced-motion.
+   * @param {number} x - x-Position im Overlay-Pixel-Raum.
+   * @param {number} y - y-Position im Overlay-Pixel-Raum.
+   * @returns {void}
+   */
+  function spawnCoinBurst(x, y) {
+    if (reducedMotion || !window.Juice || !juiceOverlayEl || !coinBurstParticlePool) return;
+    for (var i = 0; i < COIN_BURST_PARTICLE_COUNT; i++) {
+      var node = window.Juice.acquireParticleNode(coinBurstParticlePool, juiceOverlayEl, 'idle-juice-coin-particle');
+      if (!node) return;
+      var angle = (Math.PI * 2 * i) / COIN_BURST_PARTICLE_COUNT;
+      node.style.left = x + 'px';
+      node.style.top = y + 'px';
+      node.style.setProperty('--juice-burst-dx', Math.cos(angle).toFixed(3));
+      node.style.setProperty('--juice-burst-dy', Math.sin(angle).toFixed(3));
+      // Reflow erzwingen, damit die Keyframe-Animation bei Wiederverwendung
+      // erneut startet (identisches Muster zu triggerCollisionFeedback()).
+      void node.offsetWidth;
+      node.classList.add('is-bursting');
+    }
+  }
+
+  /**
+   * Lässt eine kleine "Ghost-Münze" vom Overlay-Punkt (startX, startY)
+   * sichtbar Richtung der Score-Anzeige (#idleRunScore) fliegen — reine
+   * CSS-Transition auf transform/opacity (kein Layout-Property, siehe
+   * .idle-juice-coin-fly in idle.css) — und löst bei Ankunft
+   * pulseScoreOnCoinArrival() aus. Der Ghost-Knoten stammt aus
+   * coinFlyGhostPool (Wiederverwendung, siehe juice.js) und wird danach
+   * unsichtbar (nicht entfernt) für die nächste Münze bereitgehalten.
+   * @param {number} startX - Start-x-Position im Overlay-Pixel-Raum (Canvas-Punkt der Münze).
+   * @param {number} startY - Start-y-Position im Overlay-Pixel-Raum.
+   * @returns {void}
+   */
+  function flyCoinToScore(startX, startY) {
+    if (!window.Juice || !juiceOverlayEl || !coinFlyGhostPool) return;
+    var scoreEl = document.getElementById('idleRunScore');
+    if (!scoreEl) return;
+    var overlayRect = juiceOverlayEl.getBoundingClientRect();
+    var scoreRect = scoreEl.getBoundingClientRect();
+    var endX = (scoreRect.left - overlayRect.left) + scoreRect.width / 2;
+    var endY = (scoreRect.top - overlayRect.top) + scoreRect.height / 2;
+
+    var node = window.Juice.acquireParticleNode(coinFlyGhostPool, juiceOverlayEl, 'idle-juice-coin-fly');
+    if (!node) return;
+
+    node.style.transition = 'none';
+    node.style.left = startX + 'px';
+    node.style.top = startY + 'px';
+    node.style.opacity = '1';
+    node.style.transform = 'translate(0, 0) scale(1)';
+    // Reflow erzwingen, BEVOR die Ziel-Transformation gesetzt wird — sonst
+    // fasst der Browser Start-/Zielwert fälschlich zusammen und es gibt
+    // gar keine sichtbare Transition (identisches Muster zu anderen
+    // Re-Trigger-Effekten in dieser Datei).
+    void node.offsetWidth;
+    node.style.transition = 'transform ' + COIN_FLY_DURATION_MS + 'ms var(--ease-standard, ease), opacity ' + COIN_FLY_DURATION_MS + 'ms var(--ease-standard, ease)';
+    node.style.transform = 'translate(' + (endX - startX) + 'px, ' + (endY - startY) + 'px) scale(0.6)';
+    node.style.opacity = '0.85';
+
+    if (node._juiceFlyTimeoutId) clearTimeout(node._juiceFlyTimeoutId);
+    node._juiceFlyTimeoutId = setTimeout(function () {
+      node.style.transition = 'none';
+      node.style.opacity = '0';
+      pulseScoreOnCoinArrival();
+    }, COIN_FLY_DURATION_MS);
+  }
+
+  /**
+   * Löst einen kurzen Skalier-Puls (transform: scale, KEIN Layout-
+   * Property) auf der Score-Anzeige aus — Ankunfts-Feedback der
+   * fliegenden Münze (siehe flyCoinToScore()). Respektiert
+   * prefers-reduced-motion (No-op dort — die Score-Anzeige zählt
+   * ohnehin bereits unabhängig davon über updateRunScoreHud() hoch).
+   * @returns {void}
+   */
+  function pulseScoreOnCoinArrival() {
+    if (reducedMotion) return;
+    var scoreEl = document.getElementById('idleRunScore');
+    if (!scoreEl) return;
+    scoreEl.classList.remove('is-coin-pulse');
+    void scoreEl.offsetWidth;
+    scoreEl.classList.add('is-coin-pulse');
+    if (coinScorePulseTimeoutId) clearTimeout(coinScorePulseTimeoutId);
+    coinScorePulseTimeoutId = setTimeout(function () {
+      scoreEl.classList.remove('is-coin-pulse');
+    }, COIN_SCORE_PULSE_MS);
+  }
+
+  /**
+   * Löst das gesamte Coin-Sammel-Feedback aus — Partikel-Burst an der
+   * Canvas-Position der Münze + eine "Ghost-Münze", die zur Score-Anzeige
+   * fliegt und dort einen kurzen Skalier-Puls auslöst, plus einen
+   * dezenten Signalton (playCoinChime(), UNABHÄNGIG von
+   * prefers-reduced-motion — ein Ton ist keine Bewegung). Rein
+   * Präsentations-Politur NACH IdleCore.collectRunCoin() — ändert
+   * niemals Coin-Werte/state selbst. Bei prefers-reduced-motion entfällt
+   * die GESAMTE Zusatzbewegung (kein Burst, kein Flug, kein Puls).
+   * @param {{displayLane: number, t: number}} coin - Die gerade eingesammelte Münze (für ihre Canvas-Position).
+   * @returns {void}
+   */
+  function triggerCoinCollectJuice(coin) {
+    playCoinChime();
+    if (reducedMotion) return;
+    var point = runnerCanvasPoint(coin.displayLane, coin.t);
+    if (!point) return;
+    spawnCoinBurst(point.x, point.y);
+    flyCoinToScore(point.x, point.y);
+  }
+
   /**
    * Berechnet die verbleibenden Sekunden eines Powerup-Effekts bis zu
    * seinem *ExpiresAt-Zeitstempel (Teil 4, feat(powerups)) — 0, falls
@@ -1205,6 +1406,7 @@
         coin.resolved = true;
         if (coin.lane === state.runner.lane || coinMagnetSaved) {
           IdleCore.collectRunCoin(state, now);
+          triggerCoinCollectJuice(coin);
         }
       }
       if (coin.t >= RUNNER_OBSTACLE_REMOVE_T) runnerCoins.splice(ci, 1);

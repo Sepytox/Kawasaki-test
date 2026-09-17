@@ -1268,6 +1268,13 @@
   .idle-near-miss-popup.is-visible {
     transform: translate(-50%, -50%);
   }
+  /* feat(juice-coins): idle.js löst diese Klassen ohnehin bereits gar
+     nicht erst aus, wenn reducedMotion true ist — hier zusätzlich als
+     defensive CSS-Ebene (identisches Vorsichtsprinzip wie oben bei
+     .idle-track-wrap.is-collision). */
+  .idle-juice-coin-particle.is-bursting { animation: none; }
+  .idle-juice-coin-fly { transition: none; }
+  .idle-run-score-hud-value.is-coin-pulse { animation: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -1332,4 +1339,60 @@
   inset: 0;
   pointer-events: none;
   z-index: 3;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-coins): Coin-Sammel-Feedback — Teil 5
+   Partikel-Burst + "Ghost-Münze" Richtung Score-Anzeige (siehe idle.js
+   spawnCoinBurst()/flyCoinToScore()) — beide leben im Overlay-Container
+   (.idle-juice-overlay) und animieren ausschliesslich transform/opacity
+   (nie width/height/left/top als ANIMIERTE Eigenschaft — die initiale
+   Positionierung per JS-gesetztem left/top ist ein einmaliger, nicht
+   animierter Wert). Farblich identisch zum bereits Canvas-gezeichneten
+   Münz-Kreis (rgba(234,179,8,...), siehe renderTrack()).
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-coin-particle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  margin-top: -3px;
+  border-radius: var(--radius-full, 999px);
+  background: rgba(234, 179, 8, 0.95);
+  box-shadow: 0 0 4px rgba(234, 179, 8, 0.55);
+  opacity: 0;
+  pointer-events: none;
+}
+.idle-juice-coin-particle.is-bursting {
+  animation: idle-juice-coin-burst 420ms var(--ease-standard, ease) forwards;
+}
+@keyframes idle-juice-coin-burst {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--juice-burst-dx, 0) * 26px), calc(var(--juice-burst-dy, 0) * 26px)) scale(0.4);
+  }
+}
+.idle-juice-coin-fly {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
+  border-radius: var(--radius-full, 999px);
+  background: rgba(234, 179, 8, 0.95);
+  border: 1px solid rgba(161, 98, 7, 0.9);
+  opacity: 0;
+  pointer-events: none;
+}
+/* Skalier-Puls auf der Score-Anzeige bei Ankunft der Ghost-Münze (siehe
+   idle.js pulseScoreOnCoinArrival()) — ergänzt die bestehende
+   .idle-run-score-hud-value-Basisregel oben rein additiv. */
+.idle-run-score-hud-value.is-coin-pulse {
+  animation: idle-juice-score-pulse 260ms var(--ease-spring, ease);
+}
+@keyframes idle-juice-score-pulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.35); }
+  100% { transform: scale(1); }
 }

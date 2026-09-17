@@ -180,6 +180,60 @@ section('5. Einbindung: idle.html bindet juice.js ein, soundcheck.html nicht');
 }
 
 // ============================================================
+section('6. feat(juice-coins): Coin-Sammel-Feedback (Burst/Flug/Puls/Ton)');
+// ============================================================
+{
+  const idleJs = read('idle.js');
+  const idleCss = read('idle.css');
+
+  // Hook sitzt NACH IdleCore.collectRunCoin() im Münz-Loop von tickRunner()
+  // — niemals VOR dem Logik-Aufruf, niemals in idle-core.js.
+  const coinLoopMatch = idleJs.match(/IdleCore\.collectRunCoin\(state, now\);\s*\n\s*([^\n]+)/);
+  assert(coinLoopMatch !== null && /triggerCoinCollectJuice\(coin\)/.test(coinLoopMatch[1]),
+    'triggerCoinCollectJuice(coin) wird direkt NACH IdleCore.collectRunCoin() aufgerufen');
+
+  ['function runnerCanvasPoint', 'function playCoinChime', 'function spawnCoinBurst',
+    'function flyCoinToScore', 'function pulseScoreOnCoinArrival', 'function triggerCoinCollectJuice']
+    .forEach((sig) => {
+      const idx = idleJs.indexOf(sig);
+      assert(idx !== -1, `idle.js definiert ${sig}()`);
+      const jsDocStart = idleJs.lastIndexOf('/**', idx);
+      const docBetween = jsDocStart === -1 ? '' : idleJs.slice(jsDocStart, idx);
+      assert(jsDocStart !== -1 && /\*\/\s*$/.test(docBetween.trimEnd() + '\n'), `${sig}() hat einen vorangestellten JSDoc-Block`);
+    });
+
+  // Reduced-motion: triggerCoinCollectJuice() bricht VOR jeglicher Zusatzbewegung ab.
+  const triggerFnMatch = idleJs.match(/function triggerCoinCollectJuice\(coin\) \{([\s\S]*?)\n  \}/);
+  assert(triggerFnMatch !== null, 'triggerCoinCollectJuice()-Funktionskörper gefunden');
+  assert(triggerFnMatch && /if\s*\(reducedMotion\)\s*return;/.test(triggerFnMatch[1]),
+    'triggerCoinCollectJuice() bricht bei reducedMotion vor Burst/Flug ab (Score zählt bereits unabhängig hoch)');
+
+  // playCoinChime() erzeugt NIEMALS selbst einen neuen AudioContext (Autoplay-Policy) und ist an state.sound.enabled gekoppelt.
+  const chimeMatch = idleJs.match(/function playCoinChime\(\) \{([\s\S]*?)\n  \}/);
+  assert(chimeMatch !== null, 'playCoinChime()-Funktionskörper gefunden');
+  assert(chimeMatch && /if\s*\(!audioCtx \|\| !state\.sound\.enabled\)\s*return;/.test(chimeMatch[1]),
+    'playCoinChime() ist an audioCtx (bereits per Nutzer-Geste erzeugt) + state.sound.enabled gekoppelt, legt selbst keinen AudioContext an');
+
+  // CSS: Partikel/Ghost-Münze/Score-Puls-Klassen existieren, animieren nur transform/opacity.
+  ['idle-juice-coin-particle', 'idle-juice-coin-fly'].forEach((cls) => {
+    assert(idleCss.includes('.' + cls), `idle.css definiert .${cls}`);
+  });
+  assert(/\.idle-run-score-hud-value\.is-coin-pulse\s*\{/.test(idleCss), 'idle.css definiert .idle-run-score-hud-value.is-coin-pulse');
+  assert(/@keyframes idle-juice-coin-burst\s*\{[\s\S]*?transform:/.test(idleCss), 'Coin-Burst-Keyframe animiert transform');
+  assert(/@keyframes idle-juice-score-pulse\s*\{[\s\S]*?transform: scale/.test(idleCss), 'Score-Puls-Keyframe animiert transform: scale (kein Layout-Property)');
+
+  // Reduced-motion-Block (EIN gemeinsamer Block, kein zweiter) deckt die neuen Klassen zusätzlich defensiv ab.
+  const reducedBlockMatch = idleCss.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/);
+  assert(reducedBlockMatch !== null, 'idle.css hat weiterhin genau EINEN @media (prefers-reduced-motion: reduce)-Block');
+  assert(reducedBlockMatch && /\.idle-juice-coin-particle\.is-bursting \{ animation: none; \}/.test(reducedBlockMatch[1]),
+    'Der bestehende reduced-motion-Block deckt .idle-juice-coin-particle.is-bursting zusätzlich ab');
+  assert((idleCss.match(/@media \(prefers-reduced-motion: reduce\)/g) || []).length === 1,
+    'idle.css hat weiterhin nur EINEN @media (prefers-reduced-motion: reduce)-Block (kein zweiter angelegt)');
+
+  assert(!/console\.log/.test(idleJs), 'idle.js enthält weiterhin kein console.log');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);
