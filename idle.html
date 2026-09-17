@@ -21,7 +21,7 @@
     <script src="modal.js"></script>
     <script src="navbar.js"></script>
 
-    <header class="idle-hero js-reveal">
+    <header class="idle-hero js-reveal" data-reveal-dir="up">
         <h1>🏁 Kawasaki Idle Racer</h1>
         <p>Fahre, sammle Kilometer und kaufe dir Bike für Bike den kompletten Kawasaki-Fuhrpark — auch während du wegschaust.</p>
     </header>
@@ -38,7 +38,7 @@
 
             <div class="idle-layout">
                 <!-- ===== FAHR-BEREICH ===== -->
-                <section class="idle-drive js-reveal" aria-label="Fahrt">
+                <section class="idle-drive js-reveal" data-reveal-dir="left" aria-label="Fahrt">
                     <!-- Endless-Runner (Canvas, Teil 1, feat(idle-runner)): 2–3-Lane-Strasse,
                          Hindernisse rücken Richtung Spieler vor. Lane-Wechsel via ←/→, A/D
                          oder Touch-Swipe; eine Kollision verursacht nur einen kurzen visuellen
@@ -138,7 +138,7 @@
                 </section>
 
                 <!-- ===== AKTUELLES BIKE (Statistik-Balken) ===== -->
-                <section class="idle-bike-card js-reveal" aria-label="Aktuelles Bike">
+                <section class="idle-bike-card js-reveal" data-reveal-dir="right" aria-label="Aktuelles Bike">
                     <div class="idle-bike-card-header">
                         <h2 id="idleBikeName">—</h2>
                         <p id="idleBikeMeta">—</p>
@@ -167,7 +167,7 @@
             </div>
 
             <!-- ===== WERKSTATTRECHNUNGEN + INSOLVENZ (MECHANIK A, feat(idle-bills)) ===== -->
-            <section class="idle-bills-section js-reveal" aria-label="Werkstattrechnungen">
+            <section class="idle-bills-section js-reveal" data-reveal-dir="left" aria-label="Werkstattrechnungen">
                 <h2>🧾 Werkstattrechnungen</h2>
                 <p class="idle-bills-intro">Von Zeit zu Zeit wird eine Werkstattrechnung fällig. Bezahle sie rechtzeitig für einen kleinen Bonus — verpasst du die Frist, ist das keine Katastrophe: eine Insolvenz setzt die Saison einfach neu auf, deine Trophäen, Werksverträge, Teile und Ausrüstung bleiben dir erhalten.</p>
 
@@ -190,13 +190,13 @@
             </section>
 
             <!-- ===== BIKE-SHOP (nächste Bikes kaufen) ===== -->
-            <section class="idle-shop js-reveal" aria-label="Bike-Shop">
+            <section class="idle-shop js-reveal" data-reveal-dir="right" aria-label="Bike-Shop">
                 <h2>🏍️ Bike-Shop</h2>
                 <div class="idle-shop-list" id="idleShopList"></div>
             </section>
 
             <!-- ===== SAISON & WERKSVERTRÄGE (MECHANIK B, feat(idle-prestige)) ===== -->
-            <section class="idle-season js-reveal" aria-label="Saison & Werksverträge">
+            <section class="idle-season js-reveal" data-reveal-dir="left" aria-label="Saison & Werksverträge">
                 <h2>🏆 Saison &amp; Werksverträge</h2>
                 <p class="idle-season-intro">Ab der Ninja ZX-10R kannst du die Saison abschliessen: km und besessene Bikes werden zurückgesetzt, aber du verdienst permanente TROPHÄEN, die dauerhafte Werksverträge kaufen.</p>
 
@@ -225,21 +225,21 @@
             </section>
 
             <!-- ===== TEILE-SAMMLUNG (feat(idle-parts)) ===== -->
-            <section class="idle-parts-section js-reveal" aria-label="Teile-Sammlung">
+            <section class="idle-parts-section js-reveal" data-reveal-dir="right" aria-label="Teile-Sammlung">
                 <h2>🧰 Teile-Sammlung</h2>
                 <p class="idle-parts-intro">Bei jeder abgeschlossenen Runde besteht eine kleine Chance auf ein Teil. Vervollständige ein Set für einen dauerhaften Ertrags-Bonus.</p>
                 <div class="idle-parts-sets" id="idlePartsSets"></div>
             </section>
 
             <!-- ===== AUSRÜSTUNGS-SAMMLUNG (feat(idle-gear)) ===== -->
-            <section class="idle-gear-section js-reveal" aria-label="Ausrüstungs-Sammlung">
+            <section class="idle-gear-section js-reveal" data-reveal-dir="left" aria-label="Ausrüstungs-Sammlung">
                 <h2>🎽 Ausrüstungs-Sammlung</h2>
                 <p class="idle-gear-intro">Beim Bezahlen einer Werkstattrechnung besteht eine Chance auf ein Ausrüstungsteil. Jedes Teil gewährt einen dauerhaften Ertrags-Bonus, ein komplettes Set einen zusätzlichen Bonus.</p>
                 <div class="idle-gear-sets" id="idleGearSets"></div>
             </section>
 
             <!-- ===== STATISTIKEN (feat(idle-stats)) ===== -->
-            <section class="idle-stats-section js-reveal" aria-label="Statistiken">
+            <section class="idle-stats-section js-reveal" data-reveal-dir="right" aria-label="Statistiken">
                 <h2>📊 Statistiken</h2>
                 <div class="idle-stats-grid" id="idleStatsGrid"></div>
                 <h3 class="idle-season-history-heading">Saison-Historie</h3>

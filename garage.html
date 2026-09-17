@@ -189,7 +189,7 @@
     <script src="modal.js"></script>
     <script src="navbar.js"></script>
 
-    <header class="garage-hero js-reveal">
+    <header class="garage-hero js-reveal" data-reveal-dir="up">
         <h1>🏠 Meine Garage</h1>
         <p>Deine Favoriten, zuletzt angesehenen Bikes, Bewertungen, dein Traum-Bike, Achievements und Statistiken — alles an einem Ort.</p>
     </header>
@@ -198,7 +198,7 @@
         <main>
 
             <!-- ===== TRAUM-BIKE ===== -->
-            <section class="garage-section js-reveal" aria-label="Mein Traum-Bike">
+            <section class="garage-section js-reveal" data-reveal-dir="left" aria-label="Mein Traum-Bike">
                 <div class="garage-section-title">✨ Mein Traum-Bike</div>
                 <div class="garage-dream-select-row">
                     <label for="garageDreamSelect">Traum-Bike wählen:</label>
@@ -211,7 +211,7 @@
             </section>
 
             <!-- ===== MEINE BIKES (FAVORITEN) ===== -->
-            <section class="garage-section js-reveal" aria-label="Meine Bikes">
+            <section class="garage-section js-reveal" data-reveal-dir="right" aria-label="Meine Bikes">
                 <div class="garage-section-title">❤️ Meine Bikes</div>
                 <div class="garage-grid" id="garageFavoritesGrid" hidden></div>
                 <div class="garage-empty" id="garageFavoritesEmpty">
@@ -221,7 +221,7 @@
             </section>
 
             <!-- ===== ZULETZT ANGESEHEN ===== -->
-            <section class="garage-section js-reveal" aria-label="Zuletzt angesehen">
+            <section class="garage-section js-reveal" data-reveal-dir="left" aria-label="Zuletzt angesehen">
                 <div class="garage-section-title">🔍 Zuletzt angesehen</div>
                 <div class="garage-grid" id="garageRecentGrid" hidden></div>
                 <div class="garage-empty" id="garageRecentEmpty">
@@ -231,7 +231,7 @@
             </section>
 
             <!-- ===== MEINE REVIEWS ===== -->
-            <section class="garage-section js-reveal" aria-label="Meine Reviews">
+            <section class="garage-section js-reveal" data-reveal-dir="right" aria-label="Meine Reviews">
                 <div class="garage-section-title">📝 Meine Reviews</div>
                 <div id="garageReviewsList" hidden></div>
                 <div class="garage-empty" id="garageReviewsEmpty">
@@ -241,7 +241,7 @@
             </section>
 
             <!-- ===== ACHIEVEMENTS ===== -->
-            <section class="garage-section js-reveal" aria-label="Achievements">
+            <section class="garage-section js-reveal" data-reveal-dir="left" aria-label="Achievements">
                 <div class="garage-section-title">🏅 Achievements</div>
                 <div class="garage-progress-row">
                     <div class="garage-progress-track"><div class="garage-progress-fill" id="garageAchievementsProgressBar" style="width:0%"></div></div>
@@ -251,7 +251,7 @@
             </section>
 
             <!-- ===== STATISTIKEN ===== -->
-            <section class="garage-section js-reveal" aria-label="Statistiken">
+            <section class="garage-section js-reveal" data-reveal-dir="right" aria-label="Statistiken">
                 <div class="garage-section-title">📊 Statistiken</div>
                 <div id="garageStatsBars"></div>
                 <p class="garage-most-viewed" id="garageMostViewed" hidden></p>
