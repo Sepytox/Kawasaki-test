@@ -1548,18 +1548,66 @@ section('19 · CRASH-BASED RUN — Kollisions-Erkennung je Hindernis-Typ (feat(c
   }
 })();
 
-section('20 · CRASH-BASED RUN — tickRunEconomy(): aktiv bankt erst bei Crash, Auto-Pilot kontinuierlich reduziert in km');
+section('20 · CRASH-BASED RUN — tickRunEconomy(): aktiv bankt Coins erst bei Crash, ZUSÄTZLICH LIVE-km kontinuierlich (gedrosselt) höher als der Auto-Pilot; No-op ohne Run');
+// GEÄNDERT (feat(live-km)): dieser Block verankerte bisher die Invariante
+// "tickRunEconomy(activity='active') kreditiert km NIEMALS direkt,
+// state.km bleibt bis zum Crash komplett unberührt". Das ist laut
+// Spezifikation NICHT mehr korrekt — aktives Fahren soll die Distanz
+// kontinuierlich (gedrosselt) in km umrechnen und state.km PARALLEL zum
+// weiterhin nur bei Crash bankenden Coin-Pool gutschreiben. Der Block
+// prüft jetzt das NEUE Verhalten, erhält aber die eigentlichen
+// wirtschaftlichen Invarianten: (a) der erste Tick nach Run-Start
+// etabliert nur die Kadenz-Zeitbasis, bankt noch nichts (keine
+// "Zittern"-Buchung sofort bei t=0), (b) innerhalb des Drossel-Intervalls
+// wird NICHT gebankt (keine Mini-Beträge pro Frame), (c) NACH Ablauf des
+// Intervalls wird die AKKUMULIERTE Distanz in EINEM Schritt exakt nach
+// der bestehenden runCoinsForDistance()/runCoinsToKm()-Formel gebankt,
+// (d) state.run.coins wächst UNABHÄNGIG/ADDITIV weiter (kein
+// Doppel-Zählen, keine Reduktion durch die Live-km-Buchung), (e) die
+// aktive Live-km-Rate ist klar höher als die Auto-Pilot-Rate
+// (RUN_ACTIVE_KM_CREDIT_MULTIPLIER > RUN_AUTOPILOT_CREDIT_MULTIPLIER),
+// UND (f) ein anschliessender Crash bankt den Coin→km-BONUS weiterhin
+// GENAU EINMAL ZUSÄTZLICH oben drauf (endRun() bleibt unverändert).
 (function () {
-  // Aktiver Run: Score/Coins sammeln sich NUR in state.run, km bleibt bis zum Crash unberührt.
+  const B = IdleCore.IDLE_BALANCE;
+  const flushMs = B.RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS * 1000;
+
   const activeState = IdleCore.createInitialState();
   IdleCore.startRun(activeState, 1000);
   const kmBeforeActive = activeState.km;
-  const activeResult = IdleCore.tickRunEconomy(activeState, 100, 'active');
-  assert(activeResult.kmCredited === 0, "tickRunEconomy(activity='active'): kreditiert km NICHT direkt");
-  assert(activeState.km === kmBeforeActive, "tickRunEconomy(activity='active'): km bleibt unverändert (Coins werden erst bei einem Crash gebankt)");
-  assert(activeState.run.coins > 0, "tickRunEconomy(activity='active'): Coins sammeln sich in state.run.coins");
+
+  // Tick 1 (t=1000, direkt bei Run-Start): etabliert NUR die Kadenz-Zeitbasis — noch kein Banking.
+  const tick1 = IdleCore.tickRunEconomy(activeState, 100, 'active', 1000);
+  assert(tick1.kmCredited === 0, 'tickRunEconomy(active), 1. Tick nach Run-Start: bankt noch NICHTS (etabliert nur die Live-km-Zeitbasis)');
+  assert(activeState.km === kmBeforeActive, 'tickRunEconomy(active), 1. Tick: state.km bleibt unverändert');
+  assert(activeState.run.coins > 0, 'tickRunEconomy(active): Coins sammeln sich weiterhin in state.run.coins');
   assert(activeState.run.score > 0, 'tickRunEconomy(): score steigt mit der zurückgelegten Distanz');
   assert(activeState.run.distanceUnits === 100, 'tickRunEconomy(): distanceUnits wird um genau distanceDelta erhöht');
+
+  // Tick 2 (t=1000+0.3s): NOCH innerhalb des Drossel-Intervalls → weiterhin KEIN Live-km-Banking (keine Mini-Beträge pro Frame).
+  const tick2 = IdleCore.tickRunEconomy(activeState, 50, 'active', 1000 + flushMs * 0.4);
+  assert(tick2.kmCredited === 0, 'tickRunEconomy(active): innerhalb von RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS wird NICHT gebankt (keine zittrigen Mini-Beträge)');
+  assert(activeState.km === kmBeforeActive, 'tickRunEconomy(active): state.km bleibt innerhalb des Drossel-Intervalls unverändert');
+
+  // Tick 3 (t=1000+1.2s): Drossel-Intervall abgelaufen → die AKKUMULIERTE Distanz (100+50+50=200) wird jetzt EXAKT nach der bestehenden Formel gebankt.
+  const coinsBeforeTick3 = activeState.run.coins;
+  const tick3 = IdleCore.tickRunEconomy(activeState, 50, 'active', 1000 + flushMs * 1.6);
+  const expectedLiveKm = IdleCore.runCoinsToKm(IdleCore.runCoinsForDistance(200)) * B.RUN_ACTIVE_KM_CREDIT_MULTIPLIER;
+  assert(tick3.kmCredited > 0, 'tickRunEconomy(active): nach Ablauf des Drossel-Intervalls wird die Live-km-Distanz endlich gebankt');
+  assert(Math.abs(tick3.kmCredited - expectedLiveKm) < 1e-9, 'tickRunEconomy(active): der gebankte Live-km-Betrag folgt EXAKT runCoinsForDistance()/runCoinsToKm() × RUN_ACTIVE_KM_CREDIT_MULTIPLIER auf die seit dem letzten Flush akkumulierte Distanz');
+  assert(Math.abs(activeState.km - (kmBeforeActive + expectedLiveKm)) < 1e-9, 'tickRunEconomy(active): state.km steigt um EXAKT den gebankten Live-km-Betrag');
+  assert(activeState.run.coins > coinsBeforeTick3, 'tickRunEconomy(active): state.run.coins wächst dabei UNABHÄNGIG/ADDITIV weiter (kein Doppel-Zählen, keine Reduktion durch die Live-km-Buchung)');
+
+  // Live-km-Rate (aktiv) ist klar höher als die Auto-Pilot-Rate (RUN_ACTIVE_KM_CREDIT_MULTIPLIER > RUN_AUTOPILOT_CREDIT_MULTIPLIER).
+  const activeRatePerDistanceUnit = tick3.kmCredited / 200;
+  assert(B.RUN_ACTIVE_KM_CREDIT_MULTIPLIER > B.RUN_AUTOPILOT_CREDIT_MULTIPLIER, 'RUN_ACTIVE_KM_CREDIT_MULTIPLIER ist klar höher als RUN_AUTOPILOT_CREDIT_MULTIPLIER (aktives Fahren lohnt sich sichtbar mehr)');
+
+  // Crash NACH den Live-km-Tick(s): der Coin→km-BONUS aus endRun() kommt weiterhin GENAU EINMAL ZUSÄTZLICH oben drauf (kein Verlust des bereits gebankten Live-km, kein Doppel-Zählen).
+  const kmBeforeCrash = activeState.km;
+  const coinsAtCrash = activeState.run.coins;
+  const expectedCrashBonus = IdleCore.runCoinsToKm(coinsAtCrash);
+  IdleCore.endRun(activeState, 2000);
+  assert(Math.abs(activeState.km - (kmBeforeCrash + expectedCrashBonus)) < 1e-9, 'endRun(): der Coin→km-Crash-BONUS bankt weiterhin GENAU EINMAL zusätzlich zum bereits gebankten Live-km (zwei additive Quellen, kein Doppel-Zählen)');
 
   // Auto-Pilot (activity='idle'): derselbe Distanz-Zuwachs kreditiert SOFORT, aber REDUZIERT km — OHNE state.run.coins zu befüllen.
   const idleState = IdleCore.createInitialState();
@@ -1570,6 +1618,10 @@ section('20 · CRASH-BASED RUN — tickRunEconomy(): aktiv bankt erst bei Crash,
   assert(Math.abs(idleState.km - (kmBeforeIdle + idleResult.kmCredited)) < 1e-9, "tickRunEconomy(activity='idle'): km steigt um exakt den zurückgegebenen kmCredited-Betrag");
   assert(idleState.run.coins === 0, "tickRunEconomy(activity='idle'): state.run.coins bleibt bei 0 (Coins gehen direkt in km, nicht in den Run-Pool)");
   assert(idleResult.kmCredited < IdleCore.runCoinsToKm(idleResult.coinsGained), 'tickRunEconomy(): der Auto-Pilot-km-Betrag ist REDUZIERT gegenüber dem vollen Coin-Gegenwert (RUN_AUTOPILOT_CREDIT_MULTIPLIER < 1)');
+
+  const autopilotRatePerDistanceUnit = idleResult.kmCredited / 100;
+  assert(activeRatePerDistanceUnit > autopilotRatePerDistanceUnit, 'Die AKTIVE Live-km-Rate pro Distanz-Einheit ist klar höher als die Auto-Pilot-Rate — aktives Fahren lohnt sich sichtbar mehr');
+  assert(Math.abs(activeRatePerDistanceUnit / autopilotRatePerDistanceUnit - B.RUN_ACTIVE_KM_CREDIT_MULTIPLIER / B.RUN_AUTOPILOT_CREDIT_MULTIPLIER) < 1e-9, 'Das Verhältnis aktive-Rate/Auto-Pilot-Rate entspricht exakt RUN_ACTIVE_KM_CREDIT_MULTIPLIER/RUN_AUTOPILOT_CREDIT_MULTIPLIER');
 
   // Kein Run aktiv (phase !== 'running') → No-op, unabhängig von activity.
   const readyState = IdleCore.createInitialState();

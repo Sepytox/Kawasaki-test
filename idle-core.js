@@ -126,6 +126,19 @@
  * effektiv eine Crash-Immunität wäre und damit ausserhalb der Spezifikation
  * liegt ("zieht nahe Coins automatisch ein"). Schild/Turbo/Score-x2
  * unverändert.
+ *
+ * feat(live-km) (Fairness/Integration Teil 2): ergänzt eine ZWEITE,
+ * DISTANZ-basierte Einnahmequelle, die WÄHREND eines aktiven Runs
+ * kontinuierlich (gedrosselt, siehe RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS)
+ * direkt der PROGRESS-Schicht (state.km) gutgeschrieben wird — PARALLEL
+ * zum unverändert bei einem Crash gebankten Coin→km-BONUS aus endRun().
+ * Der Coin-Pool (state.run.coins) und die Live-km-Einnahme sind zwei
+ * komplett unabhängige, additive Quellen (siehe tickRunEconomy()): ein
+ * Crash verliert das bereits gebankte Live-km NIE, gewinnt aber
+ * ZUSÄTZLICH den Coin-Bonus. Kein neues persistentes State-Feld/keine
+ * Versionserhöhung nötig — die Kadenz-Buchhaltung (liveKmPendingDistance/
+ * liveKmLastFlushAt/liveKmCredited) ist rein ephemeres Run-State, das bei
+ * jedem Run-Start (startRun()) neu bei 0/null beginnt.
  */
 'use strict';
 
@@ -522,6 +535,10 @@ var IDLE_BALANCE = {
   RUN_COIN_KM_VALUE: 1,
   /** Reduktions-Multiplikator (< 1) auf den Auto-Piloten-km-Ertrag (siehe tickRunEconomy()) — der Auto-Pilot crasht NIE (siehe Teil 1 activity==='idle'-Gate), bankt seinen Ertrag daher kontinuierlich statt bei einem Crash, aber bewusst reduziert gegenüber aktivem Spiel (analog RUNNER_EARN_IDLE_MULTIPLIER aus Teil 2). */
   RUN_AUTOPILOT_CREDIT_MULTIPLIER: 0.5,
+  /** Voll-Multiplikator (>= 1) auf den LIVE-km-Ertrag des AKTIVEN Runs (siehe tickRunEconomy()/RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS) — bewusst DOPPELT so hoch wie RUN_AUTOPILOT_CREDIT_MULTIPLIER, damit aktives Fahren klar ergiebiger bleibt als der reduzierte Auto-Pilot-Ertrag. Wirkt NUR auf die distanzbasierte Live-km-Gutschrift, NIEMALS auf den separaten Coin→km-Crash-Bonus (siehe endRun()). */
+  RUN_ACTIVE_KM_CREDIT_MULTIPLIER: 1,
+  /** Zeitliche Drosselung (Sekunden Echtzeit) der Live-km-Gutschrift im aktiven Run (siehe tickRunEconomy()) — akkumulierte Distanz wird erst nach Ablauf dieses Intervalls in EINEM Schritt in km umgerechnet/gebankt, damit die HUD-Anzeige nicht bei jedem Frame "zittert". */
+  RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS: 0.75,
 
   /* ── Teil 4: RUN-FEEL — Score/Near-Miss-Combo/Münz-Trails/Schwierigkeit —
    * feat(score)/feat(coins)/feat(nearmiss)/feat(powerups)/feat(difficulty)
@@ -2848,14 +2865,23 @@ function tuningReactionTimeFactor(state) {
 /**
  * Stellt sicher, dass state.run ein gültiges Objekt ist (defensiv, für
  * Zustände, die nicht über createInitialState()/migrateState() gelaufen
- * sind — mirrors ensureRunnerState()/ensurePowerupState()).
+ * sind — mirrors ensureRunnerState()/ensurePowerupState()). Enthält (feat
+ * (live-km)) zusätzlich die rein EPHEMERE Live-km-Kadenz (liveKmPending
+ * Distance/liveKmLastFlushAt/liveKmCredited, siehe tickRunEconomy()) —
+ * KEINE Migration/Versionserhöhung nötig, da state.run bei jedem Run-Start
+ * (startRun()) ohnehin komplett neu geschrieben wird und dieser Fallback
+ * NUR für gänzlich fehlende state.run-Objekte greift (nie für einen bereits
+ * laufenden Run ohne diese Felder — die gibt es nicht, siehe startRun()).
  * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
  * @returns {void}
  */
 function ensureRunState(state) {
   if (!state.run || typeof state.run !== 'object') {
-    state.run = { phase: 'ready', score: 0, coins: 0, combo: 0, comboMult: 1, speedPct: 0, distanceUnits: 0, startedAt: null };
+    state.run = { phase: 'ready', score: 0, coins: 0, combo: 0, comboMult: 1, speedPct: 0, distanceUnits: 0, startedAt: null, liveKmPendingDistance: 0, liveKmLastFlushAt: null, liveKmCredited: 0 };
   }
+  if (typeof state.run.liveKmPendingDistance !== 'number') state.run.liveKmPendingDistance = 0;
+  if (typeof state.run.liveKmLastFlushAt !== 'number') state.run.liveKmLastFlushAt = null;
+  if (typeof state.run.liveKmCredited !== 'number') state.run.liveKmCredited = 0;
 }
 
 /**
@@ -2882,6 +2908,10 @@ function ensureRunStatsState(state) {
  * 0.9s-Vorlaufzeit-Boden bleibt dadurch für JEDES Bike/Tuning garantiert)
  * UND setzt die STEUERUNG (state.runner: Lane mittig, Sprung/Ducken/
  * Kollisions-Malus zurückgesetzt) für einen fairen Neustart zurück.
+ * Setzt (feat(live-km)) ausserdem die rein ephemere Live-km-Kadenz zurück
+ * (liveKmPendingDistance/liveKmLastFlushAt/liveKmCredited, siehe
+ * tickRunEconomy()) — kein neues persistentes Feld, daher keine
+ * Versions-/Migrations-Änderung nötig.
  * Berührt NIEMALS die PROGRESS-Schicht (km/Bikes/Tuning/Saison/Gear).
  * Mutiert state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
@@ -2904,6 +2934,9 @@ function startRun(state, nowMs) {
   state.run.distanceUnits = 0;
   state.run.speedPct = stats.geschwindigkeitPct;
   state.run.startedAt = now;
+  state.run.liveKmPendingDistance = 0;
+  state.run.liveKmLastFlushAt = null;
+  state.run.liveKmCredited = 0;
 
   state.runner.lane = Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2);
   state.runner.jumpUntil = null;
@@ -3032,21 +3065,35 @@ function collectRunCoin(state, nowMs) {
  * AKTUELLEN Near-Miss-Combo-Multiplikator (state.run.comboMult) UND —
  * falls aktiv — IDLE_BALANCE.POWERUP_SCORE_X2_MULTIPLIER skaliert (siehe
  * scoreX2Active()); Score-x2 wirkt dadurch AUSSCHLIESSLICH auf
- * state.run.score, NIE auf km. Der Coin-Zuwachs wird UNTERSCHIEDLICH
+ * state.run.score, NIE auf km. Der Coin-/km-Zuwachs wird UNTERSCHIEDLICH
  * behandelt, je nach Aktivitäts-Zustand (siehe runnerActivityState()):
- * im AKTIVEN Run sammeln sich Coins nur in state.run.coins (gebankt ERST
- * bei einem Crash, siehe endRun() — ersetzt den früheren kontinuierlichen
- * km-Drip aus runnerEarnMultiplier()); im AUTO-PILOT (activity==='idle',
- * crasht laut Teil-1-Invariante NIE) werden sie SOFORT, aber REDUZIERT
- * (RUN_AUTOPILOT_CREDIT_MULTIPLIER) über creditKm() der PROGRESS-Schicht
- * gutgeschrieben — ohne diese Sonderbehandlung könnte ein Auto-Pilot-
- * Coin-Pool nie gebankt werden, da er ja nie crasht. No-op, falls kein
- * Run läuft (state.run.phase !== 'running'). Mutiert state.
+ *
+ * - AKTIVER Run: Coins sammeln sich weiterhin NUR in state.run.coins
+ *   (gebankt ERST bei einem Crash als BONUS, siehe endRun() — unverändert).
+ *   ZUSÄTZLICH (feat(live-km)) läuft eine ZWEITE, rein DISTANZ-basierte
+ *   Einnahme PARALLEL dazu: state.km wird kontinuierlich (gedrosselt auf
+ *   IDLE_BALANCE.RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS Echtzeit, damit die
+ *   HUD-Anzeige nicht bei jedem Frame zittert) über dieselbe
+ *   runCoinsForDistance()/runCoinsToKm()-Formel wie der Coin-Pool erhöht,
+ *   skaliert mit IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER (voll, klar
+ *   höher als RUN_AUTOPILOT_CREDIT_MULTIPLIER). Ein Crash kann dieses
+ *   bereits gebankte Live-km NICHT zurücknehmen — der Coin→km-Bonus aus
+ *   endRun() kommt unverändert ZUSÄTZLICH dazu (zwei unabhängige Quellen,
+ *   kein Doppel-Zählen, da beide separat aus distanceDelta berechnet
+ *   werden statt eine aus der anderen).
+ * - AUTO-PILOT (activity==='idle', crasht laut Teil-1-Invariante NIE):
+ *   Coins werden SOFORT, aber REDUZIERT (RUN_AUTOPILOT_CREDIT_MULTIPLIER)
+ *   über creditKm() der PROGRESS-Schicht gutgeschrieben — ohne diese
+ *   Sonderbehandlung könnte ein Auto-Pilot-Coin-Pool nie gebankt werden,
+ *   da er ja nie crasht.
+ *
+ * No-op, falls kein Run läuft (state.run.phase !== 'running'). Mutiert
+ * state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
  * @param {number} distanceDelta - Zurückgelegte Distanz seit dem letzten Tick (abstrakte Einheiten, >= 0).
  * @param {('active'|'idle')} activity - Aktueller Runner-Aktivitäts-Zustand (siehe runnerActivityState()).
- * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (für scoreX2Active()).
- * @returns {{scoreGained: number, coinsGained: number, kmCredited: number}} Zuwächse dieses Ticks.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (für scoreX2Active() UND die Live-km-Kadenz im aktiven Modus).
+ * @returns {{scoreGained: number, coinsGained: number, kmCredited: number}} Zuwächse dieses Ticks (kmCredited ist im aktiven Modus meist 0 und nur > 0 in dem Tick, der das Live-km-Intervall gerade "flusht").
  */
 function tickRunEconomy(state, distanceDelta, activity, nowMs) {
   ensureRunState(state);
@@ -3068,6 +3115,36 @@ function tickRunEconomy(state, distanceDelta, activity, nowMs) {
     creditKm(state, kmCredited);
   } else {
     state.run.coins += coinsGained;
+
+    // Live-km (feat(live-km)): eine ZWEITE, von Coins UNABHÄNGIGE
+    // Einnahmequelle — reine Distanz wird kontinuierlich (aber gedrosselt
+    // auf RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS, siehe unten) über dieselbe
+    // runCoinsForDistance()/runCoinsToKm()-Formel wie der Coin-Pool in km
+    // umgerechnet und SOFORT der PROGRESS-Schicht gutgeschrieben — anders
+    // als state.run.coins (das weiterhin ERST bei endRun()/Crash als
+    // Coin→km-BONUS gebankt wird, siehe dessen Docblock). Beide Quellen
+    // laufen additiv/parallel, NIE ineinander verrechnet: dieselbe
+    // zurückgelegte Distanz erzeugt sowohl Coins (state.run.coins, später
+    // gebankt) ALS AUCH Live-km (state.km, sofort gebankt) — kein
+    // Doppel-Abzug, weil beide unabhängig aus distanceDelta berechnet
+    // werden, nicht auseinander. RUN_ACTIVE_KM_CREDIT_MULTIPLIER (voll,
+    // >= RUN_AUTOPILOT_CREDIT_MULTIPLIER) sorgt dafür, dass aktives Fahren
+    // klar ergiebiger bleibt als der reduzierte Auto-Pilot-Ertrag.
+    state.run.liveKmPendingDistance += distanceDelta;
+    if (state.run.liveKmLastFlushAt === null) {
+      // Erste Beobachtung seit Run-Start/Reload: nur die Zeitbasis
+      // etablieren, NICHT sofort banken — sonst würde bei fehlender
+      // vorheriger Referenz ein Phantom-Intervall (z. B. Zeit vor
+      // Run-Start) fälschlich als "verstrichen" gewertet.
+      state.run.liveKmLastFlushAt = now;
+    } else if ((now - state.run.liveKmLastFlushAt) / 1000 >= IDLE_BALANCE.RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS) {
+      var liveKmDelta = runCoinsToKm(runCoinsForDistance(state.run.liveKmPendingDistance)) * IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER;
+      creditKm(state, liveKmDelta);
+      state.run.liveKmCredited += liveKmDelta;
+      state.run.liveKmPendingDistance = 0;
+      state.run.liveKmLastFlushAt = now;
+      kmCredited = liveKmDelta;
+    }
   }
 
   return { scoreGained: scoreGained, coinsGained: coinsGained, kmCredited: kmCredited };
