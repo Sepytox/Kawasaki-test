@@ -855,3 +855,62 @@ summary:focus-visible,
     animation: none !important;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   style(glassmorphism): seitenweite Mehrschicht-Hintergrund-Textur
+   Opt-in über eine neue Klasse auf <body> (".page-bg-mesh") — die
+   bestehende, ungeänderte "body"-Basisregel oben (Zeile ~158) bleibt
+   für JEDE Seite ohne diese Klasse (u.a. soundcheck.html) exakt
+   gleich; nur Seiten, die die Klasse tragen, bekommen zusätzlich zum
+   Vollton-Hintergrund das --gradient-mesh-Token (Phase A) als sehr
+   dezente, weiche Mehrschicht-Textur. Dark-Mode nutzt die vollen
+   Werte von --gradient-mesh (kräftigeres Glass-Gefühl), Light-Mode
+   dämpft die Deckkraft zusätzlich (siehe Override unten) — "dark
+   mode: strong glassmorphism; light mode: subtler/balanced". */
+body.page-bg-mesh {
+  background:
+    var(--gradient-mesh),
+    var(--bg);
+  background-attachment: fixed, fixed;
+}
+
+/* ── Glassmorphism für Inline-Panels (nicht-Modal) ───────────────
+   Warenkorb (shop.html ".configurator"), Renn-Ergebnis-Banner
+   (race.html ".endless-result-banner"), Quiz-Ergebnis (quiz.html
+   ".result-card"), Glücksrad-Ergebnis (wheel.html ".result-panel"),
+   Garage-Karten (".garage-card"/".garage-ach-card") — rein additiv,
+   nutzt dieselben Phase-A-Tokens (--glass-blur-*/--glass-saturate/
+   --glass-bg-strong/--glass-border) wie das zentrale Modal-System.
+   Ohne backdrop-filter-Unterstützung bleibt der bereits vorhandene
+   solide Kartenhintergrund unverändert lesbar (progressive
+   enhancement, siehe @supports). Dark-Mode: --glass-bg-strong ist
+   dort bereits kräftiger vorkonfiguriert (Phase A); Light-Mode nutzt
+   zusätzlich einen schwächeren Blur (--glass-blur-sm statt -md) für
+   eine "subtilere/ausgewogenere" Optik. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .configurator,
+  .endless-result-banner,
+  .result-card,
+  .result-panel,
+  .garage-card,
+  .garage-ach-card {
+    /* !important nur auf background-image: die Seiten setzen weiter
+       oben (spätere, gleich-spezifische Regeln in ihren eigenen
+       Seiten-<style>-Blocks) ihre eigene background-Kurzform, die
+       background-image sonst implizit auf "none" zurücksetzen und
+       diese additive Glass-Ebene unsichtbar machen würde. */
+    background-image: linear-gradient(165deg, var(--glass-bg-strong), transparent 75%) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    box-shadow: var(--shadow-xl);
+  }
+  [data-theme="light"] .configurator,
+  [data-theme="light"] .endless-result-banner,
+  [data-theme="light"] .result-card,
+  [data-theme="light"] .result-panel,
+  [data-theme="light"] .garage-card,
+  [data-theme="light"] .garage-ach-card {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
+}
