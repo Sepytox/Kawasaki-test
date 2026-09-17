@@ -248,6 +248,13 @@
    HERO — reine CSS-Grafik (Gradient + Muster), kein
    externes Bild. Rein präsentational, ändert kein
    Verhalten der übrigen Seite.
+   style(hero): animiertes Gradient-Mesh (--gradient-mesh-Token, Phase A)
+   + dezenter Scroll-Parallax + pulsierender Fokuspunkt hinter dem Titel.
+   Animiert wird ausschliesslich transform/opacity/filter (Compositor-
+   only) — die globale prefers-reduced-motion-Regel in design.css
+   (Zeile ~209) nullt animation-duration/transition-duration ohnehin
+   projektweit, der Parallax-Scroll-Listener unten prüft zusätzlich
+   selbst prefersReducedMotion(), da das eine reine JS-rAF-Schleife ist.
    ==================================================== */
 .hero {
     position: relative;
@@ -260,17 +267,67 @@
 .hero-bg {
     position: absolute;
     inset: 0;
-    z-index: -1;
+    z-index: -3;
+    background: var(--bg);
+    /* Ziel des Scroll-Parallax (siehe <script> unten): nur transform,
+       kein Layout-Thrashing. */
+    will-change: transform;
+}
+
+.hero-mesh {
+    position: absolute;
+    inset: -15%;
+    z-index: -2;
     background:
-        radial-gradient(circle at 15% 20%, var(--accent-dim), transparent 55%),
+        var(--gradient-mesh, radial-gradient(circle at 15% 20%, var(--accent-dim), transparent 55%)),
         radial-gradient(circle at 85% 15%, rgba(31,109,74,0.14), transparent 50%),
-        repeating-linear-gradient(135deg, var(--accent-dim) 0 2px, transparent 2px 42px),
-        var(--bg);
+        repeating-linear-gradient(135deg, var(--accent-dim) 0 2px, transparent 2px 42px);
+    animation: hero-mesh-drift var(--dur-slower, 0.6s) var(--ease-standard, ease) infinite alternate;
+    animation-duration: 26s;
+    will-change: transform;
+}
+
+.hero-focal {
+    position: absolute;
+    top: 46%;
+    left: 50%;
+    width: min(60vw, 520px);
+    height: min(60vw, 520px);
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
+    filter: blur(36px);
+    z-index: -1;
+    animation: hero-focal-pulse 9s var(--ease-standard, ease) infinite ease-in-out;
+    pointer-events: none;
+}
+
+.hero-focal::before {
+    content: "🏍️";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: min(22vw, 220px);
+    opacity: 0.14;
+    filter: blur(1px) saturate(0.7);
+}
+
+@keyframes hero-mesh-drift {
+    0%   { transform: translate3d(0, 0, 0) scale(1); }
+    50%  { transform: translate3d(-2.5%, 2%, 0) scale(1.08); }
+    100% { transform: translate3d(2%, -1.5%, 0) scale(1.03); }
+}
+
+@keyframes hero-focal-pulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.55; }
+    50%      { transform: translate(-50%, -50%) scale(1.15); opacity: 0.85; }
 }
 
 .hero-inner {
     max-width: 760px;
     margin: 0 auto;
+    position: relative;
 }
 
 .hero-eyebrow {
@@ -391,6 +448,8 @@
     <!-- ===== HERO ===== -->
     <header class="hero js-reveal">
         <div class="hero-bg" aria-hidden="true"></div>
+        <div class="hero-mesh" aria-hidden="true"></div>
+        <div class="hero-focal" aria-hidden="true"></div>
         <div class="hero-inner">
             <p class="hero-eyebrow">🏍️ Der Kawasaki Guide</p>
             <h1 class="hero-title">Finde dein perfektes <span class="hero-accent">Kawasaki</span></h1>
@@ -403,6 +462,46 @@
             </div>
         </div>
     </header>
+    <script>
+        /**
+         * style(hero): dezenter Scroll-Parallax für den Hero-Hintergrund
+         * (".hero-bg") — reine transform-Animation, rAF-throttled, kein
+         * Layout-Thrashing. Wird automatisch deaktiviert, wenn
+         * requestAnimationFrame fehlt oder der Benutzer reduzierte
+         * Bewegung bevorzugt (prefers-reduced-motion), analog zum Muster
+         * in scroll-reveal.js.
+         * @returns {void}
+         */
+        (function () {
+            'use strict';
+            var heroBg = document.querySelector('.hero-bg');
+            if (!heroBg || typeof window.requestAnimationFrame !== 'function') return;
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+            var MAX_SHIFT_PX = 40;
+            var PARALLAX_FACTOR = 0.12;
+            var ticking = false;
+
+            /**
+             * Berechnet den Parallax-Versatz aus der aktuellen Scroll-
+             * Position und wendet ihn als transform (translateY) auf den
+             * Hero-Hintergrund an.
+             * @returns {void}
+             */
+            function applyParallax() {
+                var shift = Math.min(window.scrollY * PARALLAX_FACTOR, MAX_SHIFT_PX);
+                heroBg.style.transform = 'translateY(' + shift + 'px)';
+                ticking = false;
+            }
+
+            window.addEventListener('scroll', function () {
+                if (!ticking) {
+                    window.requestAnimationFrame(applyParallax);
+                    ticking = true;
+                }
+            }, { passive: true });
+        })();
+    </script>
 
     <div class="container">
         <main>
