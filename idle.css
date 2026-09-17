@@ -1362,6 +1362,11 @@
      erhalten. */
   .idle-juice-powerup-wash.is-active { animation: none; }
   .idle-powerup-hud-badge.is-entering { animation: none; }
+  /* Teil 6, feat(juice-crash): NUR der Slowmo-Filter-Puls entfällt — der
+     stattdessen ausgelöste, kurze Opacity-Flash (.is-crash-flash, siehe
+     triggerCrashJuice()) ist bewusst die REDUZIERTE Alternative selbst
+     und bleibt daher unangetastet aktiv. */
+  .idle-track-wrap.is-crash-slowmo { animation: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -1506,4 +1511,32 @@
   0% { opacity: 0; }
   35% { opacity: 0.22; }
   100% { opacity: 0; }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-crash): Kurzer Slowmo-Filter-Puls vor der Crash-
+   Zusammenfassung — Teil 6
+   idle.js verzögert das Öffnen des Dialogs (Modal.openModal) um
+   CRASH_SLOWMO_MS (siehe triggerCrashJuice()/handleRunCrash()) und
+   spielt WÄHREND dieser Verzögerung einen kurzen, dezenten Filter-Puls
+   auf #idleTrackWrap ab (rein visuell — ändert niemals Score/Coins,
+   siehe idle.js-Docblock). Bei prefers-reduced-motion entfällt dieser
+   Puls (idle.js löst ihn dann gar nicht erst aus), stattdessen ein noch
+   kürzerer, reiner Opacity-Flash (is-crash-flash) OHNE Verzögerung.
+   ════════════════════════════════════════════════════════════════ */
+.idle-track-wrap.is-crash-slowmo {
+  animation: idle-juice-crash-slowmo 300ms var(--ease-standard, ease);
+}
+@keyframes idle-juice-crash-slowmo {
+  0% { filter: saturate(1) brightness(1); }
+  30% { filter: saturate(0.35) brightness(0.72); }
+  100% { filter: saturate(1) brightness(1); }
+}
+.idle-track-wrap.is-crash-flash {
+  animation: idle-juice-crash-flash 120ms var(--ease-standard, ease);
+}
+@keyframes idle-juice-crash-flash {
+  0% { opacity: 1; }
+  50% { opacity: 0.55; }
+  100% { opacity: 1; }
 }

@@ -398,6 +398,48 @@ section('9. feat(juice-powerup): Farb-Wash + HUD-Eintritt + Restdauer-Ring');
 }
 
 // ============================================================
+section('10. feat(juice-crash): Slowmo-Puls/Opacity-Flash VOR der verzögerten Crash-Zusammenfassung');
+// ============================================================
+{
+  const idleJs = read('idle.js');
+  const idleCss = read('idle.css');
+
+  // handleRunCrash() ruft triggerCrashJuice() SOFORT auf, verzögert aber NUR das Öffnen des Dialogs.
+  const crashFnMatch = idleJs.match(/function handleRunCrash\(nowMs\) \{([\s\S]*?)\n  \}/);
+  assert(crashFnMatch !== null, 'handleRunCrash()-Funktionskörper gefunden');
+  assert(crashFnMatch && /triggerCollisionFeedback\(\);\s*\n\s*triggerCrashJuice\(\);/.test(crashFnMatch[1]),
+    'handleRunCrash() ruft triggerCrashJuice() direkt nach triggerCollisionFeedback() auf');
+  assert(crashFnMatch && /setTimeout\(function \(\) \{\s*\n\s*showCrashSummary\(summary\);\s*\n\s*\}, reducedMotion \? CRASH_FLASH_MS : CRASH_SLOWMO_MS\);/.test(crashFnMatch[1]),
+    'handleRunCrash() verzögert NUR showCrashSummary() (per setTimeout), reducedMotion nutzt die deutlich kürzere CRASH_FLASH_MS statt CRASH_SLOWMO_MS');
+  // IdleCore.endRun() bleibt der EINZIGE, synchron VOR der Verzögerung ausgeführte Mutations-Aufruf.
+  assert(crashFnMatch && /^\s*var summary = IdleCore\.endRun\(state, nowMs\);/m.test(crashFnMatch[1]),
+    'handleRunCrash() ruft IdleCore.endRun() weiterhin synchron VOR jeglicher Verzögerung auf (kein zweiter Mutations-Aufruf)');
+
+  // triggerCrashJuice() wählt je nach reducedMotion GENAU EINE der beiden Klassen (nie beide).
+  const juiceFnMatch = idleJs.match(/function triggerCrashJuice\(\) \{([\s\S]*?)\n  \}/);
+  assert(juiceFnMatch !== null, 'triggerCrashJuice()-Funktionskörper gefunden');
+  assert(juiceFnMatch && /var flashClass = reducedMotion \? 'is-crash-flash' : 'is-crash-slowmo';/.test(juiceFnMatch[1]),
+    'triggerCrashJuice() wählt is-crash-flash (reduced) bzw. is-crash-slowmo (voll) exklusiv über reducedMotion');
+
+  // CSS: Slowmo animiert nur filter, der reduced-motion-Ersatz nur opacity — beides auf dem bestehenden #idleTrackWrap.
+  assert(/@keyframes idle-juice-crash-slowmo\s*\{[\s\S]*?filter: saturate\([\s\S]*?\}\s*\n\}/.test(idleCss),
+    'Der Crash-Slowmo-Keyframe animiert ausschliesslich filter (saturate/brightness)');
+  assert(/@keyframes idle-juice-crash-flash\s*\{[\s\S]*?opacity: 1;[\s\S]*?opacity: 0\.55;/.test(idleCss),
+    'Der reduced-motion-Ersatz-Keyframe (is-crash-flash) animiert ausschliesslich opacity');
+
+  const reducedBlockMatch = idleCss.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/);
+  assert(reducedBlockMatch !== null, 'idle.css hat weiterhin genau EINEN @media (prefers-reduced-motion: reduce)-Block');
+  assert(reducedBlockMatch && /\.idle-track-wrap\.is-crash-slowmo \{ animation: none; \}/.test(reducedBlockMatch[1]),
+    'Der reduced-motion-Block deaktiviert defensiv .idle-track-wrap.is-crash-slowmo');
+  assert(reducedBlockMatch && !/\.idle-track-wrap\.is-crash-flash/.test(reducedBlockMatch[1]),
+    'Der reduced-motion-Ersatz (.is-crash-flash) wird NICHT vom reduced-motion-Block deaktiviert (er IST bereits die reduzierte Alternative)');
+  assert((idleCss.match(/@media \(prefers-reduced-motion: reduce\)/g) || []).length === 1,
+    'idle.css hat weiterhin nur EINEN @media (prefers-reduced-motion: reduce)-Block (kein zweiter angelegt)');
+
+  assert(!/console\.log/.test(idleJs), 'idle.js enthält weiterhin kein console.log');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);

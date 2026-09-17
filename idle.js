@@ -899,6 +899,29 @@
   }
 
   /**
+   * Löst den kurzen visuellen Crash-Moment aus (Teil 6, feat(juice-
+   * crash)) — BEI VOLLER Bewegung ein dezenter Filter-Puls (Sättigung/
+   * Helligkeit, siehe .idle-track-wrap.is-crash-slowmo in idle.css), der
+   * ZEITLICH mit der um CRASH_SLOWMO_MS verzögerten Crash-Zusammenfassung
+   * synchron läuft (siehe handleRunCrash()) — rein visuell, MUTIERT
+   * niemals state/Score/Coins und skaliert KEINEN Logik-Zeitschritt (der
+   * Run ist über IdleCore.endRun() bereits vollständig abgerechnet,
+   * bevor diese Funktion überhaupt aufgerufen wird). Bei prefers-
+   * reduced-motion entfällt der Filter-Puls vollständig (KEIN Shake/
+   * Slowmo) — stattdessen ein deutlich kürzerer, reiner Opacity-Flash
+   * (.is-crash-flash), ohne die Zusammenfassung künstlich zu verzögern.
+   * @returns {void}
+   */
+  function triggerCrashJuice() {
+    var wrap = document.getElementById('idleTrackWrap');
+    if (!wrap) return;
+    var flashClass = reducedMotion ? 'is-crash-flash' : 'is-crash-slowmo';
+    wrap.classList.remove('is-crash-slowmo', 'is-crash-flash');
+    void wrap.offsetWidth;
+    wrap.classList.add(flashClass);
+  }
+
+  /**
    * Aktualisiert den kleinen "Aktiv"/"Auto-Pilot"-Badge über der Strecke,
    * NUR wenn sich der Aktivitäts-Zustand tatsächlich geändert hat
    * (vermeidet unnötige DOM-Schreibzugriffe in jedem Frame).
@@ -1360,6 +1383,13 @@
    * aktualisiert die Anzeige (km/Shop-Freischaltungen können sich durch
    * die Gutschrift ändern) und zeigt die Crash-Zusammenfassung mit
    * Score/Coins/ggf. neuem Highscore samt "Nochmal fahren"-Button.
+   * Teil 6 (feat(juice-crash)): der Run ist an dieser Stelle bereits
+   * VOLLSTÄNDIG über IdleCore.endRun() abgerechnet (Score/Coins/
+   * Highscore stehen fest) — das Öffnen des Dialogs wird NUR VISUELL um
+   * CRASH_SLOWMO_MS (bzw. bei prefers-reduced-motion CRASH_FLASH_MS,
+   * ohne künstliche Verzögerung) aufgeschoben, synchron mit dem kurzen
+   * Slowmo-/Flash-Effekt aus triggerCrashJuice() — es wird dabei
+   * NIEMALS ein zweites Mal state mutiert.
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
    * @returns {void}
    */
@@ -1367,13 +1397,17 @@
     var summary = IdleCore.endRun(state, nowMs);
     ApiClient.saveIdleState(state);
     triggerCollisionFeedback();
+    triggerCrashJuice();
     renderAll();
     checkIdleAchievements();
     // Teil 4 (feat(nearmiss)): endRun() resettet state.run.combo auf 0 —
     // die Combo-HUD soll das SOFORT widerspiegeln (nicht erst beim
     // nächsten Near-Miss nach dem Neustart).
     updateRunComboHud();
-    showCrashSummary(summary);
+    if (crashSummaryTimeoutId) clearTimeout(crashSummaryTimeoutId);
+    crashSummaryTimeoutId = setTimeout(function () {
+      showCrashSummary(summary);
+    }, reducedMotion ? CRASH_FLASH_MS : CRASH_SLOWMO_MS);
   }
 
   /**
