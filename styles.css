@@ -1239,3 +1239,35 @@ body.dark-mode .fact-card strong { color: #ffffff; }
 .btn-outline:active {
   transform: translateY(1px) scale(0.97);
 }
+
+/* ════════════════════════════════════════════════════════════════
+   feat(tilt): dezenter Cursor-Tilt für Bike-Karten (siehe tilt.js)
+   Komponiert Lift (bereits oben vorhanden) + Tilt in EINER
+   transform-Deklaration über die Custom-Properties "--tilt-rx"/
+   "--tilt-ry" (von tilt.js per Mausposition gesetzt, Default 0deg via
+   ".fact-card" unten — ohne JS/bei reduzierter Bewegung bleiben beide
+   auf 0deg, die Karte verhält sich exakt wie zuvor: nur Lift, kein
+   Tilt). --tilt-max-deg/--tilt-perspective (design.css, Phase A) sind
+   die einzige Quelle für Stärke/Perspektive. Rein additiv — überschreibt
+   nur den "transform"-Wert der bestehenden ".fact-card:hover"-Regel via
+   spätere, gleich-spezifische Deklaration (keine Zeile oben verändert).
+   ════════════════════════════════════════════════════════════════ */
+.fact-card {
+  --tilt-rx: 0deg;
+  --tilt-ry: 0deg;
+}
+.fact-card:hover,
+.fact-card:focus-within,
+.fact-card:focus-visible {
+  transform: perspective(var(--tilt-perspective, 900px))
+             translateY(-6px) scale(1.012)
+             rotateX(var(--tilt-rx, 0deg)) rotateY(var(--tilt-ry, 0deg));
+}
+/* Bestehendes Press-Feedback (siehe ".fact-card:active" oben) bleibt
+   auch beim gleichzeitigen Hover erhalten — diese Regel kommt bewusst
+   NACH der Hover-Regel oben, damit :active bei Klick wieder gewinnt. */
+.fact-card:active {
+  transform: perspective(var(--tilt-perspective, 900px))
+             translateY(-3px) scale(1.005)
+             rotateX(var(--tilt-rx, 0deg)) rotateY(var(--tilt-ry, 0deg));
+}
