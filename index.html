@@ -1351,14 +1351,19 @@
             function getSelected() { return selected.slice(); }
 
             btnClear.addEventListener('click', clear);
-            btnCompare.addEventListener('click', function() { CompareModal.open(selected); });
+            btnCompare.addEventListener('click', function() { CompareModal.open(selected, btnCompare); });
 
             return { toggle: toggle, clear: clear, getSelected: getSelected };
         })();
 
         /* ==========================================
            Compare Modal — mit Preis-Leistung & %-Diff
-           ========================================== */
+           (refactor(modal): Chrome/Öffnen/Schliessen/Escape/Backdrop/
+           Fokus-Trap laufen jetzt zentral über Modal.openModal()/
+           Modal.closeModal() aus modal.js. Fixt dabei die bisher
+           fehlende Fokus-Rückgabe an den Trigger ("Vergleichen"-Button)
+           beim Schliessen — eine bewusste Verhaltensverbesserung, siehe
+           Migrationsplan.) */
         var CompareModal = (function() {
             var overlay = document.getElementById('compareModal');
             var closeBtn = document.getElementById('compareModalCloseBtn');
@@ -1387,7 +1392,7 @@
                 { label: 'Tank', get: function(b) { return b.extendedSpecs['Kraftstofftank']; } }
             ];
 
-            function open(keys) {
+            function open(keys, triggerEl) {
                 var bikes = keys.map(function(k) { return { key: k, bike: BIKES[k] }; }).filter(function(b) { return b.bike; });
                 if (bikes.length < 2) return;
 
@@ -1467,26 +1472,17 @@
                         return '<p class="compare-advice-item"><strong>' + b.bike.icon + ' ' + b.bike.name + ':</strong> ' + b.bike.advice + '</p>';
                     }).join('');
 
-                overlay.classList.add('modal-visible');
-                overlay.setAttribute('aria-hidden', 'false');
-                document.body.style.overflow = 'hidden';
-                closeBtn.focus();
+                // refactor(modal): #compareModal ist bereits vorhandenes Markup
+                // (Chrome-Modus) — Sichtbarkeit/Escape/Backdrop-Klick/Fokus-
+                // Trap/Fokus-Rückgabe laufen jetzt zentral über modal.js.
+                Modal.openModal({ id: 'compareModal', variant: 'wide', trigger: triggerEl || null });
             }
 
             function close() {
-                overlay.classList.add('modal-closing');
-                setTimeout(function() {
-                    overlay.classList.remove('modal-visible', 'modal-closing');
-                    overlay.setAttribute('aria-hidden', 'true');
-                }, 220);
-                document.body.style.overflow = '';
+                Modal.closeModal('compareModal');
             }
 
             closeBtn.addEventListener('click', close);
-            overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape' && overlay.classList.contains('modal-visible')) close();
-            });
 
             return { open: open, close: close };
         })();
