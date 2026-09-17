@@ -1611,3 +1611,34 @@
   background: var(--accent-dim);
   border: 1px solid var(--accent);
 }
+
+/* ════════════════════════════════════════════════════════════════
+   style(juice-hud): Glassmorphism-Politur der Runner-HUD — Teil 6
+   Rein additive Überschreibung von background auf den BESTEHENDEN
+   Selektoren (siehe deren Basis-Regeln weiter oben) — keine neuen ids/
+   Klassen, keine bestehende Zeile entfernt, nur nachträglich (spätere
+   Kaskaden-Regel, gleiche Spezifität) ergänzt. Betrifft NUR die
+   Runner-eigene HUD (Score/Powerup/Near-Miss-Combo) — die unrelated
+   Schaltpunkt-Combo (.idle-combo-badge-Basis, #idleComboBadge) bleibt
+   unangetastet (Selektor exakt .idle-run-combo-badge, nicht die Basis).
+   Konsistent in beiden Themes über die theme-abhängigen --glass-*-
+   Tokens (siehe design.css).
+   ════════════════════════════════════════════════════════════════ */
+.idle-run-score-hud,
+.idle-powerup-hud-badge,
+.idle-run-combo-badge {
+  background: var(--glass-bg, var(--card-bg));
+}
+.idle-run-combo-badge {
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius-full, 999px);
+  border: 1px solid var(--glass-border, var(--border));
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .idle-run-score-hud,
+  .idle-powerup-hud-badge,
+  .idle-run-combo-badge {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
+}

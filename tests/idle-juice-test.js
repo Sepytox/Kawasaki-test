@@ -481,6 +481,33 @@ section('11. feat(juice-summary): Highscore-Konfetti + prominente Primär-Aktion
 }
 
 // ============================================================
+section('12. style(juice-hud): Glassmorphism-Politur der Score-/Powerup-/Near-Miss-Combo-HUD');
+// ============================================================
+{
+  const idleCss = read('idle.css');
+
+  // Additive Überschreibung NUR auf den bestehenden Runner-HUD-Selektoren — die unrelated Schaltpunkt-Combo bleibt unangetastet.
+  const glassRuleMatch = idleCss.match(/\.idle-run-score-hud,\s*\n\.idle-powerup-hud-badge,\s*\n\.idle-run-combo-badge \{([\s\S]*?)\n\}/);
+  assert(glassRuleMatch !== null, 'Gemeinsame Glass-background-Regel für Score-HUD/Powerup-Badge/Near-Miss-Combo-Badge gefunden');
+  assert(glassRuleMatch && /background: var\(--glass-bg, var\(--card-bg\)\);/.test(glassRuleMatch[1]),
+    'Die Glass-Regel nutzt das theme-abhängige --glass-bg-Token (konsistent in beiden Themes)');
+  assert(!/\.idle-combo-badge \{[^}]*--glass-bg/.test(idleCss),
+    'Die unrelated Schaltpunkt-Combo-Basis (.idle-combo-badge, stylt auch #idleComboBadge) bekommt KEIN Glass-Overlay');
+
+  // Backdrop-Blur nur progressiv (@supports), identisch zum bestehenden Near-Miss-Popup-Muster.
+  assert(/@supports \(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\) \{\s*\n\s*\.idle-run-score-hud,\s*\n\s*\.idle-powerup-hud-badge,\s*\n\s*\.idle-run-combo-badge \{[\s\S]*?backdrop-filter: blur\(var\(--glass-blur-sm\)\) saturate\(var\(--glass-saturate\)\);/.test(idleCss),
+    'Score-HUD/Powerup-Badge/Near-Miss-Combo-Badge bekommen per @supports progressiv einen backdrop-filter-Blur (Glass-Tokens)');
+
+  // Bestehende ids/Basis-Selektoren bleiben unverändert nutzbar (keine Umbenennung).
+  ['.idle-run-score-hud', '.idle-powerup-hud-badge', '.idle-run-combo-badge'].forEach((sel) => {
+    assert(idleCss.includes(sel), `idle.css enthält weiterhin den bestehenden Selektor ${sel} (keine Umbenennung)`);
+  });
+
+  assert((idleCss.match(/@media \(prefers-reduced-motion: reduce\)/g) || []).length === 1,
+    'idle.css hat weiterhin nur EINEN @media (prefers-reduced-motion: reduce)-Block (kein zweiter angelegt)');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);
