@@ -52,6 +52,10 @@
   var RUNNER_COLLISION_FLASH_MS = 320;
   /** Ab dieser Geschwindigkeit (%) werden dezente Speed-Lines gezeichnet. */
   var TRACK_SPEED_LINES_THRESHOLD_PCT = 45;
+  /** Hindernis-Fortschritt (0=Horizont), bis zu dem ein frisch gespawntes Hindernis als "kurz bevorstehend" gilt — die betroffene Lane erhält solange eine Vorwarnung am oberen Bildrand (siehe drawLaneTelegraphCues()). */
+  var RUNNER_TELEGRAPH_THRESHOLD_T = 0.12;
+  /** Sichtbarkeits-Deckel (0–1) des statischen Vorwarnungs-Akzents unter prefers-reduced-motion (kein Puls, siehe drawLaneTelegraphCues()). */
+  var RUNNER_TELEGRAPH_STATIC_ALPHA = 0.55;
 
   /* ── Phase B: Tacho (Canvas) ─────────────────────────────────────── */
   /** Glättungsfaktor pro Frame für die Tacho-Nadel (0..1, höher = schneller). */
@@ -782,6 +786,48 @@
   }
 
   /**
+   * Zeichnet eine dezente Spur-Vorwarnung (fix(telegraph)) am oberen
+   * Bildrand (Horizont) für jede Lane, auf der gerade ein frisch
+   * gespawntes Hindernis erscheint (`obstacle.t < RUNNER_TELEGRAPH_
+   * THRESHOLD_T`, siehe spawnRunnerObstacle()) — hilft, die betroffene
+   * Lane schon zu erkennen, bevor das Hindernis selbst deutlich sichtbar
+   * ist. Rein zeichnende Canvas-Operation (nur Farbe/Opazität, kein
+   * Layout-Effekt). Respektiert prefers-reduced-motion: dort ein
+   * STATISCHER Akzent (RUNNER_TELEGRAPH_STATIC_ALPHA) statt eines
+   * pulsierenden Blinkens (analog zum Kollisions-Flash-Muster, siehe
+   * idle.css .idle-track-wrap.is-collision).
+   * @param {number} w - Canvas-Breite (CSS-Pixel).
+   * @param {number} topY - y-Position des Horizonts (px).
+   * @param {number} topWidth - Fahrbahnbreite am Horizont (px).
+   * @param {number} laneCount - Anzahl Fahrspuren.
+   * @returns {void}
+   */
+  function drawLaneTelegraphCues(w, topY, topWidth, laneCount) {
+    var telegraphLanes = {};
+    runnerObstacles.forEach(function (obstacle) {
+      if (!obstacle.resolved && obstacle.t >= 0 && obstacle.t < RUNNER_TELEGRAPH_THRESHOLD_T) {
+        telegraphLanes[obstacle.lane] = true;
+      }
+    });
+    var laneKeys = Object.keys(telegraphLanes);
+    if (laneKeys.length === 0) return;
+
+    var alpha = reducedMotion
+      ? RUNNER_TELEGRAPH_STATIC_ALPHA
+      : 0.35 + 0.25 * Math.abs(Math.sin(Date.now() / 220));
+    var laneWidth = topWidth / laneCount;
+    var barHeight = Math.max(2, topWidth * 0.02);
+    laneKeys.forEach(function (laneKey) {
+      var lane = Number(laneKey);
+      var laneX = laneCenterX(w, lane, 0);
+      trackCtx.beginPath();
+      trackCtx.rect(laneX - laneWidth / 2, topY - barHeight, laneWidth, barHeight);
+      trackCtx.fillStyle = 'rgba(234,88,12,' + alpha.toFixed(3) + ')';
+      trackCtx.fill();
+    });
+  }
+
+  /**
    * Löst den kurzen, dezenten Kollisions-Flash/Shake-Effekt auf der
    * Renn-Strecke aus (CSS-Klasse .is-collision, siehe idle.css) —
    * respektiert prefers-reduced-motion (das transform-Shake wird dort per
@@ -1298,6 +1344,11 @@
       trackCtx.lineWidth = Math.max(1, h * 0.004);
       trackCtx.stroke();
     }
+
+    // Spur-Vorwarnung (fix(telegraph)): NACH den Lane-Trennern, VOR den
+    // Münzen/Hindernissen gezeichnet, damit sie sichtbar am Horizont
+    // liegt, ohne von ihnen überdeckt zu werden.
+    drawLaneTelegraphCues(w, topY, topWidth, laneCount);
 
     // Münz-Trails (Teil 4, feat(coins)): VOR den Hindernissen gezeichnet
     // (kleine goldene Kreise, dieselbe Lane-Geometrie wie Hindernisse) —
