@@ -1669,6 +1669,7 @@
                     labelSpan.textContent = label;
                     var valueSpan = document.createElement('span');
                     valueSpan.className = 'spec-value';
+                    valueSpan.setAttribute('data-count-up', '');
                     valueSpan.textContent = specs[label];
                     item.appendChild(labelSpan);
                     item.appendChild(valueSpan);
@@ -2406,5 +2407,6 @@
     <script src="achievements.js"></script>
     <script src="settings.js"></script>
     <script src="scroll-reveal.js"></script>
+    <script src="count-up.js"></script>
 </body>
 </html>

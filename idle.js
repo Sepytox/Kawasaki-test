@@ -1021,11 +1021,11 @@
         stats.innerHTML =
           '<div class="idle-run-summary-stat">' +
             '<span class="idle-run-summary-stat-label">Score</span>' +
-            '<span class="idle-run-summary-stat-value" id="idleRunSummaryScore">' + scoreText + '</span>' +
+            '<span class="idle-run-summary-stat-value" id="idleRunSummaryScore" data-count-up>' + scoreText + '</span>' +
           '</div>' +
           '<div class="idle-run-summary-stat">' +
             '<span class="idle-run-summary-stat-label">Gesammelte Coins</span>' +
-            '<span class="idle-run-summary-stat-value" id="idleRunSummaryCoins">' + coinsText + '</span>' +
+            '<span class="idle-run-summary-stat-value" id="idleRunSummaryCoins" data-count-up>' + coinsText + '</span>' +
           '</div>';
         container.appendChild(stats);
       },

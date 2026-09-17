@@ -739,13 +739,13 @@
 
             <div class="cart-totals">
                 <div class="cart-total-row"><span>Parts</span><span id="cartCount">0 ausgewählt</span></div>
-                <div class="cart-total-final"><span>Gesamt</span><span class="price" id="cartTotal">€0</span></div>
+                <div class="cart-total-final"><span>Gesamt</span><span class="price" id="cartTotal" data-count-up>€0</span></div>
             </div>
 
             <div class="cart-savings" id="cartSavings" style="display:none;">
-                <div class="savings-row"><span>Leistungs-Gewinn</span><span class="savings-val ps" id="savPS">+0 PS</span></div>
-                <div class="savings-row"><span>Gewichts-Ersparnis</span><span class="savings-val weight" id="savWeight">±0 kg</span></div>
-                <div class="savings-row"><span>0-100 Verbesserung</span><span class="savings-val accel" id="savAccel">±0.0s</span></div>
+                <div class="savings-row"><span>Leistungs-Gewinn</span><span class="savings-val ps" id="savPS" data-count-up>+0 PS</span></div>
+                <div class="savings-row"><span>Gewichts-Ersparnis</span><span class="savings-val weight" id="savWeight" data-count-up>±0 kg</span></div>
+                <div class="savings-row"><span>0-100 Verbesserung</span><span class="savings-val accel" id="savAccel" data-count-up>±0.0s</span></div>
             </div>
 
             <div class="cart-btns">
@@ -1559,5 +1559,6 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     <script src="theme-toggle.js"></script>
     <script src="settings.js"></script>
     <script src="scroll-reveal.js"></script>
+    <script src="count-up.js"></script>
 </body>
 </html>
