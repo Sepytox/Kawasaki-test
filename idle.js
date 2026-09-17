@@ -177,6 +177,40 @@
   /** Anzeigedauer (ms) des kurzen Skalier-Pulses auf #idleRunComboBadge bei jedem Near-Miss-Combo-Zuwachs (siehe triggerComboPulse()). */
   var COMBO_PULSE_MS = 320;
 
+  /* ── Teil 6: RUNNER-JUICE PHASE B — Powerup-Wash/Ring, Crash-Slowmo,
+   * Highscore-Konfetti — feat(juice-powerup)/feat(juice-crash)/
+   * feat(juice-summary) — reine Präsentations-Politur, ändert NIEMALS
+   * Powerup-Wirkdauern/Kollisions-Erkennung/Highscore-Vergleich selbst
+   * (liest nur bereits vorhandene IdleCore.*-Werte). ── */
+  /** Anzeigedauer (ms) des bildschirmweiten Farb-Wash bei Powerup-Aktivierung (siehe triggerPowerupWash()) — mirrors die CSS-Keyframe-Dauer in idle.css. */
+  var POWERUP_WASH_MS = 200;
+  /** Anzeigedauer (ms) der Eintritts-Animation eines Powerup-HUD-Badges (siehe triggerPowerupHudEnter()). */
+  var POWERUP_HUD_ENTER_MS = 320;
+  /** Bildschirmweite Wash-Farbe je Powerup-Typ (halbtransparent, siehe triggerPowerupWash()). */
+  var POWERUP_WASH_COLORS = {
+    magnet: 'rgba(0, 112, 243, 0.9)',
+    schild: 'rgba(34, 197, 94, 0.9)',
+    turbo: 'rgba(249, 115, 22, 0.9)',
+    scoreX2: 'rgba(168, 85, 247, 0.9)',
+  };
+  /** Reine Lesefunktion je Powerup-Typ für dessen Tuning-abhängige GESAMT-Wirkdauer (Sekunden) — Nenner für den Progress-Ring in updatePowerupHud(), mutiert niemals state. */
+  var POWERUP_TOTAL_DURATION_FN = {
+    magnet: IdleCore.powerupMagnetDurationSeconds,
+    schild: IdleCore.powerupShieldDurationSeconds,
+    turbo: IdleCore.powerupTurboDurationSeconds,
+    scoreX2: IdleCore.powerupScoreX2DurationSeconds,
+  };
+  /** Verzögerung (ms) vor dem Öffnen der Crash-Zusammenfassung bei VOLLER Bewegung — dezenter Slowmo-Moment (siehe triggerCrashJuice()/handleRunCrash()), rein visuell, ändert niemals Score/Coins/Zeitschritt der Spiellogik. */
+  var CRASH_SLOWMO_MS = 300;
+  /** Anzeigedauer (ms) des kurzen Opacity-Flashs bei prefers-reduced-motion (ERSATZ für Shake+Slowmo, keine künstliche Verzögerung vor der Crash-Zusammenfassung). */
+  var CRASH_FLASH_MS = 120;
+  /** Anzahl der Konfetti-Partikel bei einem neuen Highscore (siehe triggerHighscoreConfetti()) — bewusst klein/gedeckelt, da einmaliges Ereignis pro Dialog-Öffnung (kein rAF-Loop). */
+  var CONFETTI_PIECE_COUNT = 18;
+  /** Farbpalette der Konfetti-Partikel — identisch in beiden Themes (feste Akzent-/Signalfarben statt Theme-Tokens, damit die "Feier"-Optik nicht mit dem Glass-Look verschwimmt). */
+  var CONFETTI_COLORS = ['#0070f3', '#facc15', '#22c55e', '#f97316', '#a855f7'];
+  /** Fallzeit (ms) EINES Konfetti-Partikels (mirrors die CSS-Keyframe-Dauer in idle.css). */
+  var CONFETTI_FALL_MS = 900;
+
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = ApiClient.loadIdleState();
 
@@ -281,6 +315,10 @@
   var coinScorePulseTimeoutId = null;
   /** Timeout-Handle des aktuell angezeigten Combo-Badge-Pulses (für Re-Trigger bei schnell aufeinanderfolgenden Near-Misses). */
   var comboPulseTimeoutId = null;
+  /** Timeout-Handle des aktuell angezeigten Powerup-Aktivierungs-Washs (Teil 6, feat(juice-powerup); für Re-Trigger bei schnell aufeinanderfolgenden Powerups). */
+  var powerupWashTimeoutId = null;
+  /** Timeout-Handle der aktuell aufgeschobenen Crash-Zusammenfassung (Teil 6, feat(juice-crash); siehe handleRunCrash()/triggerCrashJuice()). */
+  var crashSummaryTimeoutId = null;
 
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
@@ -1203,7 +1241,14 @@
    * der 4 Typen (Magnet/Schild/Turbo/Score-x2) zeigt EIN Badge mit Icon +
    * verbleibenden Sekunden, NUR solange sein Effekt aktiv ist (mirrors
    * das bestehende "kein UI ohne aktiven Zustand"-Prinzip, siehe
-   * .idle-combo-badge[hidden]).
+   * .idle-combo-badge[hidden]). Setzt zusätzlich (Teil 6, feat(juice-
+   * powerup)) die CSS-Variable --powerup-progress (0..1, verbleibende
+   * durch GESAMTE Wirkdauer, siehe POWERUP_TOTAL_DURATION_FN) auf dem
+   * Badge — treibt per idle.css EINEN reinen, synchron pro Frame
+   * NEU GESETZTEN (nicht animierten) conic-gradient-Ring, liest dafür
+   * nur bereits vorhandene, reine IdleCore.powerup*DurationSeconds()-
+   * Funktionen (KEINE neue Zustands-Mutation, KEINE Änderung der
+   * eigentlichen Ablauf-Zeitstempel).
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
    * @returns {void}
    */
@@ -1227,9 +1272,84 @@
         anyActive = true;
         var timerEl = badge.querySelector('.idle-powerup-hud-timer');
         if (timerEl) timerEl.textContent = Math.ceil(remaining) + 's';
+        var totalDurationFn = POWERUP_TOTAL_DURATION_FN[type];
+        var totalSeconds = totalDurationFn ? totalDurationFn(state) : 0;
+        var progress = totalSeconds > 0 ? Math.max(0, Math.min(1, remaining / totalSeconds)) : 0;
+        badge.style.setProperty('--powerup-progress', progress.toFixed(3));
       }
     });
     hud.classList.toggle('is-empty', !anyActive);
+  }
+
+  /**
+   * Legt (einmalig, idempotent) den geteilten Overlay-Knoten für den
+   * bildschirmweiten Powerup-Aktivierungs-Wash an (Teil 6, feat(juice-
+   * powerup)) und hängt ihn an juiceOverlayEl. Ein einziger,
+   * wiederverwendeter Knoten reicht — anders als Coin-Bursts/Ghost-
+   * Münzen kann höchstens EIN Wash gleichzeitig laufen (Powerups werden
+   * nacheinander eingesammelt, nicht in Serie wie Münzen).
+   * @returns {?HTMLElement} Der Wash-Knoten, oder null ohne Overlay.
+   */
+  function ensurePowerupWashNode() {
+    if (!juiceOverlayEl) return null;
+    var existing = document.getElementById('idleJuicePowerupWash');
+    if (existing) return existing;
+    var node = document.createElement('div');
+    node.id = 'idleJuicePowerupWash';
+    node.className = 'idle-juice-powerup-wash';
+    node.setAttribute('aria-hidden', 'true');
+    juiceOverlayEl.appendChild(node);
+    return node;
+  }
+
+  /**
+   * Löst den sehr dezenten, bildschirmweiten Farb-Wash bei Powerup-
+   * Aktivierung aus (Teil 6, feat(juice-powerup)) — max. POWERUP_WASH_MS,
+   * ausschliesslich opacity animiert (siehe .idle-juice-powerup-wash in
+   * idle.css), Farbton passend zum aktivierten Typ (POWERUP_WASH_COLORS).
+   * No-op bei prefers-reduced-motion (kein Wash — die HUD-Badge-
+   * Aktualisierung selbst bleibt davon unabhängig).
+   * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Aktivierter Powerup-Typ.
+   * @returns {void}
+   */
+  function triggerPowerupWash(type) {
+    if (reducedMotion) return;
+    var wash = ensurePowerupWashNode();
+    if (!wash) return;
+    wash.style.setProperty('--juice-wash-color', POWERUP_WASH_COLORS[type] || 'transparent');
+    wash.classList.remove('is-active');
+    // Reflow erzwingen, damit die Keyframe-Animation bei schnell
+    // aufeinanderfolgenden Powerups erneut startet (identisches Muster
+    // zu triggerCollisionFeedback()/showNearMissPopup()).
+    void wash.offsetWidth;
+    wash.classList.add('is-active');
+    if (powerupWashTimeoutId) clearTimeout(powerupWashTimeoutId);
+    powerupWashTimeoutId = setTimeout(function () {
+      wash.classList.remove('is-active');
+    }, POWERUP_WASH_MS);
+  }
+
+  /**
+   * Löst die Eintritts-Animation (Skalier-/Opacity-Pop, KEIN Layout-
+   * Property) auf dem HUD-Badge des gerade aktivierten Powerup-Typs aus
+   * (Teil 6, feat(juice-powerup)) — reine Zusatz-Politur, das Badge wird
+   * ohnehin unabhängig davon beim nächsten updatePowerupHud()-Aufruf
+   * sichtbar. No-op bei prefers-reduced-motion (Badge erscheint dann
+   * beim nächsten Tick trotzdem sofort, nur ohne Animation).
+   * @param {('magnet'|'schild'|'turbo'|'scoreX2')} type - Aktivierter Powerup-Typ.
+   * @returns {void}
+   */
+  function triggerPowerupHudEnter(type) {
+    if (reducedMotion) return;
+    var badge = document.getElementById('idlePowerupHud-' + type);
+    if (!badge) return;
+    badge.classList.remove('is-entering');
+    void badge.offsetWidth;
+    badge.classList.add('is-entering');
+    if (badge._juiceEnterTimeoutId) clearTimeout(badge._juiceEnterTimeoutId);
+    badge._juiceEnterTimeoutId = setTimeout(function () {
+      badge.classList.remove('is-entering');
+    }, POWERUP_HUD_ENTER_MS);
   }
 
   /**
@@ -2867,7 +2987,9 @@
    * Sammelt das aktuell sichtbare Powerup ein: aktiviert dessen Effekt
    * (IdleCore.activatePowerupEffect()), zeigt einen entsprechenden Toast +
    * einen kurzen, dezenten "Eingesammelt"-Effekt (respektiert prefers-
-   * reduced-motion via CSS) und despawnt danach.
+   * reduced-motion via CSS) + (Teil 6, feat(juice-powerup)) einen
+   * bildschirmweiten Farb-Wash + eine HUD-Badge-Eintritts-Animation, und
+   * despawnt danach.
    * @returns {void}
    */
   function collectPowerup() {
@@ -2881,6 +3003,8 @@
     if (el) el.classList.add('is-collected');
     showPowerupToast(type, result);
     checkIdleAchievements();
+    triggerPowerupWash(type);
+    triggerPowerupHudEnter(type);
 
     setTimeout(despawnPowerup, reducedMotion ? 0 : POWERUP_COLLECT_ANIM_MS);
   }

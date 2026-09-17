@@ -331,6 +331,73 @@ section('8. feat(juice-combo): Farb-Intensität + Skalier-Puls auf #idleRunCombo
 }
 
 // ============================================================
+section('9. feat(juice-powerup): Farb-Wash + HUD-Eintritt + Restdauer-Ring');
+// ============================================================
+{
+  const idleJs = read('idle.js');
+  const idleCss = read('idle.css');
+
+  // collectPowerup() löst BEIDE Effekte direkt nach der Effekt-Aktivierung aus.
+  const collectFnMatch = idleJs.match(/function collectPowerup\(\) \{([\s\S]*?)\n  \}/);
+  assert(collectFnMatch !== null, 'collectPowerup()-Funktionskörper gefunden');
+  assert(collectFnMatch && /triggerPowerupWash\(type\);\s*\n\s*triggerPowerupHudEnter\(type\);/.test(collectFnMatch[1]),
+    'collectPowerup() ruft triggerPowerupWash(type) + triggerPowerupHudEnter(type) auf');
+
+  ['function ensurePowerupWashNode', 'function triggerPowerupWash', 'function triggerPowerupHudEnter']
+    .forEach((sig) => {
+      const idx = idleJs.indexOf(sig);
+      assert(idx !== -1, `idle.js definiert ${sig}()`);
+      const jsDocStart = idleJs.lastIndexOf('/**', idx);
+      const docBetween = jsDocStart === -1 ? '' : idleJs.slice(jsDocStart, idx);
+      assert(jsDocStart !== -1 && /\*\/\s*$/.test(docBetween.trimEnd() + '\n'), `${sig}() hat einen vorangestellten JSDoc-Block`);
+    });
+
+  // Beide Zusatz-Bewegungen brechen bei prefers-reduced-motion sofort ab.
+  const washFnMatch = idleJs.match(/function triggerPowerupWash\(type\) \{([\s\S]*?)\n  \}/);
+  assert(washFnMatch !== null, 'triggerPowerupWash()-Funktionskörper gefunden');
+  assert(washFnMatch && /if \(reducedMotion\) return;/.test(washFnMatch[1]),
+    'triggerPowerupWash() bricht bei prefers-reduced-motion sofort ab (kein Wash)');
+  const enterFnMatch = idleJs.match(/function triggerPowerupHudEnter\(type\) \{([\s\S]*?)\n  \}/);
+  assert(enterFnMatch !== null, 'triggerPowerupHudEnter()-Funktionskörper gefunden');
+  assert(enterFnMatch && /if \(reducedMotion\) return;/.test(enterFnMatch[1]),
+    'triggerPowerupHudEnter() bricht bei prefers-reduced-motion sofort ab (keine Eintritts-Animation)');
+
+  // Der Ring liest NUR bereits vorhandene, reine IdleCore.powerup*DurationSeconds()-Funktionen — keine neue Zustands-Mutation.
+  assert(/var totalDurationFn = POWERUP_TOTAL_DURATION_FN\[type\];/.test(idleJs),
+    'updatePowerupHud() liest die Gesamt-Wirkdauer über POWERUP_TOTAL_DURATION_FN');
+  assert(/POWERUP_TOTAL_DURATION_FN = \{[\s\S]*?magnet: IdleCore\.powerupMagnetDurationSeconds,/.test(idleJs),
+    'POWERUP_TOTAL_DURATION_FN referenziert ausschliesslich bestehende, reine IdleCore.powerup*DurationSeconds()-Funktionen');
+  assert(/badge\.style\.setProperty\('--powerup-progress', progress\.toFixed\(3\)\);/.test(idleJs),
+    'updatePowerupHud() setzt --powerup-progress synchron pro Frame auf dem Badge');
+
+  // CSS: Ring ist eine reine (nicht animierte) Zustandsanzeige, Eintritt/Wash animieren nur transform/opacity.
+  const badgeCssMatch = idleCss.match(/\.idle-powerup-hud-badge::before \{([\s\S]*?)\n\}/);
+  assert(badgeCssMatch !== null, '.idle-powerup-hud-badge::before CSS-Regel gefunden');
+  assert(badgeCssMatch && /conic-gradient\(var\(--accent\) calc\(var\(--powerup-progress, 0\) \* 360deg\)/.test(badgeCssMatch[1]),
+    'Der Ring wird über conic-gradient(...) aus --powerup-progress gespeist');
+  assert(badgeCssMatch && !/transition/.test(badgeCssMatch[1]),
+    'Der Ring hat KEINE CSS-transition (reine, synchron gesetzte Zustandsanzeige, kein Animations-Nachlauf)');
+  assert(/@keyframes idle-juice-powerup-enter\s*\{[\s\S]*?opacity: 0;[\s\S]*?transform: scale\(/.test(idleCss),
+    'Der Eintritts-Keyframe animiert opacity + transform: scale');
+  assert(/@keyframes idle-juice-powerup-wash\s*\{[\s\S]*?opacity:/.test(idleCss),
+    'Der Wash-Keyframe animiert ausschliesslich opacity');
+  assert(/\.idle-juice-powerup-wash \{[\s\S]*?background: var\(--juice-wash-color, transparent\);/.test(idleCss),
+    'Der Wash-Farbton kommt aus der JS-gesetzten CSS-Variable --juice-wash-color');
+
+  // Reduced-motion-Block deckt beide neuen Klassen defensiv zusätzlich ab.
+  const reducedBlockMatch = idleCss.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/);
+  assert(reducedBlockMatch !== null, 'idle.css hat weiterhin genau EINEN @media (prefers-reduced-motion: reduce)-Block');
+  assert(reducedBlockMatch && /\.idle-juice-powerup-wash\.is-active \{ animation: none; \}/.test(reducedBlockMatch[1]),
+    'Der reduced-motion-Block deaktiviert defensiv .idle-juice-powerup-wash.is-active');
+  assert(reducedBlockMatch && /\.idle-powerup-hud-badge\.is-entering \{ animation: none; \}/.test(reducedBlockMatch[1]),
+    'Der reduced-motion-Block deaktiviert defensiv .idle-powerup-hud-badge.is-entering');
+  assert((idleCss.match(/@media \(prefers-reduced-motion: reduce\)/g) || []).length === 1,
+    'idle.css hat weiterhin nur EINEN @media (prefers-reduced-motion: reduce)-Block (kein zweiter angelegt)');
+
+  assert(!/console\.log/.test(idleJs), 'idle.js enthält weiterhin kein console.log');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);

@@ -250,6 +250,8 @@
   pointer-events: none;
 }
 .idle-powerup-hud-badge {
+  position: relative;
+  z-index: 0;
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -266,6 +268,36 @@
 }
 .idle-powerup-hud-timer {
   color: var(--text-muted);
+}
+
+/* Teil 6, feat(juice-powerup): Restdauer-Ring + Eintritts-Animation.
+   Der Ring (::before) ist eine REINE Zustandsanzeige — --powerup-
+   progress wird synchron pro Frame in updatePowerupHud() gesetzt
+   (KEINE CSS-transition auf der Eigenschaft selbst, siehe deren
+   Docblock), daher unverändert bei prefers-reduced-motion. `mask`
+   schneidet den vollflächigen conic-gradient auf einen dünnen Ring
+   entlang der Pill-Form des Badges zurück; z-index:-1 platziert ihn
+   HINTER dem eigenen Badge-Inhalt, aber innerhalb dessen per z-index:0
+   oben eigens erzeugtem Stacking-Context (bleibt so unter ALLEN
+   anderen Badges, statt versehentlich unter deren Inhalt zu rutschen). */
+.idle-powerup-hud-badge::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: var(--radius-full, 999px);
+  background: conic-gradient(var(--accent) calc(var(--powerup-progress, 0) * 360deg), transparent 0deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  pointer-events: none;
+}
+.idle-powerup-hud-badge.is-entering {
+  animation: idle-juice-powerup-enter var(--dur-slow, 0.32s) var(--ease-spring, ease);
+}
+@keyframes idle-juice-powerup-enter {
+  0% { opacity: 0; transform: scale(0.4); }
+  60% { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 /* Near-Miss-Combo-Badge (Teil 4) — reused .idle-combo-badge-Basis, siehe
@@ -1321,6 +1353,15 @@
      Intensität (filter, siehe .idle-run-combo-badge oben) ist eine reine
      Zustandsanzeige und bleibt bewusst erhalten. */
   .idle-run-combo-badge.is-combo-pulse { animation: none; }
+  /* Teil 6, feat(juice-powerup): idle.js löst den Wash/die Eintritts-
+     Animation ohnehin bereits gar nicht erst aus, wenn reducedMotion
+     true ist (siehe triggerPowerupWash()/triggerPowerupHudEnter()) —
+     hier zusätzlich als defensive CSS-Ebene. Der Ring (--powerup-
+     progress, siehe .idle-powerup-hud-badge::before oben) ist KEINE
+     Animation (kein @keyframes/transition) und bleibt daher unverändert
+     erhalten. */
+  .idle-juice-powerup-wash.is-active { animation: none; }
+  .idle-powerup-hud-badge.is-entering { animation: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -1441,4 +1482,28 @@
   0% { transform: scale(1); }
   45% { transform: scale(1.35); }
   100% { transform: scale(1); }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(juice-powerup): Bildschirmweiter Aktivierungs-Wash — Teil 6
+   Sehr dezenter, max. 200ms langer Farb-Wash (siehe idle.js
+   triggerPowerupWash()) über dem gesamten Overlay (.idle-juice-
+   overlay) — Farbton je Typ über die JS-gesetzte CSS-Variable
+   --juice-wash-color, animiert wird AUSSCHLIESSLICH opacity (siehe
+   Prinzip-Kommentar bei .idle-juice-overlay oben).
+   ════════════════════════════════════════════════════════════════ */
+.idle-juice-powerup-wash {
+  position: absolute;
+  inset: 0;
+  background: var(--juice-wash-color, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.idle-juice-powerup-wash.is-active {
+  animation: idle-juice-powerup-wash 200ms var(--ease-standard, ease);
+}
+@keyframes idle-juice-powerup-wash {
+  0% { opacity: 0; }
+  35% { opacity: 0.22; }
+  100% { opacity: 0; }
 }
