@@ -2951,9 +2951,16 @@ function startRun(state, nowMs) {
  * aktualisiert state.runHighscore (falls der erreichte Score den
  * bisherigen Bestwert übertrifft), schreibt state.runStats fort (additiv,
  * sinkt nie) UND schreibt die im Run gesammelten Coins GENAU EINMAL über
- * runCoinsToKm()/creditKm() der PROGRESS-Schicht gut — der EINZIGE Punkt,
- * an dem ein Run die PROGRESS-Schicht überhaupt berührt (mirrors
- * piggybankReward() — dieselbe zentrale creditKm()-Stelle). Mutiert state.
+ * runCoinsToKm()/creditKm() der PROGRESS-Schicht gut — DER Punkt, an dem
+ * ein Run seinen Coin→km-BONUS realisiert (mirrors piggybankReward() —
+ * dieselbe zentrale creditKm()-Stelle). feat(live-km): bankt VORHER
+ * zusätzlich per flushLiveKmPendingDistance() eine evtl. noch NICHT
+ * geflushte Live-km-Distanz-Portion (< RUN_LIVE_KM_CREDIT_INTERVAL_
+ * SECONDS alt, siehe tickRunEconomy()) — ohne diesen Flush würde die
+ * letzte, kurz vor dem Crash gefahrene Distanz sonst spurlos verloren
+ * gehen, statt (wie spezifiziert) permanent gebankt zu bleiben. Beide
+ * Gutschriften sind additiv/unabhängig (Distanz-Live-km vs. Coin-Bonus).
+ * Mutiert state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
  * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (aktuell ungenutzt, für API-Symmetrie zu startRun()/detectRunCollision() vorgehalten).
  * @returns {{score: number, coins: number, newHighscore: boolean}} Zusammenfassung des beendeten Runs.
@@ -2974,6 +2981,7 @@ function endRun(state, nowMs) {
   state.runStats.totalCrashes += 1;
   if (finalCombo > state.runStats.bestComboEver) state.runStats.bestComboEver = finalCombo;
 
+  flushLiveKmPendingDistance(state);
   creditKm(state, runCoinsToKm(finalCoins));
 
   state.run.phase = 'crashed';
@@ -3038,6 +3046,31 @@ function runCoinsForDistance(distanceDelta) {
 function runCoinsToKm(coins) {
   if (!coins || coins <= 0) return 0;
   return coins * IDLE_BALANCE.RUN_COIN_KM_VALUE;
+}
+
+/**
+ * Flusht die seit dem letzten Flush akkumulierte, noch NICHT gebankte
+ * Live-km-Distanz (state.run.liveKmPendingDistance, siehe tickRunEconomy())
+ * EINMALIG über dieselbe runCoinsForDistance()/runCoinsToKm()-Formel ×
+ * IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER in km und bankt sie über
+ * creditKm() auf die PROGRESS-Schicht. No-op, falls keine Distanz
+ * ausständig ist. Wird SOWOHL vom regulären, gedrosselten Flush in
+ * tickRunEconomy() ALS AUCH von endRun() genutzt — Letzteres verhindert,
+ * dass die letzte, zum Crash-Zeitpunkt noch nicht geflushte Distanz-
+ * Portion (< RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS alt) beim Run-Ende
+ * verloren geht ("ein Crash kann bereits gefahrene Distanz nicht mehr
+ * zurücknehmen"). Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert, muss ensureRunState() durchlaufen haben).
+ * @returns {number} Gebankter Live-km-Betrag (0, falls keine Distanz ausständig war).
+ */
+function flushLiveKmPendingDistance(state) {
+  var pending = state.run.liveKmPendingDistance;
+  if (!pending || pending <= 0) return 0;
+  var liveKmDelta = runCoinsToKm(runCoinsForDistance(pending)) * IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER;
+  creditKm(state, liveKmDelta);
+  state.run.liveKmCredited += liveKmDelta;
+  state.run.liveKmPendingDistance = 0;
+  return liveKmDelta;
 }
 
 /**
@@ -3138,12 +3171,8 @@ function tickRunEconomy(state, distanceDelta, activity, nowMs) {
       // Run-Start) fälschlich als "verstrichen" gewertet.
       state.run.liveKmLastFlushAt = now;
     } else if ((now - state.run.liveKmLastFlushAt) / 1000 >= IDLE_BALANCE.RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS) {
-      var liveKmDelta = runCoinsToKm(runCoinsForDistance(state.run.liveKmPendingDistance)) * IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER;
-      creditKm(state, liveKmDelta);
-      state.run.liveKmCredited += liveKmDelta;
-      state.run.liveKmPendingDistance = 0;
+      kmCredited = flushLiveKmPendingDistance(state);
       state.run.liveKmLastFlushAt = now;
-      kmCredited = liveKmDelta;
     }
   }
 

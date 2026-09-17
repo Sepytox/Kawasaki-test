@@ -23,6 +23,10 @@
  *     endRun() weiterhin GENAU EINMAL, ZUSÄTZLICH zum bereits gebankten
  *     Live-km (zwei additive, unabhängige Quellen — kein Doppel-Zählen,
  *     kein Verlust durch den Crash).
+ *  5. Ein Crash MITTEN im Drossel-Intervall (bevor die zuletzt gefahrene
+ *     Distanz-Portion regulär geflusht wurde) verliert diese Portion
+ *     NICHT — endRun() flusht sie über flushLiveKmPendingDistance()
+ *     zusätzlich zum Coin-Bonus (siehe idle-core.js).
  *
  * Run: node tests/live-km-test.js
  * Exit 0 = alle Tests bestanden, Exit 1 = mindestens ein Fehler.
@@ -169,6 +173,31 @@ section('4 · Crash nach Live-km-Flushes: Coin→km-Bonus bankt weiterhin GENAU 
   assert(summary.coins === coinsAtCrash, 'endRun(): die Zusammenfassung meldet den vollen, im Run gesammelten Coin-Stand');
   assert(Math.abs(state.km - (kmBeforeCrash + expectedBonus)) < 1e-9, 'endRun(): der Coin→km-BONUS wird GENAU EINMAL, additiv zum bereits gebankten Live-km, gutgeschrieben — kein Verlust, kein Doppel-Zählen');
   assert(state.run.phase === 'crashed', 'endRun(): der Run gilt nach dem Crash als beendet');
+})();
+
+// ============================================================
+section('5 · Crash MITTEN im Drossel-Intervall: die letzte, noch nicht geflushte Distanz-Portion geht NICHT verloren');
+// ============================================================
+(function () {
+  const state = IdleCore.createInitialState();
+  IdleCore.startRun(state, 1000);
+
+  // Tick 1: etabliert nur die Zeitbasis.
+  IdleCore.tickRunEconomy(state, 100, 'active', 1000);
+  // Tick 2: NOCH innerhalb des Drossel-Intervalls — pendingDistance bleibt bewusst ungeflusht (Testvoraussetzung).
+  IdleCore.tickRunEconomy(state, 60, 'active', 1000 + FLUSH_MS * 0.4);
+  const kmBeforeCrash = state.km;
+  const pendingBeforeCrash = state.run.liveKmPendingDistance;
+  assert(pendingBeforeCrash > 0, 'Testvoraussetzung: es liegt noch NICHT geflushte Live-km-Distanz vor (< RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS alt)');
+
+  // Crash MITTEN im Intervall (ohne dass jemals ein regulärer Flush stattgefunden hätte).
+  const expectedPendingKm = IdleCore.runCoinsToKm(IdleCore.runCoinsForDistance(pendingBeforeCrash)) * B.RUN_ACTIVE_KM_CREDIT_MULTIPLIER;
+  const expectedCoinBonus = IdleCore.runCoinsToKm(state.run.coins);
+  const summary = IdleCore.endRun(state, 5000);
+
+  assert(Math.abs(state.km - (kmBeforeCrash + expectedPendingKm + expectedCoinBonus)) < 1e-9, 'endRun() bankt beim Crash ZUSÄTZLICH die zuvor noch nicht geflushte Live-km-Distanz-Portion — additiv zum Coin→km-Bonus, nichts geht verloren');
+  assert(state.run.liveKmPendingDistance === 0, 'endRun(): die ausständige Distanz-Portion ist nach dem Crash-Flush aufgebraucht (kein doppeltes Banking bei einem evtl. weiteren endRun()-Aufruf)');
+  assert(summary.score >= 0, 'endRun(): liefert weiterhin eine gültige Zusammenfassung');
 })();
 
 // ============================================================
