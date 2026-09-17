@@ -1472,6 +1472,27 @@ function applyShiftResult(state, hit, nowMs) {
 }
 
 /**
+ * MECHANIK A — reine Entscheidungsfunktion für die Schaltpunkt-Combo:
+ * ermittelt allein aus der Marker-Position und der perfekten Zone, ob ein
+ * Auslöse-Versuch (Leertaste oder Mobile-Button, siehe idle.js
+ * evaluateShiftAttempt()) ein Treffer ist. Reine, deterministische
+ * Funktion — mutiert nichts; die eigentliche Zustandsänderung (Combo/
+ * Multiplikator) übernimmt weiterhin applyShiftResult(). Extrahiert aus
+ * der ehemals in idle.js inline berechneten Geometrie, damit sie ohne DOM
+ * unit-testbar ist.
+ * @param {number} progressPct - Fortschritt des Schaltpunkt-Markers in % (0–100).
+ * @param {number} zoneWidthPct - Breite der perfekten Zone in % (siehe perfectZoneWidthForState()).
+ * @param {number} [zoneCenterPct] - Mitte der perfekten Zone in %; Standard 50.
+ * @returns {boolean} true, falls progressPct innerhalb der perfekten Zone liegt.
+ */
+function evaluateShiftHit(progressPct, zoneWidthPct, zoneCenterPct) {
+  var center = typeof zoneCenterPct === 'number' ? zoneCenterPct : 50;
+  var half = (typeof zoneWidthPct === 'number' ? zoneWidthPct : 0) / 2;
+  var pct = typeof progressPct === 'number' ? progressPct : 0;
+  return pct >= (center - half) && pct <= (center + half);
+}
+
+/**
  * Liefert den aktuell aktiven Combo-Ertrags-Multiplikator (1, falls kein
  * Treffer-Multiplikator gerade aktiv/abgelaufen ist). Reine Funktion —
  * mutiert state NICHT. Für die Anwendung des Multiplikators auf
@@ -3660,6 +3681,7 @@ var IdleCore = {
   comboMultiplier: comboMultiplier,
   perfectZoneWidth: perfectZoneWidth,
   applyShiftResult: applyShiftResult,
+  evaluateShiftHit: evaluateShiftHit,
   activeComboMultiplier: activeComboMultiplier,
   nextShiftIntervalSeconds: nextShiftIntervalSeconds,
 

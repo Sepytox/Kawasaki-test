@@ -604,26 +604,36 @@
 
   /**
    * Element-ids, die ihre EIGENE Enter/Leertaste-Interaktion verdrahten
-   * (Schaltpunkt-Leiste/Sparschwein/Powerup/Crash-Zusammenfassung-Button,
-   * siehe wireShiftInteraction()/wirePiggyInteraction()/
-   * wirePowerupInteraction()/showCrashSummary()-Aktions-Button) — der globale
-   * Sprung/Ducken-Handler in wireRunnerControls() ignoriert Leertaste-
-   * Drücke auf genau diesen Elementen, damit "Space" dort NICHT
-   * zusätzlich einen Sprung auslöst (verhindert doppelte Aktivierung).
+   * (Sparschwein/Powerup/Crash-Zusammenfassung-Button, siehe
+   * wirePiggyInteraction()/wirePowerupInteraction()/showCrashSummary()-
+   * Aktions-Button) — der globale Sprung/Ducken-Handler in
+   * wireRunnerControls() ignoriert Tasten-Drücke auf genau diesen
+   * Elementen, damit deren eigenes Leertaste-Verhalten (nativer Button-
+   * "Klick" bei fokussiertem <button>) NICHT zusätzlich abgefangen wird.
+   * #idleShiftTrack ist HIER bewusst NICHT (mehr) gelistet (feat
+   * (shiftpoint-key)): die Schaltpunkt-Leiste braucht KEINE Exemption
+   * mehr, weil Leertaste global (siehe unten) IMMER die Schaltpunkt-
+   * Auswertung auslöst — unabhängig davon, ob #idleShiftTrack fokussiert
+   * ist oder nicht.
    */
-  var RUNNER_CONTROL_EXEMPT_IDS = { idleShiftTrack: true, idlePiggy: true, idlePowerup: true, idleRunSummaryRestartBtn: true };
+  var RUNNER_CONTROL_EXEMPT_IDS = { idlePiggy: true, idlePowerup: true, idleRunSummaryRestartBtn: true };
 
   /**
    * Verdrahtet die Steuerung des Endless-Runners (Teil 1 + Teil 3):
    * Tastatur (ArrowLeft/ArrowRight sowie A/D für den Lane-Wechsel,
-   * ArrowUp/Space für einen Sprung, ArrowDown/Ctrl für Ducken —
-   * unabhängig von der Eingabe-Fokussierung ausser innerhalb von
+   * ArrowUp/W für einen Sprung, ArrowDown/Ctrl für Ducken, Leertaste
+   * AUSSCHLIESSLICH für die Schaltpunkt-Combo — siehe evaluateShiftAttempt()
+   * — unabhängig von der Eingabe-Fokussierung ausser innerhalb von
    * Formularfeldern bzw. den in RUNNER_CONTROL_EXEMPT_IDS gelisteten
    * Elementen) UND Touch-Swipe in ALLEN 4 Richtungen (links/rechts = Lane-
    * Wechsel, hoch = Sprung, runter = Ducken) auf der Renn-Strecke. Jede
    * erkannte Eingabe ruft IdleCore.steerRunnerLane()/jumpRunner()/
    * duckRunner() auf, was automatisch auch den Aktivitäts-Zustand auf
-   * 'active' setzt (siehe IdleCore.runnerActivityState()).
+   * 'active' setzt (siehe IdleCore.runnerActivityState()). Die Leertaste
+   * löst bewusst NIEMALS mehr jumpRunner() aus (feat(shiftpoint-key) —
+   * vorher kollidierte Space mit der Schaltpunkt-Leiste; Sprung lebt
+   * jetzt exklusiv auf ArrowUp/W, damit man mit Pfeiltasten/A-D
+   * ausweichen UND gleichzeitig mit der Leertaste schalten kann).
    * @returns {void}
    */
   function wireRunnerControls() {
@@ -638,12 +648,18 @@
       } else if (event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D') {
         event.preventDefault();
         IdleCore.steerRunnerLane(state, 1, Date.now());
-      } else if (event.key === 'ArrowUp' || event.key === ' ' || event.key === 'Spacebar') {
+      } else if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
         event.preventDefault();
         IdleCore.jumpRunner(state, Date.now());
       } else if (event.key === 'ArrowDown' || event.key === 'Control') {
         event.preventDefault();
         IdleCore.duckRunner(state, Date.now());
+      } else if (event.key === ' ' || event.key === 'Spacebar') {
+        // feat(shiftpoint-key): Leertaste löst AUSSCHLIESSLICH die
+        // Schaltpunkt-Auswertung aus (nie mehr springen) — und wird
+        // preventDefault(), damit die Seite dabei nicht scrollt.
+        event.preventDefault();
+        evaluateShiftAttempt();
       }
     });
 
@@ -1886,32 +1902,41 @@
   }
 
   /**
-   * Wertet einen Klick/Tastendruck auf die aktuell aktive Schaltpunkt-
-   * Leiste aus: prüft, ob sich der Marker gerade innerhalb der perfekten
-   * Zone befindet, und beendet die Leiste entsprechend als Treffer/Fehlklick.
+   * Wertet EINEN Auslöse-Versuch (Leertaste, siehe wireRunnerControls())
+   * auf die aktuell aktive Schaltpunkt-Leiste aus: delegiert die reine
+   * Geometrie-Entscheidung an IdleCore.evaluateShiftHit() und beendet die
+   * Leiste entsprechend als Treffer/Fehlversuch. Ein Klick auf die Leiste
+   * selbst löst NICHTS mehr aus (feat(shiftpoint-key) — bewusst entfernt,
+   * siehe wireShiftInteraction()).
    * @returns {void}
    */
-  function evaluateShiftClick() {
+  function evaluateShiftAttempt() {
     if (!shiftState.active || shiftState.resultShown) return;
     var progressPct = Math.min(100, (shiftState.elapsedSeconds / IdleCore.IDLE_BALANCE.SHIFT_SWEEP_DURATION_SECONDS) * 100);
-    var half = shiftState.zoneWidthPct / 2;
-    var hit = progressPct >= (SHIFT_ZONE_CENTER_PCT - half) && progressPct <= (SHIFT_ZONE_CENTER_PCT + half);
+    var hit = IdleCore.evaluateShiftHit(progressPct, shiftState.zoneWidthPct, SHIFT_ZONE_CENTER_PCT);
     endShift(hit, false);
   }
 
   /**
-   * Verdrahtet die Klick-/Tastatur-Interaktion (Enter/Leertaste) der
-   * Schaltpunkt-Leiste.
+   * Verdrahtet die Tastatur-Interaktion der Schaltpunkt-Leiste: NUR noch
+   * Enter (Screenreader/Tab-Fokus-Zugänglichkeit), solange
+   * #idleShiftTrack fokussiert ist. Ein Maus-/Touch-Klick auf die Leiste
+   * löst bewusst NICHTS mehr aus (feat(shiftpoint-key) — der bisherige
+   * click-Listener wurde entfernt, damit die Leiste ausschliesslich per
+   * Leertaste — global, siehe wireRunnerControls() — oder dem Mobile-
+   * Button ausgelöst wird). Die Leertaste wird hier ABSICHTLICH NICHT
+   * mehr abgefangen, damit evaluateShiftAttempt() pro Tastendruck genau
+   * EINMAL ausgeführt wird (sonst würde der globale Handler in
+   * wireRunnerControls() zusätzlich auslösen).
    * @returns {void}
    */
   function wireShiftInteraction() {
     var trackEl = document.getElementById('idleShiftTrack');
     if (!trackEl) return;
-    trackEl.addEventListener('click', evaluateShiftClick);
     trackEl.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
+      if (event.key === 'Enter') {
         event.preventDefault();
-        evaluateShiftClick();
+        evaluateShiftAttempt();
       }
     });
   }

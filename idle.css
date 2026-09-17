@@ -626,13 +626,14 @@
   margin-top: 0.35rem;
 }
 .idle-shift-track {
+  /* feat(shiftpoint-key): kein Pointer-Cursor mehr — ein Klick auf die
+     Leiste löst bewusst NICHTS aus (nur noch Leertaste/Mobile-Button). */
   position: relative;
   height: 30px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-full, 999px);
   overflow: hidden;
-  cursor: pointer;
 }
 .idle-shift-zone {
   position: absolute;
