@@ -818,3 +818,40 @@ summary:focus-visible,
 .btn-cta-pulse:focus-visible {
   animation-play-state: paused;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   feat(page-transitions): sanfte Cross-Document View Transitions
+   Rein CSS-basiertes Progressive Enhancement (kein Framework, kein JS,
+   keine Änderung an <a href="...">/navbar.js nötig — Navigation bleibt
+   100% normale Mehrseiten-Navigation). "@view-transition" ist eine noch
+   junge, Chromium-spezifische Regel: nicht unterstützende Browser
+   ignorieren sie einfach und navigieren wie bisher instant — kein
+   Fallback-Code nötig. Additiv für JEDE Seite inkl. soundcheck.html
+   (geschützte Datei): das Rendering DURCH die Navigation hindurch wird
+   dadurch weicher, das Rendering DER Seite selbst (die einzige vom
+   GOLDEN_PRINCIPLES_KE.md-Byte-Vergleich betrachtete Grösse) bleibt
+   unverändert, da @view-transition keine normalen Style-Regeln
+   überschreibt.
+   WICHTIG: Die View-Transitions-Spec respektiert prefers-reduced-motion
+   NICHT automatisch (anders als reguläre CSS-Animationen/-Transitions)
+   — die Deaktivierung unten ist daher explizit und eigenständig nötig.
+   ════════════════════════════════════════════════════════════════ */
+@media not (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: auto;
+  }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-slow, 0.4s);
+  animation-timing-function: var(--ease-out, ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
