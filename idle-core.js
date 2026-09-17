@@ -342,6 +342,8 @@ var IDLE_BALANCE = {
   RUNNER_SCROLL_SPEED_MAX: 260,
   /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position — zugleich die "Sichtweite" der Strecke (siehe idle.js renderTrack()' t∈[0,1]-Geometrie). Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (234 = 260 × 0.9) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. fix(spawning): von 156 (bei 0.6s) auf 234 (bei 0.9s) angehoben, IMMER gemeinsam mit RUNNER_MIN_LEAD_SECONDS ändern, sonst bricht diese Garantie. */
   RUNNER_SPAWN_LEAD_DISTANCE: 234,
+  /** Untere Schranke (Sekunden) für den zeitlichen ABSTAND zwischen zwei aufeinanderfolgenden Hindernis-WELLEN (siehe nextObstacleSpawnIntervalSeconds()) — fix(spawning): schliesst die Lücke, dass die reine Dichte-Formel (obstacleDensity() × runDifficultyDensity()) bei hoher Geschwindigkeit/Distanz theoretisch Intervalle deutlich unter einer Sekunde liefern könnte. Bewusst identisch zu RUNNER_MIN_LEAD_SECONDS gewählt ("Vorlaufzeit" UND "Wellen-Abstand" sollen dieselbe faire Reaktionszeit garantieren). */
+  RUNNER_MIN_WAVE_SPACING_SECONDS: 0.9,
   /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=0 (Basis-Spawnrate, siehe obstacleDensity()). */
   RUNNER_OBSTACLE_DENSITY_BASE: 1,
   /** Hindernis-Dichte-Multiplikator genau am Speed-Cap (RUNNER_SPEED_CAP_PCT). */
@@ -2462,11 +2464,19 @@ function obstacleDensity(speedPct) {
  * sich wie distanceUnits=0 (Multiplikator 1, unverändertes Verhalten,
  * rückwärtskompatibel zu bestehenden Aufrufen/Tests). Zufälligkeit wird
  * als Parameter übergeben, damit die Funktion deterministisch testbar
- * bleibt.
+ * bleibt. fix(spawning): das Ergebnis wird NIE unter RUNNER_MIN_WAVE_
+ * SPACING_SECONDS geklemmt — selbst am Speed-Cap/bei maximaler
+ * In-Run-Schwierigkeit bleibt so ein Mindest-ABSTAND zwischen zwei
+ * Wellen garantiert (analog zu runnerLeadSeconds()' Vorlaufzeit-Boden,
+ * aber für die Spawn-FREQUENZ statt die Vorlaufzeit EINES Hindernisses).
+ * Da der Boden konstant ist und die ungeklemmte Formel monoton
+ * nicht-steigend in Geschwindigkeit/Distanz bleibt, bricht das die
+ * bestehende "höhere Geschwindigkeit/Distanz ⇒ kürzeres oder gleiches
+ * Intervall"-Garantie NICHT (siehe Regressionstests).
  * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
  * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
  * @param {number} [distanceUnits] - Bereits zurückgelegte In-Run-Distanz (Teil 4, Schwierigkeitskurve); Standard 0.
- * @returns {number} Sekunden bis zum nächsten Hindernis (> 0).
+ * @returns {number} Sekunden bis zum nächsten Hindernis (>= RUNNER_MIN_WAVE_SPACING_SECONDS).
  */
 function nextObstacleSpawnIntervalSeconds(speedPct, randomFn, distanceUnits) {
   var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
@@ -2474,7 +2484,8 @@ function nextObstacleSpawnIntervalSeconds(speedPct, randomFn, distanceUnits) {
   var base = density > 0 ? IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS / density : IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS;
   var jitterMin = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MIN;
   var jitterMax = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MAX;
-  return base * (jitterMin + rnd() * (jitterMax - jitterMin));
+  var raw = base * (jitterMin + rnd() * (jitterMax - jitterMin));
+  return Math.max(IDLE_BALANCE.RUNNER_MIN_WAVE_SPACING_SECONDS, raw);
 }
 
 /**

@@ -181,6 +181,31 @@ section('3 · Simulation — hunderte überlappende Wellen (CROSS-WAVE-Lücke au
 })();
 
 // ============================================================
+section('4 · nextObstacleSpawnIntervalSeconds() — Mindestabstand zwischen Wellen (RUNNER_MIN_WAVE_SPACING_SECONDS)');
+// ============================================================
+(function () {
+  const rng = makeSeededRandom(555);
+  const floor = IdleCore.IDLE_BALANCE.RUNNER_MIN_WAVE_SPACING_SECONDS;
+
+  // Selbst am Speed-Cap MIT maximaler In-Run-Schwierigkeit (worst case für kurze Intervalle)
+  // unterschreitet das Spawn-Intervall den konfigurierten Mindest-Wellen-Abstand NIE.
+  const maxDistance = IdleCore.IDLE_BALANCE.RUN_DIFFICULTY_DISTANCE_SCALE_UNITS;
+  for (let i = 0; i < 300; i++) {
+    const interval = IdleCore.nextObstacleSpawnIntervalSeconds(100, rng, maxDistance);
+    assert(interval >= floor - 1e-9, `nextObstacleSpawnIntervalSeconds(100%, distance=${maxDistance}) unterschreitet den Mindest-Wellen-Abstand (${floor}s) nie (Sample ${i}: ${interval.toFixed(4)}s)`);
+  }
+  // Auch über den gesamten Geschwindigkeits-/Distanz-Bereich hinweg (kein Sonderfall irgendwo dazwischen).
+  for (let speedPct = 0; speedPct <= 100; speedPct += 10) {
+    for (let distance = 0; distance <= maxDistance; distance += 500) {
+      const interval = IdleCore.nextObstacleSpawnIntervalSeconds(speedPct, rng, distance);
+      assert(interval >= floor - 1e-9, `nextObstacleSpawnIntervalSeconds(${speedPct}%, distance=${distance}) respektiert den Mindest-Wellen-Abstand`);
+    }
+  }
+  // Der Boden ist bewusst identisch zur Mindest-Vorlaufzeit gewählt (Konsistenz mit Schritt 2 der Aufgabe).
+  assert(floor === IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS, 'RUNNER_MIN_WAVE_SPACING_SECONDS ist bewusst identisch zu RUNNER_MIN_LEAD_SECONDS (konsistente Reaktionszeit-Garantie)');
+})();
+
+// ============================================================
 // Results
 // ============================================================
 console.log('\n' + '═'.repeat(60));
