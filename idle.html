@@ -252,27 +252,12 @@
     <!-- Teile-Drop-Toast (feat(idle-parts)) -->
     <div class="idle-toast-container" id="idleToastContainer" aria-live="polite"></div>
 
-    <!-- Crash-Zusammenfassung (Teil 3, feat(crash)): erscheint nach einem
-         echten Crash — Score, gesammelte Coins (bereits einmalig in km
-         umgewandelt, siehe IdleCore.endRun()) und ggf. ein neuer Highscore.
-         "Nochmal fahren" startet sofort einen neuen Run. -->
-    <div class="idle-run-summary" id="idleRunSummary" hidden role="dialog" aria-modal="true" aria-labelledby="idleRunSummaryTitle">
-        <div class="idle-run-summary-card">
-            <h2 id="idleRunSummaryTitle">💥 Crash!</h2>
-            <p class="idle-run-summary-highscore" id="idleRunSummaryHighscore" hidden>🏆 Neuer Highscore!</p>
-            <div class="idle-run-summary-stats">
-                <div class="idle-run-summary-stat">
-                    <span class="idle-run-summary-stat-label">Score</span>
-                    <span class="idle-run-summary-stat-value" id="idleRunSummaryScore">0</span>
-                </div>
-                <div class="idle-run-summary-stat">
-                    <span class="idle-run-summary-stat-label">Gesammelte Coins</span>
-                    <span class="idle-run-summary-stat-value" id="idleRunSummaryCoins">0</span>
-                </div>
-            </div>
-            <button type="button" class="btn idle-run-summary-restart-btn" id="idleRunSummaryRestartBtn">🔄 Nochmal fahren</button>
-        </div>
-    </div>
+    <!-- Crash-Zusammenfassung (Teil 3, feat(crash)): wird jetzt zur Laufzeit
+         vom zentralen Modal-System erzeugt (refactor(modal), siehe
+         idle.js showCrashSummary() / modal.js Modal.openModal() mit
+         variant "forced-choice" — kein Escape, kein Backdrop-Klick, nur
+         "Nochmal fahren" schliesst den Dialog). Kein statisches Markup
+         mehr an dieser Stelle nötig. -->
 
     <script src="theme-toggle.js"></script>
     <script src="settings.js"></script>
