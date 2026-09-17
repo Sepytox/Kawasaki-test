@@ -116,7 +116,7 @@
  * Sprung passieren, siehe obstacleCausesCrash()) sowie eine
  * DISTANZ-abhängige Schwierigkeitskurve (siehe runDifficultyDensity()/
  * runDifficultyWaveSize()) — rein über HINDERNIS-DICHTE/Muster-Komplexität,
- * NIEMALS über die Vorlaufzeit (runnerLeadSeconds()' 0.6s-Boden bleibt
+ * NIEMALS über die Vorlaufzeit (runnerLeadSeconds()' 0.9s-Boden bleibt
  * eine reine Funktion von speedPct, siehe Regressionstest §22).
  *
  * balance(powerups) (Teil C, Spec-Angleichung): Magnet zieht AUSSCHLIESSLICH
@@ -332,16 +332,16 @@ var IDLE_BALANCE = {
    * werden (passiveEarn() lief ohnehin schon immer unabhängig davon). */
   /** Anzahl der Fahrspuren der Runner-Straße. */
   RUNNER_LANE_COUNT: 3,
-  /** Untere Schranke der Hindernis-Vorlaufzeit (Sekunden) — garantiert eine faire Reaktionszeit unabhängig von der Bike-Geschwindigkeit (siehe runnerLeadSeconds()). */
-  RUNNER_MIN_LEAD_SECONDS: 0.6,
+  /** Untere Schranke der Hindernis-Vorlaufzeit (Sekunden) — garantiert eine faire Reaktionszeit unabhängig von der Bike-Geschwindigkeit (siehe runnerLeadSeconds()). fix(spawning): von 0.6s auf 0.9s angehoben (harte Untergrenze bleibt bewusst bei >= 0.6s dokumentiert, Ziel-Wert jedoch deutlich höher) — RUNNER_SPAWN_LEAD_DISTANCE MUSS bei jeder Änderung im gleichen Verhältnis mitgezogen werden (siehe dort). */
+  RUNNER_MIN_LEAD_SECONDS: 0.9,
   /** Prozentsatz von geschwindigkeitPct, ab dem die visuelle Scroll-Geschwindigkeit der Straße nicht mehr weiter ansteigt (siehe runnerScrollSpeed()). */
   RUNNER_SPEED_CAP_PCT: 70,
   /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) bei geschwindigkeitPct=0. */
   RUNNER_SCROLL_SPEED_BASE: 70,
   /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) am/ab RUNNER_SPEED_CAP_PCT (Deckel). */
   RUNNER_SCROLL_SPEED_MAX: 260,
-  /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position. Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (156 = 260 × 0.6) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. */
-  RUNNER_SPAWN_LEAD_DISTANCE: 156,
+  /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position — zugleich die "Sichtweite" der Strecke (siehe idle.js renderTrack()' t∈[0,1]-Geometrie). Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (234 = 260 × 0.9) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. fix(spawning): von 156 (bei 0.6s) auf 234 (bei 0.9s) angehoben, IMMER gemeinsam mit RUNNER_MIN_LEAD_SECONDS ändern, sonst bricht diese Garantie. */
+  RUNNER_SPAWN_LEAD_DISTANCE: 234,
   /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=0 (Basis-Spawnrate, siehe obstacleDensity()). */
   RUNNER_OBSTACLE_DENSITY_BASE: 1,
   /** Hindernis-Dichte-Multiplikator genau am Speed-Cap (RUNNER_SPEED_CAP_PCT). */
@@ -548,7 +548,7 @@ var IDLE_BALANCE = {
   RUN_COIN_TRAIL_INTERVAL_MAX_SECONDS: 9,
   /** In-Run-Distanz (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*), bei der runDifficultyDensity() ihren Deckel (RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER) erreicht. */
   RUN_DIFFICULTY_DISTANCE_SCALE_UNITS: 4000,
-  /** Zusätzlicher Dichte-Multiplikator (auf obstacleDensity() draufmultipliziert, siehe runDifficultyDensity()), den ein Run bei RUN_DIFFICULTY_DISTANCE_SCALE_UNITS Distanz erreicht — wirkt NUR auf die Spawn-Dichte/-Muster, NIEMALS auf runnerLeadSeconds()' 0.6s-Boden (siehe Regressionstest §22). */
+  /** Zusätzlicher Dichte-Multiplikator (auf obstacleDensity() draufmultipliziert, siehe runDifficultyDensity()), den ein Run bei RUN_DIFFICULTY_DISTANCE_SCALE_UNITS Distanz erreicht — wirkt NUR auf die Spawn-Dichte/-Muster, NIEMALS auf runnerLeadSeconds()' 0.9s-Boden (siehe Regressionstest §22). */
   RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER: 1.8,
   /** In-Run-Distanz, ab der runDifficultyWaveSize() eine zweite, kombinierte Hindernis-Lane pro Welle spawnt (siehe runDifficultyPatternTier()). */
   RUN_DIFFICULTY_PATTERN_TIER1_UNITS: 2000,
@@ -950,7 +950,7 @@ function createInitialState() {
      * beim letzten startRun() aus dem aktuellen Bike/Tuning abgeleitete
      * Basis-Geschwindigkeit (deriveBikeStats().geschwindigkeitPct) — läuft
      * weiterhin durch dieselbe runnerScrollSpeed()/runnerLeadSeconds()-
-     * Pipeline wie zuvor (0.6s-Vorlaufzeit-Boden unverändert garantiert).
+     * Pipeline wie zuvor (0.9s-Vorlaufzeit-Boden unverändert garantiert).
      * combo/comboMult sind für Phase B (Near-Miss-Bonus) vorbereitet,
      * in Phase A bewusst inert (bleiben 0/1). */
     run: {
@@ -2457,7 +2457,7 @@ function obstacleDensity(speedPct) {
  * optionaler distanceUnits-Parameter multipliziert die Dichte zusätzlich
  * mit runDifficultyDensity(distanceUnits) — die IN-RUN-Schwierigkeitskurve
  * wirkt dadurch NUR auf die Spawn-DICHTE (kürzere Intervalle), NIEMALS
- * auf runnerLeadSeconds()' 0.6s-Boden (der ist eine reine Funktion von
+ * auf runnerLeadSeconds()' 0.9s-Boden (der ist eine reine Funktion von
  * speedPct, siehe Regressionstest §22) — ausgelassen/undefiniert verhält
  * sich wie distanceUnits=0 (Multiplikator 1, unverändertes Verhalten,
  * rückwärtskompatibel zu bestehenden Aufrufen/Tests). Zufälligkeit wird
@@ -2868,7 +2868,7 @@ function ensureRunStatsState(state) {
  * (speedPct) aus dem AKTUELL gefahrenen Bike/Tuning-Level ab
  * (deriveBikeStats().geschwindigkeitPct — läuft danach unverändert durch
  * dieselbe runnerScrollSpeed()/runnerLeadSeconds()-Pipeline wie zuvor, der
- * 0.6s-Vorlaufzeit-Boden bleibt dadurch für JEDES Bike/Tuning garantiert)
+ * 0.9s-Vorlaufzeit-Boden bleibt dadurch für JEDES Bike/Tuning garantiert)
  * UND setzt die STEUERUNG (state.runner: Lane mittig, Sprung/Ducken/
  * Kollisions-Malus zurückgesetzt) für einen fairen Neustart zurück.
  * Berührt NIEMALS die PROGRESS-Schicht (km/Bikes/Tuning/Saison/Gear).
@@ -3130,7 +3130,7 @@ function isDucking(state, nowMs) {
  * danach gedeckelt). Wird MULTIPLIKATIV auf obstacleDensity(speedPct)
  * angewendet (siehe nextObstacleSpawnIntervalSeconds()) — wirkt dadurch
  * NUR auf die Spawn-Dichte/-Häufigkeit, NIEMALS auf runnerLeadSeconds()'
- * 0.6s-Boden (der bleibt eine reine Funktion von speedPct, unabhängig von
+ * 0.9s-Boden (der bleibt eine reine Funktion von speedPct, unabhängig von
  * distanceUnits). Reine, deterministische Funktion.
  * @param {number} distanceUnits - Bereits zurückgelegte In-Run-Distanz (abstrakte Einheiten, >= 0).
  * @returns {number} Dichte-Multiplikator (1 bis RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER).

@@ -1647,7 +1647,7 @@ section('21 · v4→v5 STATE-MIGRATION — alte Saves gewinnen die neue Run-Schi
 
 section('22 · Regression: runnerLeadSeconds()-Boden bleibt unabhängig von Teil 3 garantiert');
 (function () {
-  // Der 0.6s-Vorlaufzeit-Boden ist eine reine Funktion von speedPct (Teil 1, unverändert) —
+  // Der 0.9s-Vorlaufzeit-Boden ist eine reine Funktion von speedPct (Teil 1, unverändert) —
   // Teil 3 fügt NUR eine distanz-/aktivitätsabhängige WIRTSCHAFT hinzu, rührt runnerLeadSeconds()
   // selbst nicht an. Explizite Sweep-Regression, damit eine künftige Phase-B-Schwierigkeitskurve
   // (Dichte/Muster nach Distanz) diesen Boden niemals versehentlich unterschreiten kann.
@@ -1843,7 +1843,7 @@ section('26 · TEIL 4 — feat(powerups): Turbo lässt \'lowBar\' OHNE Sprung pa
   assert(Object.keys(weights).length === 4, 'POWERUP_TYPE_WEIGHTS bleibt bei genau 4 Einträgen (1:1-Ersatz, kein 5. Slot)');
 })();
 
-section('27 · TEIL 4 — feat(difficulty): runDifficultyDensity()/runDifficultyPatternTier()/runDifficultyWaveSize() + 0.6s-Boden bei JEDER Distanz');
+section('27 · TEIL 4 — feat(difficulty): runDifficultyDensity()/runDifficultyPatternTier()/runDifficultyWaveSize() + 0.9s-Boden bei JEDER Distanz');
 (function () {
   // runDifficultyDensity(): startet bei 1 (Distanz 0), steigt monoton, gedeckelt auf RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER.
   assert(IdleCore.runDifficultyDensity(0) === 1, 'runDifficultyDensity(0) liefert 1 (keine Verstärkung am Run-Anfang)');
@@ -1873,11 +1873,11 @@ section('27 · TEIL 4 — feat(difficulty): runDifficultyDensity()/runDifficulty
   }
   assert(IdleCore.runDifficultyWaveSize(0, 1) === 1, 'runDifficultyWaveSize() liefert bei nur 1 Lane trotzdem mindestens 1 (kein 0/negativer Wert)');
 
-  // Kern-Invariante (Teil 4 darf sie NIE verletzen): runnerLeadSeconds() bleibt bei JEDER Kombination aus speedPct UND in-run distanceUnits über dem 0.6s-Boden,
+  // Kern-Invariante (Teil 4 darf sie NIE verletzen): runnerLeadSeconds() bleibt bei JEDER Kombination aus speedPct UND in-run distanceUnits über dem 0.9s-Boden,
   // weil runDifficultyDensity() NUR in nextObstacleSpawnIntervalSeconds() (Spawn-Häufigkeit) einfliesst, NIEMALS in runnerLeadSeconds() selbst.
   for (let speedPct = 0; speedPct <= 100; speedPct += 10) {
     const lead = IdleCore.runnerLeadSeconds(speedPct);
-    assert(lead >= IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS - 1e-9, `runnerLeadSeconds(${speedPct}) hält den 0.6s-Boden (Teil 4 nimmt keinen Parameter für distanceUnits an)`);
+    assert(lead >= IdleCore.IDLE_BALANCE.RUNNER_MIN_LEAD_SECONDS - 1e-9, `runnerLeadSeconds(${speedPct}) hält den 0.9s-Boden (Teil 4 nimmt keinen Parameter für distanceUnits an)`);
     for (let distance = 0; distance <= 8000; distance += 2000) {
       const interval = IdleCore.nextObstacleSpawnIntervalSeconds(speedPct, () => 0.5, distance);
       assert(interval > 0, `nextObstacleSpawnIntervalSeconds(${speedPct}, ..., ${distance}) bleibt strikt positiv (nie ein Endlos-Spawn-Stau)`);
