@@ -279,6 +279,58 @@ section('7. feat(juice-nearmiss): Near-Miss-Popup an der Hindernis-Position');
 }
 
 // ============================================================
+section('8. feat(juice-combo): Farb-Intensität + Skalier-Puls auf #idleRunComboBadge');
+// ============================================================
+{
+  const idleJs = read('idle.js');
+  const idleCss = read('idle.css');
+
+  // Puls wird bei JEDEM Near-Miss (= Combo-Zuwachs) ausgelöst, direkt nach der HUD-Aktualisierung.
+  const triggerFnMatch = idleJs.match(/function triggerNearMiss\(nowMs, obstacle\) \{([\s\S]*?)\n  \}/);
+  assert(triggerFnMatch !== null, 'triggerNearMiss()-Funktionskörper gefunden');
+  assert(triggerFnMatch && /updateRunComboHud\(\);\s*\n\s*triggerComboPulse\(\);/.test(triggerFnMatch[1]),
+    'triggerNearMiss() ruft triggerComboPulse() direkt nach updateRunComboHud() auf');
+
+  // updateRunComboHud() setzt --combo-intensity NUR auf #idleRunComboBadge (nicht die unrelated Schaltpunkt-Combo).
+  assert(/badge\.style\.setProperty\('--combo-intensity',/.test(idleJs),
+    'updateRunComboHud() setzt die CSS-Variable --combo-intensity auf dem Combo-Badge');
+  assert(idleJs.includes("document.getElementById('idleRunComboBadge')"),
+    'updateRunComboHud()/triggerComboPulse() lesen weiterhin ausschliesslich #idleRunComboBadge (nicht #idleComboBadge)');
+  assert(!/idleComboBadge['"]\)[^\n]*--combo-intensity/.test(idleJs),
+    '--combo-intensity wird NICHT auf der unrelated Schaltpunkt-Combo (#idleComboBadge) gesetzt');
+
+  // triggerComboPulse() respektiert prefers-reduced-motion (No-op dort).
+  const pulseFnMatch = idleJs.match(/function triggerComboPulse\(\) \{([\s\S]*?)\n  \}/);
+  assert(pulseFnMatch !== null, 'triggerComboPulse()-Funktionskörper gefunden');
+  assert(pulseFnMatch && /if \(reducedMotion\) return;/.test(pulseFnMatch[1]),
+    'triggerComboPulse() bricht bei prefers-reduced-motion sofort ab (kein Puls)');
+
+  // CSS: Intensität ausschliesslich über filter (erlaubte Eigenschaft), Puls ausschliesslich über transform: scale.
+  const comboCssMatch = idleCss.match(/\.idle-run-combo-badge \{([\s\S]*?)\n\}/);
+  assert(comboCssMatch !== null, '.idle-run-combo-badge CSS-Regel gefunden');
+  assert(comboCssMatch && /filter:\s*saturate\(calc\(1 \+ var\(--combo-intensity\)/.test(comboCssMatch[1]),
+    '.idle-run-combo-badge treibt die Farb-Intensität über filter: saturate(...) aus --combo-intensity');
+  assert(comboCssMatch && !/(width|height|top|left|margin)\s*:/.test(comboCssMatch[1]),
+    '.idle-run-combo-badge animiert/setzt KEIN Layout-Property (nur filter/transition)');
+  assert(/@keyframes idle-juice-combo-pulse\s*\{[\s\S]*?transform: scale\([\s\S]*?\}\s*\n\}/.test(idleCss),
+    'Der Combo-Puls-Keyframe animiert ausschliesslich transform: scale');
+  // NICHT auf der gemeinsamen .idle-combo-badge-Basis (die auch #idleComboBadge stylt).
+  assert(!/\.idle-combo-badge\s*\{[^}]*--combo-intensity/.test(idleCss),
+    'Die --combo-intensity-Regel sitzt NICHT auf der gemeinsamen .idle-combo-badge-Basis (nur auf .idle-run-combo-badge)');
+
+  // Reduced-motion: NUR der Puls entfällt, die Farb-Intensität (filter) bleibt als reine Zustandsanzeige erhalten.
+  const reducedBlockMatch = idleCss.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/);
+  assert(reducedBlockMatch !== null, 'idle.css hat weiterhin genau EINEN @media (prefers-reduced-motion: reduce)-Block');
+  assert(reducedBlockMatch && /\.idle-run-combo-badge\.is-combo-pulse \{ animation: none; \}/.test(reducedBlockMatch[1]),
+    'Der reduced-motion-Block deaktiviert NUR .idle-run-combo-badge.is-combo-pulse (die Animation), nicht den Basis-filter');
+  assert(!reducedBlockMatch[1].includes('.idle-run-combo-badge {') , 'Der reduced-motion-Block überschreibt die Basis-.idle-run-combo-badge-Regel (Farb-Intensität) NICHT');
+  assert((idleCss.match(/@media \(prefers-reduced-motion: reduce\)/g) || []).length === 1,
+    'idle.css hat weiterhin nur EINEN @media (prefers-reduced-motion: reduce)-Block (kein zweiter angelegt)');
+
+  assert(!/console\.log/.test(idleJs), 'idle.js enthält weiterhin kein console.log');
+}
+
+// ============================================================
 // Ergebnis
 // ============================================================
 console.log(`\n${'═'.repeat(60)}`);

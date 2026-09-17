@@ -275,6 +275,32 @@
   font-weight: var(--fw-bold);
 }
 
+/* Teil 5, feat(juice-combo): Farb-Intensität + kurzer Skalier-Puls bei
+   JEDEM Near-Miss-Combo-Zuwachs (siehe idle.js updateRunComboHud()/
+   triggerComboPulse()) — ausschliesslich auf .idle-run-combo-badge
+   (NICHT auf der gemeinsamen .idle-combo-badge-Basis, die auch die
+   unrelated Schaltpunkt-Combo #idleComboBadge stylt). --combo-intensity
+   (0..1, von idle.js aus state.run.comboMult abgeleitet) treibt eine
+   REINE Zustandsanzeige (Sättigung/Helligkeit/Farbton per filter) —
+   diese bleibt auch bei prefers-reduced-motion vollständig erhalten
+   (eine Farbänderung ist keine Bewegung); NUR der Skalier-Puls
+   (.is-combo-pulse) wird dort deaktiviert (siehe Media-Query unten). */
+.idle-run-combo-badge {
+  --combo-intensity: 0;
+  filter: saturate(calc(1 + var(--combo-intensity) * 1.4))
+          brightness(calc(1 + var(--combo-intensity) * 0.12))
+          hue-rotate(calc(var(--combo-intensity) * 25deg));
+  transition: filter var(--dur-base, 0.25s) var(--ease-standard, ease);
+}
+.idle-run-combo-badge.is-combo-pulse {
+  animation: idle-juice-combo-pulse var(--dur-slow, 0.32s) var(--ease-spring, ease);
+}
+@keyframes idle-juice-combo-pulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
 /* Steuerungs-Hinweis unter der Strecke (Teil 1) — dezent, informativ. */
 .idle-track-hint {
   text-align: center;
@@ -1291,6 +1317,10 @@
   .idle-juice-coin-particle.is-bursting { animation: none; }
   .idle-juice-coin-fly { transition: none; }
   .idle-run-score-hud-value.is-coin-pulse { animation: none; }
+  /* feat(juice-combo): NUR der Skalier-Puls entfällt — die Farb-
+     Intensität (filter, siehe .idle-run-combo-badge oben) ist eine reine
+     Zustandsanzeige und bleibt bewusst erhalten. */
+  .idle-run-combo-badge.is-combo-pulse { animation: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════

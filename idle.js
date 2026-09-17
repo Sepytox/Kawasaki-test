@@ -174,6 +174,8 @@
   var COIN_CHIME_DURATION_SECONDS = 0.14;
   /** Ziel-Spitzenlautstärke (0..1) des Coin-Sammel-Signaltons, zusätzlich mit state.sound.volume skaliert. */
   var COIN_CHIME_PEAK_GAIN = 0.22;
+  /** Anzeigedauer (ms) des kurzen Skalier-Pulses auf #idleRunComboBadge bei jedem Near-Miss-Combo-Zuwachs (siehe triggerComboPulse()). */
+  var COMBO_PULSE_MS = 320;
 
   /** Zentraler, aus localStorage geladener Idle-Zustand (siehe idle-core.js). */
   var state = ApiClient.loadIdleState();
@@ -277,6 +279,8 @@
   var coinFlyGhostPool = window.Juice ? window.Juice.createParticlePool(8) : null;
   /** Timeout-Handle des aktuell angezeigten Score-Skalier-Pulses (für Re-Trigger bei schnell aufeinanderfolgenden Coins). */
   var coinScorePulseTimeoutId = null;
+  /** Timeout-Handle des aktuell angezeigten Combo-Badge-Pulses (für Re-Trigger bei schnell aufeinanderfolgenden Near-Misses). */
+  var comboPulseTimeoutId = null;
 
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
@@ -903,7 +907,13 @@
    * zeigt die aktuelle Combo-Anzahl + den daraus abgeleiteten Score-
    * Multiplikator (state.run.comboMult, siehe IdleCore.
    * runComboMultiplier()), versteckt sich komplett bei Combo 0 (kein
-   * Near-Miss seit Run-Start bzw. seit dem letzten Crash).
+   * Near-Miss seit Run-Start bzw. seit dem letzten Crash). Setzt
+   * zusätzlich (Teil 5, feat(juice-combo)) die CSS-Variable
+   * --combo-intensity (0..1, aus dem aktuellen Multiplikator relativ zu
+   * RUN_COMBO_MULTIPLIER_MAX abgeleitet) auf dem Badge — das steuert per
+   * idle.css EINE reine Zustandsanzeige (Farb-/Sättigungs-Intensität via
+   * filter), die IMMER gilt, auch bei prefers-reduced-motion (eine
+   * Farbänderung ist keine Bewegung, siehe idle.css-Kommentar dort).
    * @returns {void}
    */
   function updateRunComboHud() {
@@ -911,12 +921,40 @@
     if (!badge) return;
     var combo = state.run.combo || 0;
     badge.hidden = combo <= 0;
-    if (combo <= 0) return;
+    if (combo <= 0) {
+      badge.style.setProperty('--combo-intensity', '0');
+      return;
+    }
     var countEl = document.getElementById('idleRunComboCount');
     var multEl = document.getElementById('idleRunComboMultiplier');
     if (countEl) countEl.textContent = '💨 Near-Miss ×' + combo;
     var activeMultiplier = state.run.comboMult || 1;
     if (multEl) multEl.textContent = activeMultiplier > 1 ? ('· Score ×' + formatMultiplier(activeMultiplier)) : '';
+    var maxMultiplier = IdleCore.IDLE_BALANCE.RUN_COMBO_MULTIPLIER_MAX;
+    var intensity = maxMultiplier > 1 ? Math.max(0, Math.min(1, (activeMultiplier - 1) / (maxMultiplier - 1))) : 0;
+    badge.style.setProperty('--combo-intensity', intensity.toFixed(3));
+  }
+
+  /**
+   * Löst einen kurzen Skalier-Puls (transform: scale, KEIN Layout-
+   * Property) auf #idleRunComboBadge aus — Feedback für JEDEN
+   * Near-Miss-Combo-Zuwachs (Teil 5, feat(juice-combo)). No-op bei
+   * prefers-reduced-motion (die Farb-Intensität aus updateRunComboHud()
+   * bleibt davon unabhängig erhalten — reine Zustandsanzeige, keine
+   * Bewegung).
+   * @returns {void}
+   */
+  function triggerComboPulse() {
+    if (reducedMotion) return;
+    var badge = document.getElementById('idleRunComboBadge');
+    if (!badge || badge.hidden) return;
+    badge.classList.remove('is-combo-pulse');
+    void badge.offsetWidth;
+    badge.classList.add('is-combo-pulse');
+    if (comboPulseTimeoutId) clearTimeout(comboPulseTimeoutId);
+    comboPulseTimeoutId = setTimeout(function () {
+      badge.classList.remove('is-combo-pulse');
+    }, COMBO_PULSE_MS);
   }
 
   /**
@@ -957,7 +995,8 @@
    * Verbucht einen erkannten Near-Miss (Teil 4, feat(nearmiss)) —
    * IdleCore.registerNearMiss() (Combo/Score-Bonus, reine Zustands-
    * Mutation) + die dazugehörige UI (Popup positioniert am Hindernis +
-   * Combo-HUD, Teil 5 feat(juice-nearmiss)).
+   * Combo-HUD + Combo-Badge-Puls, Teil 5 feat(juice-nearmiss)/
+   * feat(juice-combo)).
    * @param {number} nowMs - Zeitstempel "jetzt" in ms.
    * @param {{displayLane: number, t: number}} obstacle - Das knapp verpasste Hindernis (für die Popup-Position, siehe runnerCanvasPoint()).
    * @returns {void}
@@ -967,6 +1006,7 @@
     var point = obstacle ? runnerCanvasPoint(obstacle.displayLane, obstacle.t) : null;
     showNearMissPopup(result.bonus, point);
     updateRunComboHud();
+    triggerComboPulse();
   }
 
   /* ── Teil 5: RUNNER-JUICE — Coin-Sammel-Feedback (feat(juice-coins)) ──
