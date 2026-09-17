@@ -52,6 +52,10 @@
   var RUNNER_COLLISION_FLASH_MS = 320;
   /** Ab dieser Geschwindigkeit (%) werden dezente Speed-Lines gezeichnet. */
   var TRACK_SPEED_LINES_THRESHOLD_PCT = 45;
+  /** Hindernis-Fortschritt (0=Horizont), bis zu dem ein frisch gespawntes Hindernis als "kurz bevorstehend" gilt — die betroffene Lane erhält solange eine Vorwarnung am oberen Bildrand (siehe drawLaneTelegraphCues()). */
+  var RUNNER_TELEGRAPH_THRESHOLD_T = 0.12;
+  /** Sichtbarkeits-Deckel (0–1) des statischen Vorwarnungs-Akzents unter prefers-reduced-motion (kein Puls, siehe drawLaneTelegraphCues()). */
+  var RUNNER_TELEGRAPH_STATIC_ALPHA = 0.55;
 
   /* ── Phase B: Tacho (Canvas) ─────────────────────────────────────── */
   /** Glättungsfaktor pro Frame für die Tacho-Nadel (0..1, höher = schneller). */
@@ -151,6 +155,10 @@
   var RUN_SCORE_DISPLAY_EASE = 0.35;
   /** Differenz-Schwelle (Score-Punkte), unterhalb derer die Score-Anzeige direkt auf den Zielwert springt. */
   var RUN_SCORE_DISPLAY_SNAP_THRESHOLD = 0.5;
+  /** Glättungsfaktor pro Frame für die "km gesammelt"-Live-Anzeige (feat(live-km)) — zählt zwischen zwei Live-km-Flushes (siehe IdleCore.tickRunEconomy()) sichtbar sanft hoch, statt hart zu springen. */
+  var RUN_LIVE_KM_DISPLAY_EASE = 0.15;
+  /** Differenz-Schwelle (km), unterhalb derer die "km gesammelt"-Anzeige direkt auf den Zielwert springt (bewusst klein, da Live-km-Beträge selbst klein sind). */
+  var RUN_LIVE_KM_DISPLAY_SNAP_THRESHOLD = 0.005;
   /** Anzeigedauer (ms) des "Knapp vorbei!"-Near-Miss-Popups, bevor es wieder ausblendet. */
   var NEAR_MISS_POPUP_MS = 850;
   /** Reihenfolge/Icons der Powerup-Timer-HUD-Badges (Teil 4) — identisch zu POWERUP_ICONS, aber als feste Liste für eine stabile HUD-Reihenfolge. */
@@ -323,6 +331,8 @@
   /* ── Teil 4: Score/Highscore-HUD — Laufzeit-Zustand (feat(score)) ── */
   /** Aktuell angezeigter (weich, aber SCHNELL nachlaufender) Score-Wert für die Tween-Animation. */
   var displayedRunScore = 0;
+  /** Aktuell angezeigter (weich nachlaufender) "km gesammelt (dieser Run)"-Wert für die Tween-Animation (feat(live-km), spiegelt state.run.liveKmCredited). */
+  var displayedRunLiveKm = 0;
   /** Timeout-Handle des aktuell angezeigten Near-Miss-Popups (für Re-Trigger bei schnell aufeinanderfolgenden Near-Misses). */
   var nearMissPopupTimeoutId = null;
 
@@ -377,6 +387,19 @@
    */
   function formatKm(value) {
     return Math.floor(Math.max(0, value)).toLocaleString('de-DE');
+  }
+
+  /**
+   * Formatiert einen Live-km-Wert für die "km gesammelt"-Run-HUD
+   * (feat(live-km)) — im Unterschied zu formatKm() MIT zwei
+   * Nachkommastellen (deutsches Zahlenformat), da die Beträge innerhalb
+   * eines einzelnen Runs meist deutlich unter 1 km liegen und sonst
+   * lange bei "0" verharren würden.
+   * @param {number} value - Roh-km-Wert (dieser Run, >= 0).
+   * @returns {string} Formatierte Zeichenkette, z. B. "0,42".
+   */
+  function formatRunLiveKm(value) {
+    return Math.max(0, value).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   /**
@@ -650,26 +673,36 @@
 
   /**
    * Element-ids, die ihre EIGENE Enter/Leertaste-Interaktion verdrahten
-   * (Schaltpunkt-Leiste/Sparschwein/Powerup/Crash-Zusammenfassung-Button,
-   * siehe wireShiftInteraction()/wirePiggyInteraction()/
-   * wirePowerupInteraction()/showCrashSummary()-Aktions-Button) — der globale
-   * Sprung/Ducken-Handler in wireRunnerControls() ignoriert Leertaste-
-   * Drücke auf genau diesen Elementen, damit "Space" dort NICHT
-   * zusätzlich einen Sprung auslöst (verhindert doppelte Aktivierung).
+   * (Sparschwein/Powerup/Crash-Zusammenfassung-Button, siehe
+   * wirePiggyInteraction()/wirePowerupInteraction()/showCrashSummary()-
+   * Aktions-Button) — der globale Sprung/Ducken-Handler in
+   * wireRunnerControls() ignoriert Tasten-Drücke auf genau diesen
+   * Elementen, damit deren eigenes Leertaste-Verhalten (nativer Button-
+   * "Klick" bei fokussiertem <button>) NICHT zusätzlich abgefangen wird.
+   * #idleShiftTrack ist HIER bewusst NICHT (mehr) gelistet (feat
+   * (shiftpoint-key)): die Schaltpunkt-Leiste braucht KEINE Exemption
+   * mehr, weil Leertaste global (siehe unten) IMMER die Schaltpunkt-
+   * Auswertung auslöst — unabhängig davon, ob #idleShiftTrack fokussiert
+   * ist oder nicht.
    */
-  var RUNNER_CONTROL_EXEMPT_IDS = { idleShiftTrack: true, idlePiggy: true, idlePowerup: true, idleRunSummaryRestartBtn: true };
+  var RUNNER_CONTROL_EXEMPT_IDS = { idlePiggy: true, idlePowerup: true, idleRunSummaryRestartBtn: true };
 
   /**
    * Verdrahtet die Steuerung des Endless-Runners (Teil 1 + Teil 3):
    * Tastatur (ArrowLeft/ArrowRight sowie A/D für den Lane-Wechsel,
-   * ArrowUp/Space für einen Sprung, ArrowDown/Ctrl für Ducken —
-   * unabhängig von der Eingabe-Fokussierung ausser innerhalb von
+   * ArrowUp/W für einen Sprung, ArrowDown/Ctrl für Ducken, Leertaste
+   * AUSSCHLIESSLICH für die Schaltpunkt-Combo — siehe evaluateShiftAttempt()
+   * — unabhängig von der Eingabe-Fokussierung ausser innerhalb von
    * Formularfeldern bzw. den in RUNNER_CONTROL_EXEMPT_IDS gelisteten
    * Elementen) UND Touch-Swipe in ALLEN 4 Richtungen (links/rechts = Lane-
    * Wechsel, hoch = Sprung, runter = Ducken) auf der Renn-Strecke. Jede
    * erkannte Eingabe ruft IdleCore.steerRunnerLane()/jumpRunner()/
    * duckRunner() auf, was automatisch auch den Aktivitäts-Zustand auf
-   * 'active' setzt (siehe IdleCore.runnerActivityState()).
+   * 'active' setzt (siehe IdleCore.runnerActivityState()). Die Leertaste
+   * löst bewusst NIEMALS mehr jumpRunner() aus (feat(shiftpoint-key) —
+   * vorher kollidierte Space mit der Schaltpunkt-Leiste; Sprung lebt
+   * jetzt exklusiv auf ArrowUp/W, damit man mit Pfeiltasten/A-D
+   * ausweichen UND gleichzeitig mit der Leertaste schalten kann).
    * @returns {void}
    */
   function wireRunnerControls() {
@@ -684,12 +717,18 @@
       } else if (event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D') {
         event.preventDefault();
         IdleCore.steerRunnerLane(state, 1, Date.now());
-      } else if (event.key === 'ArrowUp' || event.key === ' ' || event.key === 'Spacebar') {
+      } else if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
         event.preventDefault();
         IdleCore.jumpRunner(state, Date.now());
       } else if (event.key === 'ArrowDown' || event.key === 'Control') {
         event.preventDefault();
         IdleCore.duckRunner(state, Date.now());
+      } else if (event.key === ' ' || event.key === 'Spacebar') {
+        // feat(shiftpoint-key): Leertaste löst AUSSCHLIESSLICH die
+        // Schaltpunkt-Auswertung aus (nie mehr springen) — und wird
+        // preventDefault(), damit die Seite dabei nicht scrollt.
+        event.preventDefault();
+        evaluateShiftAttempt();
       }
     });
 
@@ -823,20 +862,22 @@
    * passende Ausweich-Aktion: 'side' (Lane wechseln), 'lowBar'
    * (springen, IdleCore.jumpRunner()) oder 'highBarrier' (ducken,
    * IdleCore.duckRunner()) — siehe IdleCore.rollObstacleType()/
-   * detectRunCollision().
+   * detectRunCollision(). fix(spawning): die Lane-Wahl berücksichtigt
+   * jetzt zusätzlich noch nicht resolvte Hindernisse VORHERIGER, noch in
+   * Flug befindlicher Wellen (IdleCore.pickSolvableWaveLanes()) — schliesst
+   * die Cross-Wave-Lücke der reinen Pro-Welle-Garantie (überlappende
+   * Wellen könnten sonst gemeinsam alle Lanes belegen).
    * @returns {void}
    */
   function spawnRunnerObstacle() {
     var laneCount = IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT;
     var waveSize = IdleCore.runDifficultyWaveSize(state.run.distanceUnits, laneCount);
-    var availableLanes = [];
-    for (var i = 0; i < laneCount; i++) availableLanes.push(i);
-    for (var w = 0; w < waveSize && availableLanes.length > 0; w++) {
-      var pickIndex = Math.floor(Math.random() * availableLanes.length);
-      var lane = availableLanes.splice(pickIndex, 1)[0];
+    var occupiedLanes = runnerObstacles.filter(function (obstacle) { return !obstacle.resolved; }).map(function (obstacle) { return obstacle.lane; });
+    var lanes = IdleCore.pickSolvableWaveLanes(occupiedLanes, waveSize, laneCount, Math.random);
+    lanes.forEach(function (lane) {
       var type = IdleCore.rollObstacleType(Math.random);
       runnerObstacles.push({ lane: lane, displayLane: lane, t: 0, resolved: false, type: type });
-    }
+    });
   }
 
   /**
@@ -845,12 +886,59 @@
    * generateCoinTrail()), gestaffelt in der Tiefe (negatives Start-`t`
    * pro Münze, siehe deren offsetT), sodass der Trail wie eine Perlen-
    * kette Richtung Spieler auf die Strecke läuft (siehe tickRunner()).
+   * fix(spawning): übergibt die Lanes noch nicht resolvter Hindernisse
+   * (analog zu spawnRunnerObstacle()) an IdleCore.generateCoinTrail(),
+   * damit Münzen nicht nur auf einer aktuell blockierten Lane ohne
+   * erreichbare Alternative platziert werden.
    * @returns {void}
    */
   function spawnCoinTrail() {
-    var pattern = IdleCore.generateCoinTrail(Math.random, IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT);
+    var occupiedLanes = runnerObstacles.filter(function (obstacle) { return !obstacle.resolved; }).map(function (obstacle) { return obstacle.lane; });
+    var pattern = IdleCore.generateCoinTrail(Math.random, IdleCore.IDLE_BALANCE.RUNNER_LANE_COUNT, occupiedLanes);
     pattern.forEach(function (coinDef) {
       runnerCoins.push({ lane: coinDef.lane, displayLane: coinDef.lane, t: -coinDef.offsetT, resolved: false });
+    });
+  }
+
+  /**
+   * Zeichnet eine dezente Spur-Vorwarnung (fix(telegraph)) am oberen
+   * Bildrand (Horizont) für jede Lane, auf der gerade ein frisch
+   * gespawntes Hindernis erscheint (`obstacle.t < RUNNER_TELEGRAPH_
+   * THRESHOLD_T`, siehe spawnRunnerObstacle()) — hilft, die betroffene
+   * Lane schon zu erkennen, bevor das Hindernis selbst deutlich sichtbar
+   * ist. Rein zeichnende Canvas-Operation (nur Farbe/Opazität, kein
+   * Layout-Effekt). Respektiert prefers-reduced-motion: dort ein
+   * STATISCHER Akzent (RUNNER_TELEGRAPH_STATIC_ALPHA) statt eines
+   * pulsierenden Blinkens (analog zum Kollisions-Flash-Muster, siehe
+   * idle.css .idle-track-wrap.is-collision).
+   * @param {number} w - Canvas-Breite (CSS-Pixel).
+   * @param {number} topY - y-Position des Horizonts (px).
+   * @param {number} topWidth - Fahrbahnbreite am Horizont (px).
+   * @param {number} laneCount - Anzahl Fahrspuren.
+   * @returns {void}
+   */
+  function drawLaneTelegraphCues(w, topY, topWidth, laneCount) {
+    var telegraphLanes = {};
+    runnerObstacles.forEach(function (obstacle) {
+      if (!obstacle.resolved && obstacle.t >= 0 && obstacle.t < RUNNER_TELEGRAPH_THRESHOLD_T) {
+        telegraphLanes[obstacle.lane] = true;
+      }
+    });
+    var laneKeys = Object.keys(telegraphLanes);
+    if (laneKeys.length === 0) return;
+
+    var alpha = reducedMotion
+      ? RUNNER_TELEGRAPH_STATIC_ALPHA
+      : 0.35 + 0.25 * Math.abs(Math.sin(Date.now() / 220));
+    var laneWidth = topWidth / laneCount;
+    var barHeight = Math.max(2, topWidth * 0.02);
+    laneKeys.forEach(function (laneKey) {
+      var lane = Number(laneKey);
+      var laneX = laneCenterX(w, lane, 0);
+      trackCtx.beginPath();
+      trackCtx.rect(laneX - laneWidth / 2, topY - barHeight, laneWidth, barHeight);
+      trackCtx.fillStyle = 'rgba(234,88,12,' + alpha.toFixed(3) + ')';
+      trackCtx.fill();
     });
   }
 
@@ -961,6 +1049,27 @@
     if (scoreEl) scoreEl.textContent = String(Math.floor(displayedRunScore));
     var highscoreEl = document.getElementById('idleRunHighscore');
     if (highscoreEl) highscoreEl.textContent = String(Math.floor(state.runHighscore));
+  }
+
+  /**
+   * Aktualisiert die "km gesammelt (dieser Run)"-HUD (feat(live-km)) —
+   * tweent (RUN_LIVE_KM_DISPLAY_EASE) Richtung state.run.liveKmCredited,
+   * dem tatsächlich bereits gebankten Live-km-Betrag DIESES Runs (siehe
+   * IdleCore.tickRunEconomy()). Macht sichtbar, dass während der Fahrt
+   * PARALLEL zum Score/Coin-System bereits echter km-Fortschritt
+   * entsteht — rein lesend/spiegelnd, mutiert state NICHT.
+   * @returns {void}
+   */
+  function updateRunLiveKmHud() {
+    var target = (state.run && state.run.liveKmCredited) || 0;
+    var diff = target - displayedRunLiveKm;
+    if (Math.abs(diff) < RUN_LIVE_KM_DISPLAY_SNAP_THRESHOLD) {
+      displayedRunLiveKm = target;
+    } else {
+      displayedRunLiveKm += diff * RUN_LIVE_KM_DISPLAY_EASE;
+    }
+    var el = document.getElementById('idleRunLiveKm');
+    if (el) el.textContent = formatRunLiveKm(displayedRunLiveKm);
   }
 
   /**
@@ -1524,6 +1633,10 @@
     runnerCoins = [];
     runnerCoinSpawnTimerSeconds = IdleCore.nextCoinTrailIntervalSeconds(Math.random);
     displayedRunScore = 0;
+    // feat(live-km): die "km gesammelt"-Run-HUD startet ebenfalls bei 0 —
+    // state.run.liveKmCredited wurde bereits über IdleCore.restartRun()
+    // zurückgesetzt (mirrors run.coins/run.score).
+    displayedRunLiveKm = 0;
     updateRunComboHud();
     hideCrashSummary();
     ApiClient.saveIdleState(state);
@@ -1755,6 +1868,11 @@
       trackCtx.lineWidth = Math.max(1, h * 0.004);
       trackCtx.stroke();
     }
+
+    // Spur-Vorwarnung (fix(telegraph)): NACH den Lane-Trennern, VOR den
+    // Münzen/Hindernissen gezeichnet, damit sie sichtbar am Horizont
+    // liegt, ohne von ihnen überdeckt zu werden.
+    drawLaneTelegraphCues(w, topY, topWidth, laneCount);
 
     // Münz-Trails (Teil 4, feat(coins)): VOR den Hindernissen gezeichnet
     // (kleine goldene Kreise, dieselbe Lane-Geometrie wie Hindernisse) —
@@ -2243,33 +2361,61 @@
   }
 
   /**
-   * Wertet einen Klick/Tastendruck auf die aktuell aktive Schaltpunkt-
-   * Leiste aus: prüft, ob sich der Marker gerade innerhalb der perfekten
-   * Zone befindet, und beendet die Leiste entsprechend als Treffer/Fehlklick.
+   * Wertet EINEN Auslöse-Versuch (Leertaste, siehe wireRunnerControls())
+   * auf die aktuell aktive Schaltpunkt-Leiste aus: delegiert die reine
+   * Geometrie-Entscheidung an IdleCore.evaluateShiftHit() und beendet die
+   * Leiste entsprechend als Treffer/Fehlversuch. Ein Klick auf die Leiste
+   * selbst löst NICHTS mehr aus (feat(shiftpoint-key) — bewusst entfernt,
+   * siehe wireShiftInteraction()).
    * @returns {void}
    */
-  function evaluateShiftClick() {
+  function evaluateShiftAttempt() {
     if (!shiftState.active || shiftState.resultShown) return;
     var progressPct = Math.min(100, (shiftState.elapsedSeconds / IdleCore.IDLE_BALANCE.SHIFT_SWEEP_DURATION_SECONDS) * 100);
-    var half = shiftState.zoneWidthPct / 2;
-    var hit = progressPct >= (SHIFT_ZONE_CENTER_PCT - half) && progressPct <= (SHIFT_ZONE_CENTER_PCT + half);
+    var hit = IdleCore.evaluateShiftHit(progressPct, shiftState.zoneWidthPct, SHIFT_ZONE_CENTER_PCT);
     endShift(hit, false);
   }
 
   /**
-   * Verdrahtet die Klick-/Tastatur-Interaktion (Enter/Leertaste) der
-   * Schaltpunkt-Leiste.
+   * Verdrahtet die Tastatur-Interaktion der Schaltpunkt-Leiste: NUR noch
+   * Enter (Screenreader/Tab-Fokus-Zugänglichkeit), solange
+   * #idleShiftTrack fokussiert ist. Ein Maus-/Touch-Klick auf die Leiste
+   * löst bewusst NICHTS mehr aus (feat(shiftpoint-key) — der bisherige
+   * click-Listener wurde entfernt, damit die Leiste ausschliesslich per
+   * Leertaste — global, siehe wireRunnerControls() — oder dem Mobile-
+   * Button ausgelöst wird). Die Leertaste wird hier ABSICHTLICH NICHT
+   * mehr abgefangen, damit evaluateShiftAttempt() pro Tastendruck genau
+   * EINMAL ausgeführt wird (sonst würde der globale Handler in
+   * wireRunnerControls() zusätzlich auslösen).
    * @returns {void}
    */
   function wireShiftInteraction() {
     var trackEl = document.getElementById('idleShiftTrack');
     if (!trackEl) return;
-    trackEl.addEventListener('click', evaluateShiftClick);
     trackEl.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
+      if (event.key === 'Enter') {
         event.preventDefault();
-        evaluateShiftClick();
+        evaluateShiftAttempt();
       }
+    });
+  }
+
+  /**
+   * Verdrahtet den dedizierten Mobile-Button für die Schaltpunkt-Combo
+   * (feat(shiftpoint-key)): ruft dieselbe evaluateShiftAttempt()-Auswertung
+   * wie die Leertaste auf. Der Button liegt AUSSERHALB von #idleTrackWrap
+   * (siehe idle.html) und stört damit die Swipe-Zone für den Lane-Wechsel
+   * nicht — ein Daumen steuert per Swipe, der andere tippt den Button. Auf
+   * Desktop bleibt er per CSS ausgeblendet (idle.css), dort übernimmt die
+   * Leertaste.
+   * @returns {void}
+   */
+  function wireShiftMobileButton() {
+    var btn = document.getElementById('idleShiftMobileBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function (event) {
+      event.preventDefault();
+      evaluateShiftAttempt();
     });
   }
 
@@ -3257,8 +3403,12 @@
     // Teil 4 (feat(score)/feat(powerups)): live Score-/Highscore-HUD +
     // Powerup-Timer-HUD, jeden Frame aktualisiert (rein lesend bzgl.
     // state — beide spiegeln nur, was tickRunner()/collectPowerup()
-    // bereits mutiert haben).
+    // bereits mutiert haben). feat(live-km): "km gesammelt"-HUD direkt
+    // daneben, spiegelt state.run.liveKmCredited (siehe IdleCore.
+    // tickRunEconomy()) — macht sichtbar, dass Fahren UND km-Fortschritt
+    // gleichzeitig laufen.
     updateRunScoreHud();
+    updateRunLiveKmHud();
     updatePowerupHud(Date.now());
 
     window.requestAnimationFrame(tick);
@@ -3308,7 +3458,10 @@
     runnerBikeDisplayLane = state.runner.lane;
     // Teil 4 (feat(score)/feat(nearmiss)): Score-HUD-Tween + Combo-HUD
     // synchron zum frischen Run starten (beide sind 0 direkt nach startRun()).
+    // feat(live-km): "km gesammelt"-Tween ebenfalls synchron starten
+    // (state.run.liveKmCredited ist 0 direkt nach startRun()).
     displayedRunScore = state.run.score;
+    displayedRunLiveKm = state.run.liveKmCredited;
     updateRunComboHud();
 
     renderAll();
@@ -3317,12 +3470,14 @@
     tachoDisplayPct = getCurrentBikeInfo().stats.geschwindigkeitPct;
     updateComboBadge();
     updateRunScoreHud();
+    updateRunLiveKmHud();
     updatePowerupHud(Date.now());
     showOfflineBanner();
     wireGasButton();
     wireUpgradeButton();
     wireRunnerControls();
     wireShiftInteraction();
+    wireShiftMobileButton();
     wireSoundControls();
     wireSeasonControls();
     wireBillPayButton();

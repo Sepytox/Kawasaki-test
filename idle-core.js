@@ -116,7 +116,7 @@
  * Sprung passieren, siehe obstacleCausesCrash()) sowie eine
  * DISTANZ-abhängige Schwierigkeitskurve (siehe runDifficultyDensity()/
  * runDifficultyWaveSize()) — rein über HINDERNIS-DICHTE/Muster-Komplexität,
- * NIEMALS über die Vorlaufzeit (runnerLeadSeconds()' 0.6s-Boden bleibt
+ * NIEMALS über die Vorlaufzeit (runnerLeadSeconds()' 0.9s-Boden bleibt
  * eine reine Funktion von speedPct, siehe Regressionstest §22).
  *
  * balance(powerups) (Teil C, Spec-Angleichung): Magnet zieht AUSSCHLIESSLICH
@@ -126,6 +126,19 @@
  * effektiv eine Crash-Immunität wäre und damit ausserhalb der Spezifikation
  * liegt ("zieht nahe Coins automatisch ein"). Schild/Turbo/Score-x2
  * unverändert.
+ *
+ * feat(live-km) (Fairness/Integration Teil 2): ergänzt eine ZWEITE,
+ * DISTANZ-basierte Einnahmequelle, die WÄHREND eines aktiven Runs
+ * kontinuierlich (gedrosselt, siehe RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS)
+ * direkt der PROGRESS-Schicht (state.km) gutgeschrieben wird — PARALLEL
+ * zum unverändert bei einem Crash gebankten Coin→km-BONUS aus endRun().
+ * Der Coin-Pool (state.run.coins) und die Live-km-Einnahme sind zwei
+ * komplett unabhängige, additive Quellen (siehe tickRunEconomy()): ein
+ * Crash verliert das bereits gebankte Live-km NIE, gewinnt aber
+ * ZUSÄTZLICH den Coin-Bonus. Kein neues persistentes State-Feld/keine
+ * Versionserhöhung nötig — die Kadenz-Buchhaltung (liveKmPendingDistance/
+ * liveKmLastFlushAt/liveKmCredited) ist rein ephemeres Run-State, das bei
+ * jedem Run-Start (startRun()) neu bei 0/null beginnt.
  */
 'use strict';
 
@@ -332,16 +345,18 @@ var IDLE_BALANCE = {
    * werden (passiveEarn() lief ohnehin schon immer unabhängig davon). */
   /** Anzahl der Fahrspuren der Runner-Straße. */
   RUNNER_LANE_COUNT: 3,
-  /** Untere Schranke der Hindernis-Vorlaufzeit (Sekunden) — garantiert eine faire Reaktionszeit unabhängig von der Bike-Geschwindigkeit (siehe runnerLeadSeconds()). */
-  RUNNER_MIN_LEAD_SECONDS: 0.6,
+  /** Untere Schranke der Hindernis-Vorlaufzeit (Sekunden) — garantiert eine faire Reaktionszeit unabhängig von der Bike-Geschwindigkeit (siehe runnerLeadSeconds()). fix(spawning): von 0.6s auf 0.9s angehoben (harte Untergrenze bleibt bewusst bei >= 0.6s dokumentiert, Ziel-Wert jedoch deutlich höher) — RUNNER_SPAWN_LEAD_DISTANCE MUSS bei jeder Änderung im gleichen Verhältnis mitgezogen werden (siehe dort). */
+  RUNNER_MIN_LEAD_SECONDS: 0.9,
   /** Prozentsatz von geschwindigkeitPct, ab dem die visuelle Scroll-Geschwindigkeit der Straße nicht mehr weiter ansteigt (siehe runnerScrollSpeed()). */
   RUNNER_SPEED_CAP_PCT: 70,
   /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) bei geschwindigkeitPct=0. */
   RUNNER_SCROLL_SPEED_BASE: 70,
   /** Visuelle Scroll-Geschwindigkeit (abstrakte Einheiten/Sekunde) am/ab RUNNER_SPEED_CAP_PCT (Deckel). */
   RUNNER_SCROLL_SPEED_MAX: 260,
-  /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position. Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (156 = 260 × 0.6) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. */
-  RUNNER_SPAWN_LEAD_DISTANCE: 156,
+  /** "Distanz" (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*) zwischen Hindernis-Spawn (Horizont) und Spieler-Position — zugleich die "Sichtweite" der Strecke (siehe idle.js renderTrack()' t∈[0,1]-Geometrie). Bewusst so gewählt, dass RUNNER_SCROLL_SPEED_MAX × RUNNER_MIN_LEAD_SECONDS exakt diesen Wert ergibt (234 = 260 × 0.9) — der Speed-Cap garantiert dadurch mathematisch die Mindest-Vorlaufzeit. fix(spawning): von 156 (bei 0.6s) auf 234 (bei 0.9s) angehoben, IMMER gemeinsam mit RUNNER_MIN_LEAD_SECONDS ändern, sonst bricht diese Garantie. */
+  RUNNER_SPAWN_LEAD_DISTANCE: 234,
+  /** Untere Schranke (Sekunden) für den zeitlichen ABSTAND zwischen zwei aufeinanderfolgenden Hindernis-WELLEN (siehe nextObstacleSpawnIntervalSeconds()) — fix(spawning): schliesst die Lücke, dass die reine Dichte-Formel (obstacleDensity() × runDifficultyDensity()) bei hoher Geschwindigkeit/Distanz theoretisch Intervalle deutlich unter einer Sekunde liefern könnte. Bewusst identisch zu RUNNER_MIN_LEAD_SECONDS gewählt ("Vorlaufzeit" UND "Wellen-Abstand" sollen dieselbe faire Reaktionszeit garantieren). */
+  RUNNER_MIN_WAVE_SPACING_SECONDS: 0.9,
   /** Hindernis-Dichte-Multiplikator bei geschwindigkeitPct=0 (Basis-Spawnrate, siehe obstacleDensity()). */
   RUNNER_OBSTACLE_DENSITY_BASE: 1,
   /** Hindernis-Dichte-Multiplikator genau am Speed-Cap (RUNNER_SPEED_CAP_PCT). */
@@ -520,6 +535,10 @@ var IDLE_BALANCE = {
   RUN_COIN_KM_VALUE: 1,
   /** Reduktions-Multiplikator (< 1) auf den Auto-Piloten-km-Ertrag (siehe tickRunEconomy()) — der Auto-Pilot crasht NIE (siehe Teil 1 activity==='idle'-Gate), bankt seinen Ertrag daher kontinuierlich statt bei einem Crash, aber bewusst reduziert gegenüber aktivem Spiel (analog RUNNER_EARN_IDLE_MULTIPLIER aus Teil 2). */
   RUN_AUTOPILOT_CREDIT_MULTIPLIER: 0.5,
+  /** Voll-Multiplikator (>= 1) auf den LIVE-km-Ertrag des AKTIVEN Runs (siehe tickRunEconomy()/RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS) — bewusst DOPPELT so hoch wie RUN_AUTOPILOT_CREDIT_MULTIPLIER, damit aktives Fahren klar ergiebiger bleibt als der reduzierte Auto-Pilot-Ertrag. Wirkt NUR auf die distanzbasierte Live-km-Gutschrift, NIEMALS auf den separaten Coin→km-Crash-Bonus (siehe endRun()). */
+  RUN_ACTIVE_KM_CREDIT_MULTIPLIER: 1,
+  /** Zeitliche Drosselung (Sekunden Echtzeit) der Live-km-Gutschrift im aktiven Run (siehe tickRunEconomy()) — akkumulierte Distanz wird erst nach Ablauf dieses Intervalls in EINEM Schritt in km umgerechnet/gebankt, damit die HUD-Anzeige nicht bei jedem Frame "zittert". */
+  RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS: 0.75,
 
   /* ── Teil 4: RUN-FEEL — Score/Near-Miss-Combo/Münz-Trails/Schwierigkeit —
    * feat(score)/feat(coins)/feat(nearmiss)/feat(powerups)/feat(difficulty)
@@ -548,7 +567,7 @@ var IDLE_BALANCE = {
   RUN_COIN_TRAIL_INTERVAL_MAX_SECONDS: 9,
   /** In-Run-Distanz (dieselben abstrakten Einheiten wie RUNNER_SCROLL_SPEED_*), bei der runDifficultyDensity() ihren Deckel (RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER) erreicht. */
   RUN_DIFFICULTY_DISTANCE_SCALE_UNITS: 4000,
-  /** Zusätzlicher Dichte-Multiplikator (auf obstacleDensity() draufmultipliziert, siehe runDifficultyDensity()), den ein Run bei RUN_DIFFICULTY_DISTANCE_SCALE_UNITS Distanz erreicht — wirkt NUR auf die Spawn-Dichte/-Muster, NIEMALS auf runnerLeadSeconds()' 0.6s-Boden (siehe Regressionstest §22). */
+  /** Zusätzlicher Dichte-Multiplikator (auf obstacleDensity() draufmultipliziert, siehe runDifficultyDensity()), den ein Run bei RUN_DIFFICULTY_DISTANCE_SCALE_UNITS Distanz erreicht — wirkt NUR auf die Spawn-Dichte/-Muster, NIEMALS auf runnerLeadSeconds()' 0.9s-Boden (siehe Regressionstest §22). */
   RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER: 1.8,
   /** In-Run-Distanz, ab der runDifficultyWaveSize() eine zweite, kombinierte Hindernis-Lane pro Welle spawnt (siehe runDifficultyPatternTier()). */
   RUN_DIFFICULTY_PATTERN_TIER1_UNITS: 2000,
@@ -950,7 +969,7 @@ function createInitialState() {
      * beim letzten startRun() aus dem aktuellen Bike/Tuning abgeleitete
      * Basis-Geschwindigkeit (deriveBikeStats().geschwindigkeitPct) — läuft
      * weiterhin durch dieselbe runnerScrollSpeed()/runnerLeadSeconds()-
-     * Pipeline wie zuvor (0.6s-Vorlaufzeit-Boden unverändert garantiert).
+     * Pipeline wie zuvor (0.9s-Vorlaufzeit-Boden unverändert garantiert).
      * combo/comboMult sind für Phase B (Near-Miss-Bonus) vorbereitet,
      * in Phase A bewusst inert (bleiben 0/1). */
     run: {
@@ -1450,6 +1469,27 @@ function applyShiftResult(state, hit, nowMs) {
     state.combo.multiplierExpiresAt = null;
   }
   return { count: state.combo.count, multiplier: state.combo.multiplier, multiplierExpiresAt: state.combo.multiplierExpiresAt };
+}
+
+/**
+ * MECHANIK A — reine Entscheidungsfunktion für die Schaltpunkt-Combo:
+ * ermittelt allein aus der Marker-Position und der perfekten Zone, ob ein
+ * Auslöse-Versuch (Leertaste oder Mobile-Button, siehe idle.js
+ * evaluateShiftAttempt()) ein Treffer ist. Reine, deterministische
+ * Funktion — mutiert nichts; die eigentliche Zustandsänderung (Combo/
+ * Multiplikator) übernimmt weiterhin applyShiftResult(). Extrahiert aus
+ * der ehemals in idle.js inline berechneten Geometrie, damit sie ohne DOM
+ * unit-testbar ist.
+ * @param {number} progressPct - Fortschritt des Schaltpunkt-Markers in % (0–100).
+ * @param {number} zoneWidthPct - Breite der perfekten Zone in % (siehe perfectZoneWidthForState()).
+ * @param {number} [zoneCenterPct] - Mitte der perfekten Zone in %; Standard 50.
+ * @returns {boolean} true, falls progressPct innerhalb der perfekten Zone liegt.
+ */
+function evaluateShiftHit(progressPct, zoneWidthPct, zoneCenterPct) {
+  var center = typeof zoneCenterPct === 'number' ? zoneCenterPct : 50;
+  var half = (typeof zoneWidthPct === 'number' ? zoneWidthPct : 0) / 2;
+  var pct = typeof progressPct === 'number' ? progressPct : 0;
+  return pct >= (center - half) && pct <= (center + half);
 }
 
 /**
@@ -2457,16 +2497,24 @@ function obstacleDensity(speedPct) {
  * optionaler distanceUnits-Parameter multipliziert die Dichte zusätzlich
  * mit runDifficultyDensity(distanceUnits) — die IN-RUN-Schwierigkeitskurve
  * wirkt dadurch NUR auf die Spawn-DICHTE (kürzere Intervalle), NIEMALS
- * auf runnerLeadSeconds()' 0.6s-Boden (der ist eine reine Funktion von
+ * auf runnerLeadSeconds()' 0.9s-Boden (der ist eine reine Funktion von
  * speedPct, siehe Regressionstest §22) — ausgelassen/undefiniert verhält
  * sich wie distanceUnits=0 (Multiplikator 1, unverändertes Verhalten,
  * rückwärtskompatibel zu bestehenden Aufrufen/Tests). Zufälligkeit wird
  * als Parameter übergeben, damit die Funktion deterministisch testbar
- * bleibt.
+ * bleibt. fix(spawning): das Ergebnis wird NIE unter RUNNER_MIN_WAVE_
+ * SPACING_SECONDS geklemmt — selbst am Speed-Cap/bei maximaler
+ * In-Run-Schwierigkeit bleibt so ein Mindest-ABSTAND zwischen zwei
+ * Wellen garantiert (analog zu runnerLeadSeconds()' Vorlaufzeit-Boden,
+ * aber für die Spawn-FREQUENZ statt die Vorlaufzeit EINES Hindernisses).
+ * Da der Boden konstant ist und die ungeklemmte Formel monoton
+ * nicht-steigend in Geschwindigkeit/Distanz bleibt, bricht das die
+ * bestehende "höhere Geschwindigkeit/Distanz ⇒ kürzeres oder gleiches
+ * Intervall"-Garantie NICHT (siehe Regressionstests).
  * @param {number} speedPct - Bike-Geschwindigkeit (0–100%).
  * @param {Function} [randomFn] - Zufallsfunktion, liefert [0,1); Standard Math.random.
  * @param {number} [distanceUnits] - Bereits zurückgelegte In-Run-Distanz (Teil 4, Schwierigkeitskurve); Standard 0.
- * @returns {number} Sekunden bis zum nächsten Hindernis (> 0).
+ * @returns {number} Sekunden bis zum nächsten Hindernis (>= RUNNER_MIN_WAVE_SPACING_SECONDS).
  */
 function nextObstacleSpawnIntervalSeconds(speedPct, randomFn, distanceUnits) {
   var rnd = typeof randomFn === 'function' ? randomFn : Math.random;
@@ -2474,7 +2522,8 @@ function nextObstacleSpawnIntervalSeconds(speedPct, randomFn, distanceUnits) {
   var base = density > 0 ? IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS / density : IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_INTERVAL_BASE_SECONDS;
   var jitterMin = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MIN;
   var jitterMax = IDLE_BALANCE.RUNNER_OBSTACLE_SPAWN_JITTER_MAX;
-  return base * (jitterMin + rnd() * (jitterMax - jitterMin));
+  var raw = base * (jitterMin + rnd() * (jitterMax - jitterMin));
+  return Math.max(IDLE_BALANCE.RUNNER_MIN_WAVE_SPACING_SECONDS, raw);
 }
 
 /**
@@ -2837,14 +2886,23 @@ function tuningReactionTimeFactor(state) {
 /**
  * Stellt sicher, dass state.run ein gültiges Objekt ist (defensiv, für
  * Zustände, die nicht über createInitialState()/migrateState() gelaufen
- * sind — mirrors ensureRunnerState()/ensurePowerupState()).
+ * sind — mirrors ensureRunnerState()/ensurePowerupState()). Enthält (feat
+ * (live-km)) zusätzlich die rein EPHEMERE Live-km-Kadenz (liveKmPending
+ * Distance/liveKmLastFlushAt/liveKmCredited, siehe tickRunEconomy()) —
+ * KEINE Migration/Versionserhöhung nötig, da state.run bei jedem Run-Start
+ * (startRun()) ohnehin komplett neu geschrieben wird und dieser Fallback
+ * NUR für gänzlich fehlende state.run-Objekte greift (nie für einen bereits
+ * laufenden Run ohne diese Felder — die gibt es nicht, siehe startRun()).
  * @param {Object} state - Zentraler Idle-Zustand (wird ggf. mutiert).
  * @returns {void}
  */
 function ensureRunState(state) {
   if (!state.run || typeof state.run !== 'object') {
-    state.run = { phase: 'ready', score: 0, coins: 0, combo: 0, comboMult: 1, speedPct: 0, distanceUnits: 0, startedAt: null };
+    state.run = { phase: 'ready', score: 0, coins: 0, combo: 0, comboMult: 1, speedPct: 0, distanceUnits: 0, startedAt: null, liveKmPendingDistance: 0, liveKmLastFlushAt: null, liveKmCredited: 0 };
   }
+  if (typeof state.run.liveKmPendingDistance !== 'number') state.run.liveKmPendingDistance = 0;
+  if (typeof state.run.liveKmLastFlushAt !== 'number') state.run.liveKmLastFlushAt = null;
+  if (typeof state.run.liveKmCredited !== 'number') state.run.liveKmCredited = 0;
 }
 
 /**
@@ -2868,9 +2926,13 @@ function ensureRunStatsState(state) {
  * (speedPct) aus dem AKTUELL gefahrenen Bike/Tuning-Level ab
  * (deriveBikeStats().geschwindigkeitPct — läuft danach unverändert durch
  * dieselbe runnerScrollSpeed()/runnerLeadSeconds()-Pipeline wie zuvor, der
- * 0.6s-Vorlaufzeit-Boden bleibt dadurch für JEDES Bike/Tuning garantiert)
+ * 0.9s-Vorlaufzeit-Boden bleibt dadurch für JEDES Bike/Tuning garantiert)
  * UND setzt die STEUERUNG (state.runner: Lane mittig, Sprung/Ducken/
  * Kollisions-Malus zurückgesetzt) für einen fairen Neustart zurück.
+ * Setzt (feat(live-km)) ausserdem die rein ephemere Live-km-Kadenz zurück
+ * (liveKmPendingDistance/liveKmLastFlushAt/liveKmCredited, siehe
+ * tickRunEconomy()) — kein neues persistentes Feld, daher keine
+ * Versions-/Migrations-Änderung nötig.
  * Berührt NIEMALS die PROGRESS-Schicht (km/Bikes/Tuning/Saison/Gear).
  * Mutiert state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
@@ -2893,6 +2955,9 @@ function startRun(state, nowMs) {
   state.run.distanceUnits = 0;
   state.run.speedPct = stats.geschwindigkeitPct;
   state.run.startedAt = now;
+  state.run.liveKmPendingDistance = 0;
+  state.run.liveKmLastFlushAt = null;
+  state.run.liveKmCredited = 0;
 
   state.runner.lane = Math.floor(IDLE_BALANCE.RUNNER_LANE_COUNT / 2);
   state.runner.jumpUntil = null;
@@ -2907,9 +2972,16 @@ function startRun(state, nowMs) {
  * aktualisiert state.runHighscore (falls der erreichte Score den
  * bisherigen Bestwert übertrifft), schreibt state.runStats fort (additiv,
  * sinkt nie) UND schreibt die im Run gesammelten Coins GENAU EINMAL über
- * runCoinsToKm()/creditKm() der PROGRESS-Schicht gut — der EINZIGE Punkt,
- * an dem ein Run die PROGRESS-Schicht überhaupt berührt (mirrors
- * piggybankReward() — dieselbe zentrale creditKm()-Stelle). Mutiert state.
+ * runCoinsToKm()/creditKm() der PROGRESS-Schicht gut — DER Punkt, an dem
+ * ein Run seinen Coin→km-BONUS realisiert (mirrors piggybankReward() —
+ * dieselbe zentrale creditKm()-Stelle). feat(live-km): bankt VORHER
+ * zusätzlich per flushLiveKmPendingDistance() eine evtl. noch NICHT
+ * geflushte Live-km-Distanz-Portion (< RUN_LIVE_KM_CREDIT_INTERVAL_
+ * SECONDS alt, siehe tickRunEconomy()) — ohne diesen Flush würde die
+ * letzte, kurz vor dem Crash gefahrene Distanz sonst spurlos verloren
+ * gehen, statt (wie spezifiziert) permanent gebankt zu bleiben. Beide
+ * Gutschriften sind additiv/unabhängig (Distanz-Live-km vs. Coin-Bonus).
+ * Mutiert state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
  * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (aktuell ungenutzt, für API-Symmetrie zu startRun()/detectRunCollision() vorgehalten).
  * @returns {{score: number, coins: number, newHighscore: boolean}} Zusammenfassung des beendeten Runs.
@@ -2930,6 +3002,7 @@ function endRun(state, nowMs) {
   state.runStats.totalCrashes += 1;
   if (finalCombo > state.runStats.bestComboEver) state.runStats.bestComboEver = finalCombo;
 
+  flushLiveKmPendingDistance(state);
   creditKm(state, runCoinsToKm(finalCoins));
 
   state.run.phase = 'crashed';
@@ -2997,6 +3070,31 @@ function runCoinsToKm(coins) {
 }
 
 /**
+ * Flusht die seit dem letzten Flush akkumulierte, noch NICHT gebankte
+ * Live-km-Distanz (state.run.liveKmPendingDistance, siehe tickRunEconomy())
+ * EINMALIG über dieselbe runCoinsForDistance()/runCoinsToKm()-Formel ×
+ * IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER in km und bankt sie über
+ * creditKm() auf die PROGRESS-Schicht. No-op, falls keine Distanz
+ * ausständig ist. Wird SOWOHL vom regulären, gedrosselten Flush in
+ * tickRunEconomy() ALS AUCH von endRun() genutzt — Letzteres verhindert,
+ * dass die letzte, zum Crash-Zeitpunkt noch nicht geflushte Distanz-
+ * Portion (< RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS alt) beim Run-Ende
+ * verloren geht ("ein Crash kann bereits gefahrene Distanz nicht mehr
+ * zurücknehmen"). Mutiert state.
+ * @param {Object} state - Zentraler Idle-Zustand (wird mutiert, muss ensureRunState() durchlaufen haben).
+ * @returns {number} Gebankter Live-km-Betrag (0, falls keine Distanz ausständig war).
+ */
+function flushLiveKmPendingDistance(state) {
+  var pending = state.run.liveKmPendingDistance;
+  if (!pending || pending <= 0) return 0;
+  var liveKmDelta = runCoinsToKm(runCoinsForDistance(pending)) * IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER;
+  creditKm(state, liveKmDelta);
+  state.run.liveKmCredited += liveKmDelta;
+  state.run.liveKmPendingDistance = 0;
+  return liveKmDelta;
+}
+
+/**
  * Verbucht EINE eingesammelte Münz-Trail-Münze (Teil 4, feat(coins)) —
  * fester Zuwachs (IDLE_BALANCE.RUN_COIN_TRAIL_PICKUP_VALUE) auf
  * state.run.coins, DENSELBEN Pool wie der distanzbasierte Zuwachs aus
@@ -3021,21 +3119,35 @@ function collectRunCoin(state, nowMs) {
  * AKTUELLEN Near-Miss-Combo-Multiplikator (state.run.comboMult) UND —
  * falls aktiv — IDLE_BALANCE.POWERUP_SCORE_X2_MULTIPLIER skaliert (siehe
  * scoreX2Active()); Score-x2 wirkt dadurch AUSSCHLIESSLICH auf
- * state.run.score, NIE auf km. Der Coin-Zuwachs wird UNTERSCHIEDLICH
+ * state.run.score, NIE auf km. Der Coin-/km-Zuwachs wird UNTERSCHIEDLICH
  * behandelt, je nach Aktivitäts-Zustand (siehe runnerActivityState()):
- * im AKTIVEN Run sammeln sich Coins nur in state.run.coins (gebankt ERST
- * bei einem Crash, siehe endRun() — ersetzt den früheren kontinuierlichen
- * km-Drip aus runnerEarnMultiplier()); im AUTO-PILOT (activity==='idle',
- * crasht laut Teil-1-Invariante NIE) werden sie SOFORT, aber REDUZIERT
- * (RUN_AUTOPILOT_CREDIT_MULTIPLIER) über creditKm() der PROGRESS-Schicht
- * gutgeschrieben — ohne diese Sonderbehandlung könnte ein Auto-Pilot-
- * Coin-Pool nie gebankt werden, da er ja nie crasht. No-op, falls kein
- * Run läuft (state.run.phase !== 'running'). Mutiert state.
+ *
+ * - AKTIVER Run: Coins sammeln sich weiterhin NUR in state.run.coins
+ *   (gebankt ERST bei einem Crash als BONUS, siehe endRun() — unverändert).
+ *   ZUSÄTZLICH (feat(live-km)) läuft eine ZWEITE, rein DISTANZ-basierte
+ *   Einnahme PARALLEL dazu: state.km wird kontinuierlich (gedrosselt auf
+ *   IDLE_BALANCE.RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS Echtzeit, damit die
+ *   HUD-Anzeige nicht bei jedem Frame zittert) über dieselbe
+ *   runCoinsForDistance()/runCoinsToKm()-Formel wie der Coin-Pool erhöht,
+ *   skaliert mit IDLE_BALANCE.RUN_ACTIVE_KM_CREDIT_MULTIPLIER (voll, klar
+ *   höher als RUN_AUTOPILOT_CREDIT_MULTIPLIER). Ein Crash kann dieses
+ *   bereits gebankte Live-km NICHT zurücknehmen — der Coin→km-Bonus aus
+ *   endRun() kommt unverändert ZUSÄTZLICH dazu (zwei unabhängige Quellen,
+ *   kein Doppel-Zählen, da beide separat aus distanceDelta berechnet
+ *   werden statt eine aus der anderen).
+ * - AUTO-PILOT (activity==='idle', crasht laut Teil-1-Invariante NIE):
+ *   Coins werden SOFORT, aber REDUZIERT (RUN_AUTOPILOT_CREDIT_MULTIPLIER)
+ *   über creditKm() der PROGRESS-Schicht gutgeschrieben — ohne diese
+ *   Sonderbehandlung könnte ein Auto-Pilot-Coin-Pool nie gebankt werden,
+ *   da er ja nie crasht.
+ *
+ * No-op, falls kein Run läuft (state.run.phase !== 'running'). Mutiert
+ * state.
  * @param {Object} state - Zentraler Idle-Zustand (wird mutiert).
  * @param {number} distanceDelta - Zurückgelegte Distanz seit dem letzten Tick (abstrakte Einheiten, >= 0).
  * @param {('active'|'idle')} activity - Aktueller Runner-Aktivitäts-Zustand (siehe runnerActivityState()).
- * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (für scoreX2Active()).
- * @returns {{scoreGained: number, coinsGained: number, kmCredited: number}} Zuwächse dieses Ticks.
+ * @param {number} [nowMs] - Zeitstempel "jetzt" in ms; Standard Date.now() (für scoreX2Active() UND die Live-km-Kadenz im aktiven Modus).
+ * @returns {{scoreGained: number, coinsGained: number, kmCredited: number}} Zuwächse dieses Ticks (kmCredited ist im aktiven Modus meist 0 und nur > 0 in dem Tick, der das Live-km-Intervall gerade "flusht").
  */
 function tickRunEconomy(state, distanceDelta, activity, nowMs) {
   ensureRunState(state);
@@ -3057,6 +3169,32 @@ function tickRunEconomy(state, distanceDelta, activity, nowMs) {
     creditKm(state, kmCredited);
   } else {
     state.run.coins += coinsGained;
+
+    // Live-km (feat(live-km)): eine ZWEITE, von Coins UNABHÄNGIGE
+    // Einnahmequelle — reine Distanz wird kontinuierlich (aber gedrosselt
+    // auf RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS, siehe unten) über dieselbe
+    // runCoinsForDistance()/runCoinsToKm()-Formel wie der Coin-Pool in km
+    // umgerechnet und SOFORT der PROGRESS-Schicht gutgeschrieben — anders
+    // als state.run.coins (das weiterhin ERST bei endRun()/Crash als
+    // Coin→km-BONUS gebankt wird, siehe dessen Docblock). Beide Quellen
+    // laufen additiv/parallel, NIE ineinander verrechnet: dieselbe
+    // zurückgelegte Distanz erzeugt sowohl Coins (state.run.coins, später
+    // gebankt) ALS AUCH Live-km (state.km, sofort gebankt) — kein
+    // Doppel-Abzug, weil beide unabhängig aus distanceDelta berechnet
+    // werden, nicht auseinander. RUN_ACTIVE_KM_CREDIT_MULTIPLIER (voll,
+    // >= RUN_AUTOPILOT_CREDIT_MULTIPLIER) sorgt dafür, dass aktives Fahren
+    // klar ergiebiger bleibt als der reduzierte Auto-Pilot-Ertrag.
+    state.run.liveKmPendingDistance += distanceDelta;
+    if (state.run.liveKmLastFlushAt === null) {
+      // Erste Beobachtung seit Run-Start/Reload: nur die Zeitbasis
+      // etablieren, NICHT sofort banken — sonst würde bei fehlender
+      // vorheriger Referenz ein Phantom-Intervall (z. B. Zeit vor
+      // Run-Start) fälschlich als "verstrichen" gewertet.
+      state.run.liveKmLastFlushAt = now;
+    } else if ((now - state.run.liveKmLastFlushAt) / 1000 >= IDLE_BALANCE.RUN_LIVE_KM_CREDIT_INTERVAL_SECONDS) {
+      kmCredited = flushLiveKmPendingDistance(state);
+      state.run.liveKmLastFlushAt = now;
+    }
   }
 
   return { scoreGained: scoreGained, coinsGained: coinsGained, kmCredited: kmCredited };
@@ -3130,7 +3268,7 @@ function isDucking(state, nowMs) {
  * danach gedeckelt). Wird MULTIPLIKATIV auf obstacleDensity(speedPct)
  * angewendet (siehe nextObstacleSpawnIntervalSeconds()) — wirkt dadurch
  * NUR auf die Spawn-Dichte/-Häufigkeit, NIEMALS auf runnerLeadSeconds()'
- * 0.6s-Boden (der bleibt eine reine Funktion von speedPct, unabhängig von
+ * 0.9s-Boden (der bleibt eine reine Funktion von speedPct, unabhängig von
  * distanceUnits). Reine, deterministische Funktion.
  * @param {number} distanceUnits - Bereits zurückgelegte In-Run-Distanz (abstrakte Einheiten, >= 0).
  * @returns {number} Dichte-Multiplikator (1 bis RUN_DIFFICULTY_DENSITY_MAX_MULTIPLIER).
@@ -3179,6 +3317,54 @@ function runDifficultyWaveSize(distanceUnits, laneCount) {
 }
 
 /**
+ * Wählt die Lanes für eine NEUE Hindernis-Welle aus — und schliesst dabei
+ * die CROSS-WAVE-Lücke der reinen Pro-Welle-Garantie von
+ * runDifficultyWaveSize(): diese deckelt eine einzelne Welle zwar auf
+ * höchstens laneCount-1 Lanes, weiss aber nichts von Hindernissen
+ * VORHERIGER, noch nicht resolvter Wellen — überlappen sich zwei Wellen
+ * zeitlich, könnten sie gemeinsam ALLE Lanes belegen, obwohl jede für
+ * sich genommen mindestens eine Lane frei liess. Diese Funktion nimmt
+ * daher zusätzlich die Lanes entgegen, die von bereits in Flug
+ * befindlichen ("noch nicht resolvten") Hindernissen belegt sind
+ * (`occupiedLanes`), wählt die neue Welle NUR aus den WEITEREN, aktuell
+ * unbelegten Lanes, und lässt davon zwingend mindestens EINE Lane
+ * UNGEWÄHLT — dadurch bleibt über beliebig viele überlappende Wellen
+ * hinweg immer mindestens eine Lane vollständig frei von JEDEM
+ * Hindernis (stärker als "nur passierbar", siehe Docblock
+ * tests/runner-fairness-test.js). Reine, deterministische Funktion
+ * (ausser der injizierten Zufallsfunktion) — die Wellen-GRÖSSE wird bei
+ * Bedarf automatisch auf das tatsächlich verfügbare Lane-Kontingent
+ * gekürzt (im Extremfall auf 0, d. h. dieser Spawn-Versuch entfällt
+ * ersatzlos, statt die Fairness-Garantie zu brechen).
+ * @param {Array<number>} occupiedLanes - Lanes, die von noch nicht resolvten Hindernissen früherer Wellen belegt sind (Duplikate erlaubt).
+ * @param {number} waveSize - Gewünschte Wellen-Grösse (z. B. aus runDifficultyWaveSize()), wird ggf. gekürzt.
+ * @param {number} [laneCount] - Anzahl Fahrspuren; Standard IDLE_BALANCE.RUNNER_LANE_COUNT.
+ * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
+ * @returns {Array<number>} Die für die neue Welle gewählten, jeweils EINDEUTIGEN Lanes (kann kürzer als waveSize oder leer sein).
+ */
+function pickSolvableWaveLanes(occupiedLanes, waveSize, laneCount, rng) {
+  var rnd = typeof rng === 'function' ? rng : Math.random;
+  var lanes = typeof laneCount === 'number' && laneCount > 0 ? laneCount : IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var occupiedSet = {};
+  (Array.isArray(occupiedLanes) ? occupiedLanes : []).forEach(function (lane) { occupiedSet[lane] = true; });
+  var freeLanes = [];
+  for (var i = 0; i < lanes; i++) {
+    if (!occupiedSet[i]) freeLanes.push(i);
+  }
+  // Mindestens EINE der aktuell freien Lanes bleibt zwingend ungewählt,
+  // damit sie auch nach dieser Welle noch vollständig frei/passierbar ist.
+  var maxPickable = Math.max(0, freeLanes.length - 1);
+  var size = Math.max(0, Math.min(typeof waveSize === 'number' ? waveSize : 0, maxPickable));
+  var pool = freeLanes.slice();
+  var picked = [];
+  for (var w = 0; w < size && pool.length > 0; w++) {
+    var pickIndex = Math.floor(rnd() * pool.length);
+    picked.push(pool.splice(pickIndex, 1)[0]);
+  }
+  return picked;
+}
+
+/**
  * Generiert ein Münz-Trail-Muster (Teil 4, feat(coins)) — eine gerade
  * LINIE (alle Münzen dieselbe Lane) oder ein über Lanes wandernder BOGEN
  * (IDLE_BALANCE.RUN_COIN_TRAIL_ARC_CHANCE), IDLE_BALANCE.RUN_COIN_TRAIL_
@@ -3186,22 +3372,54 @@ function runDifficultyWaveSize(distanceUnits, laneCount) {
  * Versatz (offsetT, Vielfaches von RUN_COIN_TRAIL_SPACING_T) relativ zum
  * Trail-Start — der Aufrufer (idle.js) setzt daraus tatsächliche,
  * gestaffelt erscheinende Collectibles auf der Strecke (reused
- * laneCenterX()/laneRowY()). Reine Funktion.
+ * laneCenterX()/laneRowY()). fix(spawning): der optionale `blockedLanes`-
+ * Parameter macht die Erzeugung HINDERNIS-BEWUSST — die Start-Lane wird
+ * NUR aus aktuell unbelegten Lanes gewählt (sofern mindestens eine
+ * existiert), und ein BOGEN weicht beim Lane-Wechsel auf die
+ * Gegenrichtung aus, falls die vorgesehene Ziel-Lane blockiert UND eine
+ * freie Alternative vorhanden ist — verhindert, dass ein ganzer Trail
+ * NUR auf einer durch ein Hindernis blockierten Lane liegt, ohne dass
+ * eine erreichbare Alternative existiert ("keine Münze, die nur per
+ * Kollision erreichbar ist"). Reine Funktion.
  * @param {Function} [rng] - Zufallsfunktion, liefert [0,1); Standard Math.random.
  * @param {number} [laneCount] - Anzahl Fahrspuren; Standard IDLE_BALANCE.RUNNER_LANE_COUNT.
+ * @param {Array<number>} [blockedLanes] - Lanes, die aktuell durch noch nicht resolvte Hindernisse belegt sind (Duplikate erlaubt); Standard keine.
  * @returns {Array<{lane: number, offsetT: number}>} Münz-Positionen des Trails.
  */
-function generateCoinTrail(rng, laneCount) {
+function generateCoinTrail(rng, laneCount, blockedLanes) {
   var rnd = typeof rng === 'function' ? rng : Math.random;
   var lanes = typeof laneCount === 'number' && laneCount > 0 ? laneCount : IDLE_BALANCE.RUNNER_LANE_COUNT;
+  var blockedSet = {};
+  (Array.isArray(blockedLanes) ? blockedLanes : []).forEach(function (lane) { blockedSet[lane] = true; });
+  var freeLaneList = [];
+  for (var li = 0; li < lanes; li++) {
+    if (!blockedSet[li]) freeLaneList.push(li);
+  }
+  // Bevorzugt eine aktuell freie Lane als Start — gibt es keine (Grenzfall,
+  // sollte durch pickSolvableWaveLanes() praktisch nie vorkommen), fällt
+  // die Funktion defensiv auf den gesamten Lane-Bereich zurück statt
+  // gar keinen Trail zu erzeugen.
+  var startPool = freeLaneList.length > 0 ? freeLaneList : (function () {
+    var all = [];
+    for (var i = 0; i < lanes; i++) all.push(i);
+    return all;
+  })();
   var length = IDLE_BALANCE.RUN_COIN_TRAIL_LENGTH;
   var isArc = rnd() < IDLE_BALANCE.RUN_COIN_TRAIL_ARC_CHANCE && lanes > 1;
   var direction = rnd() < 0.5 ? -1 : 1;
-  var lane = Math.floor(rnd() * lanes);
+  var lane = startPool[Math.floor(rnd() * startPool.length)];
   var coins = [];
   for (var i = 0; i < length; i++) {
     if (isArc && i > 0 && i % 2 === 0) {
-      lane = Math.min(lanes - 1, Math.max(0, lane + direction));
+      var nextLane = Math.min(lanes - 1, Math.max(0, lane + direction));
+      if (blockedSet[nextLane] && freeLaneList.length > 0) {
+        var altLane = Math.min(lanes - 1, Math.max(0, lane - direction));
+        if (!blockedSet[altLane]) {
+          nextLane = altLane;
+          direction = -direction;
+        }
+      }
+      lane = nextLane;
     }
     coins.push({ lane: lane, offsetT: i * IDLE_BALANCE.RUN_COIN_TRAIL_SPACING_T });
   }
@@ -3463,6 +3681,7 @@ var IdleCore = {
   comboMultiplier: comboMultiplier,
   perfectZoneWidth: perfectZoneWidth,
   applyShiftResult: applyShiftResult,
+  evaluateShiftHit: evaluateShiftHit,
   activeComboMultiplier: activeComboMultiplier,
   nextShiftIntervalSeconds: nextShiftIntervalSeconds,
 
@@ -3583,6 +3802,7 @@ var IdleCore = {
   runDifficultyDensity: runDifficultyDensity,
   runDifficultyPatternTier: runDifficultyPatternTier,
   runDifficultyWaveSize: runDifficultyWaveSize,
+  pickSolvableWaveLanes: pickSolvableWaveLanes,
 };
 
 if (typeof window !== 'undefined') {

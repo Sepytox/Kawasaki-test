@@ -58,6 +58,11 @@
                             <span class="idle-run-score-hud-label">Score</span>
                             <span class="idle-run-score-hud-value" id="idleRunScore">0</span>
                             <span class="idle-run-score-hud-highscore">Highscore: <strong id="idleRunHighscore">0</strong></span>
+                            <!-- Live-km-Zähler (feat(live-km)): zeigt die WÄHREND der
+                                 aktuellen Fahrt bereits kontinuierlich gutgeschriebenen km
+                                 (siehe idle.js updateRunLiveKmHud()) — macht sichtbar, dass
+                                 Fahren UND Fortschritt gleichzeitig laufen, parallel zu Score/Coins. -->
+                            <span class="idle-run-score-hud-km">km gesammelt: <strong id="idleRunLiveKm">0,00</strong></span>
                         </div>
 
                         <!-- Near-Miss-Popup (Teil 4, feat(nearmiss)): kurzer "Knapp vorbei!"-Text
@@ -86,7 +91,7 @@
                              nextCoinTrailIntervalSeconds()). -->
                         <button type="button" class="idle-powerup" id="idlePowerup" aria-hidden="true" tabindex="-1" aria-label="Powerup einsammeln"></button>
                     </div>
-                    <p class="idle-track-hint">⬅️ ➡️ oder A/D zum Spurwechsel · ⬆️ oder Leertaste zum Springen · ⬇️ oder Strg zum Ducken · auf Mobilgeräten in alle 4 Richtungen wischen</p>
+                    <p class="idle-track-hint">⬅️ ➡️ oder A/D zum Spurwechsel · ⬆️ oder W zum Springen · ⬇️ oder Strg zum Ducken · Leertaste zum Schalten · auf Mobilgeräten in alle 4 Richtungen wischen</p>
 
                     <!-- Near-Miss-Combo-Badge (Teil 4, feat(nearmiss)): eigenständig von der
                          Schaltpunkt-Combo (idleComboBadge) — zeigt die Anzahl knapp vermiedener
@@ -107,14 +112,24 @@
                         <span class="idle-km-unit">km</span>
                     </div>
 
-                    <!-- Schaltpunkt-Leiste (MECHANIK A): erscheint alle 15–30s, Klick im
-                         grünen Bereich = Treffer (Combo + Multiplikator). -->
+                    <!-- Schaltpunkt-Leiste (MECHANIK A, feat(shiftpoint-key)): erscheint
+                         alle 15–30s, Leertaste im grünen Bereich = Treffer (Combo +
+                         Multiplikator). Ausschliesslich per Leertaste (Desktop) oder dem
+                         Mobile-Button #idleShiftMobileBtn (Touch) auslösbar — ein Klick auf
+                         die Leiste selbst löst bewusst NICHTS aus (siehe idle.js
+                         evaluateShiftAttempt()/wireShiftInteraction()). -->
                     <div class="idle-shift" id="idleShift" aria-hidden="true">
-                        <div class="idle-shift-track" id="idleShiftTrack" role="button" tabindex="0" aria-label="Schaltpunkt — im grünen Bereich klicken">
+                        <div class="idle-shift-track" id="idleShiftTrack" role="button" tabindex="0" aria-label="Schaltpunkt — Leertaste im grünen Bereich drücken">
                             <div class="idle-shift-zone" id="idleShiftZone"></div>
                             <div class="idle-shift-marker" id="idleShiftMarker"></div>
                         </div>
-                        <span class="idle-shift-hint">🎯 Jetzt schalten!</span>
+                        <span class="idle-shift-hint">🎯 Jetzt schalten! (Leertaste)</span>
+                        <!-- Mobile-Button (feat(shiftpoint-key)): dieselbe Auswertung wie
+                             die Leertaste, ausserhalb von #idleTrackWrap platziert, damit die
+                             Swipe-Zone für den Lane-Wechsel unberührt bleibt (ein Daumen
+                             wischt, der andere tippt). Nur auf schmalen Viewports sichtbar
+                             (siehe idle.css) — auf Desktop übernimmt die Leertaste. -->
+                        <button type="button" class="idle-shift-mobile-btn" id="idleShiftMobileBtn" aria-label="Schaltpunkt jetzt auslösen">🎯 Schalten</button>
                     </div>
 
                     <div class="idle-combo-badge" id="idleComboBadge" hidden>
