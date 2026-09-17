@@ -57,6 +57,26 @@
   --ls-tight: -0.01em;
   --ls-normal: 0em;
   --ls-wide: 0.03em;
+
+  /* Glass / depth (neu, additiv) — Backdrop-Blur-Stufen + Sättigung für
+     Glasmorphismus-Oberflächen (Modals, Hero-Layer). */
+  --glass-blur-sm: 8px;
+  --glass-blur-md: 16px;
+  --glass-blur-lg: 24px;
+  --glass-saturate: 160%;
+
+  /* Layered shadow (neu, additiv) — Elevation oberhalb von --shadow-lg,
+     fuer Modal-Oberflaechen und betonte Glow-Akzente. */
+  --shadow-xl: 0 0 0 1px var(--border), 0 8px 30px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
+  --shadow-glow-lg: 0 0 0 1px var(--border), 0 0 40px rgba(0,112,243,0.25);
+
+  /* Motion-Ergaenzungen (neu, additiv) */
+  --dur-slower: 600ms;
+  --ease-tilt: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Tilt (neu, additiv) */
+  --tilt-max-deg: 6deg;
+  --tilt-perspective: 900px;
 }
 
 /* === DARK MODE (default) ===
@@ -87,6 +107,14 @@
   --shadow-glow: 0 0 0 1px rgba(0,112,243,0.5);
   --glass-bg: rgba(17,17,17,0.6);
   --glass-border: rgba(255,255,255,0.08);
+
+  /* Erweiterte Glass/Gradient-Tokens (neu, additiv, theme-abhaengig) —
+     fuer Modal-Glasmorphismus und einen animierten Hero-Gradient-Mesh. */
+  --gradient-mesh:
+    radial-gradient(at 20% 20%, rgba(0,112,243,0.18), transparent 50%),
+    radial-gradient(at 80% 0%, rgba(31,109,74,0.14), transparent 50%),
+    radial-gradient(at 50% 100%, rgba(0,112,243,0.10), transparent 60%);
+  --glass-bg-strong: rgba(17,17,17,0.55);
 }
 
 /* === LIGHT MODE ===
@@ -113,6 +141,14 @@
   --shadow-glow: 0 0 0 1px rgba(0,112,243,0.35);
   --glass-bg: rgba(255,255,255,0.7);
   --glass-border: rgba(20,20,20,0.08);
+
+  /* Erweiterte Glass/Gradient-Tokens (neu, additiv, theme-abhaengig) —
+     fuer Modal-Glasmorphismus und einen animierten Hero-Gradient-Mesh. */
+  --gradient-mesh:
+    radial-gradient(at 20% 20%, rgba(0,112,243,0.10), transparent 50%),
+    radial-gradient(at 80% 0%, rgba(31,109,74,0.08), transparent 50%),
+    radial-gradient(at 50% 100%, rgba(0,112,243,0.06), transparent 60%);
+  --glass-bg-strong: rgba(255,255,255,0.55);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
