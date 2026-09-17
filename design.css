@@ -767,3 +767,54 @@ summary:focus-visible,
 .modal-content {
   box-shadow: var(--shadow-xl);
 }
+
+/* ════════════════════════════════════════════════════════════════
+   style(hover): Multi-Effekt Hover/Focus/Press — Phase B
+   Rein additive Ergänzungen; keine bestehende Deklaration wird entfernt.
+   Da design.css von JEDER Seite inkl. soundcheck.html geladen wird,
+   sind alle neuen Regeln entweder neue, bisher ungenutzte Token/Klassen
+   oder zusätzliche (spätere) Deklarationen für Selektoren, die
+   soundcheck.html nicht im Markup verwendet ("value" der bestehenden
+   Zeilen bleibt exakt gleich, nur zusätzliche Eigenschaften kommen
+   hinzu) — GOLDEN_PRINCIPLES_KE.md Regel 6 bleibt damit gewahrt.
+   ════════════════════════════════════════════════════════════════ */
+
+/* .btn/.btn-outline: identische Transition-Tokens wie oben (--dur-fast/
+   --ease-standard), nur um "transform" erweitert, damit der neue
+   Press-Effekt (siehe styles.css ".btn:active") weich einrastet statt
+   hart zu springen. Werte für background/border-color unverändert. */
+.btn,
+.btn-outline {
+  transition: background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+
+/* Sichtbarer Fokus-Zustand für die neuen Glassmorphism-Karten (zentrales
+   Modal-System) — zusätzlich zur globalen :focus-visible-Baseline, da
+   ".modal-content" selbst i.d.R. nicht fokussiert wird, sein Rahmen
+   aber beim Fokus eines Kind-Elements (z.B. Schliessen-Button) sichtbar
+   mitleuchten soll. */
+.modal-content:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-xl), var(--shadow-glow, 0 0 0 3px var(--accent-dim));
+}
+
+/* Dezenter "Idle-Pulse" für Call-to-Action-Buttons: eine sehr sanfte,
+   langsame Skalierungs-/Helligkeits-Atmung, ausschliesslich
+   transform/filter (kein box-shadow-Loop, kompositor-freundlich). Opt-in
+   über die Klasse ".btn-cta-pulse" — betrifft ausschliesslich Elemente,
+   die diese Klasse explizit tragen (aktuell: .hero-cta auf index.html),
+   kein bestehendes Element ändert sein Verhalten automatisch. */
+@keyframes btn-cta-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.035); filter: brightness(1.08); }
+}
+.btn-cta-pulse {
+  animation: btn-cta-pulse 3.2s var(--ease-standard, ease) infinite;
+}
+.btn-cta-pulse:hover,
+.btn-cta-pulse:focus-visible {
+  animation-play-state: paused;
+}

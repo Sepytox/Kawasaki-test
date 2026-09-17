@@ -310,6 +310,17 @@
             z-index: 9999;
             animation: confetti-fall linear forwards;
         }
+
+        /* style(hover): Multi-Effekt Hover/Focus/Press — Phase B (additiv,
+           ergänzt nur zusätzliche Eigenschaften auf demselben Selektor). */
+        .btn-primary-sm {
+            transition: background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+        }
+        .btn-primary-sm:hover { box-shadow: var(--shadow-glow, var(--shadow-md)); }
+        .btn-primary-sm:active { transform: translateY(0) scale(0.97); }
+        .btn-primary-sm:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </style>
 </head>
 <body>

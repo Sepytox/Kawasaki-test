@@ -616,6 +616,24 @@
             .mc-addon-item { gap: 0.5rem; padding: 0.6rem; }
             .mc-total-val { font-size: 1.8rem; }
         }
+
+        /* style(hover): Multi-Effekt Hover/Focus/Press — Phase B (additiv,
+           ergänzt nur zusätzliche Eigenschaften auf denselben Selektoren). */
+        .cart-btn-primary {
+            transition: background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+        }
+        .cart-btn-primary:hover { box-shadow: var(--shadow-glow, var(--shadow-md)); }
+        .cart-btn-primary:active { transform: translateY(0) scale(0.97); }
+        .combo-card {
+            transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+        }
+        .combo-card:hover,
+        .combo-card:focus-within { transform: translateY(-2px); }
+        .combo-card:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
     </style>
 </head>
 <body>

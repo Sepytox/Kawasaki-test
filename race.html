@@ -485,6 +485,20 @@
             background: linear-gradient(135deg, var(--bg-secondary), var(--accent-dim));
         }
 
+        /* style(hover): Multi-Effekt Hover/Focus/Press — Phase B (additiv,
+           ergänzt nur zusätzliche Eigenschaften auf denselben Selektoren). */
+        .mode-chip,
+        .toggle-btn {
+            transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+        }
+        .mode-chip:hover:not(.active),
+        .toggle-btn:hover:not(.on) { transform: translateY(-1px); }
+        .mode-chip:active,
+        .toggle-btn:active { transform: translateY(0) scale(0.96); }
+
     </style>
 </head>
 <body class="racing-bg" id="bodyEl">
