@@ -1178,3 +1178,96 @@ body.dark-mode .fact-card {
 }
 body.dark-mode .fact-card h3 { color: #ffffff; }
 body.dark-mode .fact-card strong { color: #ffffff; }
+
+/* ════════════════════════════════════════════════════════════════
+   style(hover): Multi-Effekt Hover/Focus/Press — Phase B
+   Rein additive Ergänzungen (keine bestehende Regel oben wird verändert
+   oder entfernt — GOLDEN_PRINCIPLES_KE.md Regel 6, da styles.css auch
+   von soundcheck.html geladen wird; die hier angesprochenen Selektoren
+   ".fact-card"/".card-action-link" kommen in soundcheck.html nicht vor,
+   das Rendering dort ist also ohnehin unberührt). Jede Karte bekommt statt
+   nur einer Hover-Farbänderung mehrere kombinierte Effekte: Lift (bereits
+   oben vorhanden), vertiefter Schatten (--shadow-xl) und ein dezenter
+   "Sheen"-Lichtstreif, der beim Hover/Fokus einmal durchläuft. Animiert
+   wird ausschliesslich transform/opacity (Compositor-only); die globale
+   prefers-reduced-motion-Regel in design.css nullt alle
+   transition-duration-Werte projektweit, das Sheen-Sweep entfällt damit
+   automatisch mit.
+   ════════════════════════════════════════════════════════════════ */
+.fact-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.14) 45%, transparent 60%);
+  transform: translateX(-120%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform var(--dur-slow, 0.4s) var(--ease-out, ease),
+              opacity var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.fact-card:hover::after,
+.fact-card:focus-within::after,
+.fact-card:focus-visible::after {
+  transform: translateX(120%);
+  opacity: 1;
+}
+/* Vertiefter Schatten zusätzlich zum bereits bestehenden Lift/Border-Hover
+   (gleicher Selektor, spätere Deklaration gewinnt nur für box-shadow). */
+.fact-card:hover,
+.fact-card:focus-within,
+.fact-card:focus-visible {
+  box-shadow: var(--shadow-xl, var(--shadow-lg, var(--shadow)));
+}
+.fact-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* .card-action-link hatte bereits eine :hover-Regel (hover-polish-Phase) —
+   hier nur ein zusätzlicher, additiver Sichtbarer-Fokus-Zustand. */
+.card-action-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Tastatur-Druck-Feedback: erweitert das bereits bestehende Muster von
+   ".fact-card:active" auf die generischen Buttons (siehe design.css
+   ".btn"/".btn-outline" — dort nur background/border-color, hier additiv
+   das press-transform ergänzt, ohne die bestehenden Zeilen zu verändern). */
+.btn:active,
+.btn-outline:active {
+  transform: translateY(1px) scale(0.97);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(tilt): dezenter Cursor-Tilt für Bike-Karten (siehe tilt.js)
+   Komponiert Lift (bereits oben vorhanden) + Tilt in EINER
+   transform-Deklaration über die Custom-Properties "--tilt-rx"/
+   "--tilt-ry" (von tilt.js per Mausposition gesetzt, Default 0deg via
+   ".fact-card" unten — ohne JS/bei reduzierter Bewegung bleiben beide
+   auf 0deg, die Karte verhält sich exakt wie zuvor: nur Lift, kein
+   Tilt). --tilt-max-deg/--tilt-perspective (design.css, Phase A) sind
+   die einzige Quelle für Stärke/Perspektive. Rein additiv — überschreibt
+   nur den "transform"-Wert der bestehenden ".fact-card:hover"-Regel via
+   spätere, gleich-spezifische Deklaration (keine Zeile oben verändert).
+   ════════════════════════════════════════════════════════════════ */
+.fact-card {
+  --tilt-rx: 0deg;
+  --tilt-ry: 0deg;
+}
+.fact-card:hover,
+.fact-card:focus-within,
+.fact-card:focus-visible {
+  transform: perspective(var(--tilt-perspective, 900px))
+             translateY(-6px) scale(1.012)
+             rotateX(var(--tilt-rx, 0deg)) rotateY(var(--tilt-ry, 0deg));
+}
+/* Bestehendes Press-Feedback (siehe ".fact-card:active" oben) bleibt
+   auch beim gleichzeitigen Hover erhalten — diese Regel kommt bewusst
+   NACH der Hover-Regel oben, damit :active bei Klick wieder gewinnt. */
+.fact-card:active {
+  transform: perspective(var(--tilt-perspective, 900px))
+             translateY(-3px) scale(1.005)
+             rotateX(var(--tilt-rx, 0deg)) rotateY(var(--tilt-ry, 0deg));
+}

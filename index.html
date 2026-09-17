@@ -248,6 +248,13 @@
    HERO — reine CSS-Grafik (Gradient + Muster), kein
    externes Bild. Rein präsentational, ändert kein
    Verhalten der übrigen Seite.
+   style(hero): animiertes Gradient-Mesh (--gradient-mesh-Token, Phase A)
+   + dezenter Scroll-Parallax + pulsierender Fokuspunkt hinter dem Titel.
+   Animiert wird ausschliesslich transform/opacity/filter (Compositor-
+   only) — die globale prefers-reduced-motion-Regel in design.css
+   (Zeile ~209) nullt animation-duration/transition-duration ohnehin
+   projektweit, der Parallax-Scroll-Listener unten prüft zusätzlich
+   selbst prefersReducedMotion(), da das eine reine JS-rAF-Schleife ist.
    ==================================================== */
 .hero {
     position: relative;
@@ -260,17 +267,67 @@
 .hero-bg {
     position: absolute;
     inset: 0;
-    z-index: -1;
+    z-index: -3;
+    background: var(--bg);
+    /* Ziel des Scroll-Parallax (siehe <script> unten): nur transform,
+       kein Layout-Thrashing. */
+    will-change: transform;
+}
+
+.hero-mesh {
+    position: absolute;
+    inset: -15%;
+    z-index: -2;
     background:
-        radial-gradient(circle at 15% 20%, var(--accent-dim), transparent 55%),
+        var(--gradient-mesh, radial-gradient(circle at 15% 20%, var(--accent-dim), transparent 55%)),
         radial-gradient(circle at 85% 15%, rgba(31,109,74,0.14), transparent 50%),
-        repeating-linear-gradient(135deg, var(--accent-dim) 0 2px, transparent 2px 42px),
-        var(--bg);
+        repeating-linear-gradient(135deg, var(--accent-dim) 0 2px, transparent 2px 42px);
+    animation: hero-mesh-drift var(--dur-slower, 0.6s) var(--ease-standard, ease) infinite alternate;
+    animation-duration: 26s;
+    will-change: transform;
+}
+
+.hero-focal {
+    position: absolute;
+    top: 46%;
+    left: 50%;
+    width: min(60vw, 520px);
+    height: min(60vw, 520px);
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
+    filter: blur(36px);
+    z-index: -1;
+    animation: hero-focal-pulse 9s var(--ease-standard, ease) infinite;
+    pointer-events: none;
+}
+
+.hero-focal::before {
+    content: "🏍️";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: min(22vw, 220px);
+    opacity: 0.14;
+    filter: blur(1px) saturate(0.7);
+}
+
+@keyframes hero-mesh-drift {
+    0%   { transform: translate3d(0, 0, 0) scale(1); }
+    50%  { transform: translate3d(-2.5%, 2%, 0) scale(1.08); }
+    100% { transform: translate3d(2%, -1.5%, 0) scale(1.03); }
+}
+
+@keyframes hero-focal-pulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.55; }
+    50%      { transform: translate(-50%, -50%) scale(1.15); opacity: 0.85; }
 }
 
 .hero-inner {
     max-width: 760px;
     margin: 0 auto;
+    position: relative;
 }
 
 .hero-eyebrow {
@@ -372,7 +429,7 @@
 }
     </style>
 </head>
-<body>
+<body class="page-bg-mesh">
     <!-- Gemeinsame Navbar (Single Source of Truth) — siehe navbar.js, das
          diesen Container sofort synchron mit identischem Markup befüllt.
          Der Fallback-Button unten existiert NUR, damit dark-mode.test.js /
@@ -385,11 +442,14 @@
          navbar.js darf hier NICHT selbst verdrahten. -->
     <nav id="siteNavRoot" class="site-nav" data-theme-toggle="external"><button class="theme-toggle" id="themeToggle" aria-label="Theme umschalten">☀️</button></nav>
     <script src="js/api-client.js"></script>
+    <script src="modal.js"></script>
     <script src="navbar.js"></script>
 
     <!-- ===== HERO ===== -->
     <header class="hero js-reveal">
         <div class="hero-bg" aria-hidden="true"></div>
+        <div class="hero-mesh" aria-hidden="true"></div>
+        <div class="hero-focal" aria-hidden="true"></div>
         <div class="hero-inner">
             <p class="hero-eyebrow">🏍️ Der Kawasaki Guide</p>
             <h1 class="hero-title">Finde dein perfektes <span class="hero-accent">Kawasaki</span></h1>
@@ -397,11 +457,51 @@
                 300&nbsp;km/h-Hypersportler. Specs, Kaufberatung, Wartungsrechner und Community-Bewertungen an
                 einem Ort.</p>
             <div class="hero-cta-row">
-                <a href="#bikesGrid" class="btn hero-cta">🔍 Modelle entdecken</a>
+                <a href="#bikesGrid" class="btn hero-cta btn-cta-pulse">🔍 Modelle entdecken</a>
                 <a href="quiz.html" class="btn btn-outline hero-cta-secondary">🎯 Welches Kawasaki bin ich?</a>
             </div>
         </div>
     </header>
+    <script>
+        /**
+         * style(hero): dezenter Scroll-Parallax für den Hero-Hintergrund
+         * (".hero-bg") — reine transform-Animation, rAF-throttled, kein
+         * Layout-Thrashing. Wird automatisch deaktiviert, wenn
+         * requestAnimationFrame fehlt oder der Benutzer reduzierte
+         * Bewegung bevorzugt (prefers-reduced-motion), analog zum Muster
+         * in scroll-reveal.js.
+         * @returns {void}
+         */
+        (function () {
+            'use strict';
+            var heroBg = document.querySelector('.hero-bg');
+            if (!heroBg || typeof window.requestAnimationFrame !== 'function') return;
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+            var MAX_SHIFT_PX = 40;
+            var PARALLAX_FACTOR = 0.12;
+            var ticking = false;
+
+            /**
+             * Berechnet den Parallax-Versatz aus der aktuellen Scroll-
+             * Position und wendet ihn als transform (translateY) auf den
+             * Hero-Hintergrund an.
+             * @returns {void}
+             */
+            function applyParallax() {
+                var shift = Math.min(window.scrollY * PARALLAX_FACTOR, MAX_SHIFT_PX);
+                heroBg.style.transform = 'translateY(' + shift + 'px)';
+                ticking = false;
+            }
+
+            window.addEventListener('scroll', function () {
+                if (!ticking) {
+                    window.requestAnimationFrame(applyParallax);
+                    ticking = true;
+                }
+            }, { passive: true });
+        })();
+    </script>
 
     <div class="container">
         <main>
@@ -455,7 +555,7 @@
                 </div>
             </section>
 
-            <section class="intro js-reveal">
+            <section class="intro js-reveal" data-reveal-dir="left">
                 <h2>Über Kawasaki</h2>
                 <p>Kawasaki ist eine der ältesten und renommiertesten Motorradhersteller der Welt. Bekannt für Leistung, Innovation und Zuverlässigkeit seit über 100 Jahren. Hier findest du <strong>25 Modelle</strong> — vom Einsteiger-Bike bis zum 300-km/h-Hypersportler.</p>
             </section>
@@ -480,13 +580,13 @@
             </div>
 
             <!-- ===== KAUFBERATUNG SECTION ===== -->
-            <section class="advice-section js-reveal" id="adviceSection" aria-label="Kaufberatung">
+            <section class="advice-section js-reveal" data-reveal-dir="right" id="adviceSection" aria-label="Kaufberatung">
                 <h2 class="advice-title">🧭 Kaufberatung: Welches Motorrad für wen?</h2>
                 <div class="advice-grid" id="adviceGrid"></div>
             </section>
 
             <!-- ===== WARTUNGSRECHNER ===== -->
-            <section class="maintenance-section js-reveal" id="maintenanceSection" aria-label="Wartungsrechner">
+            <section class="maintenance-section js-reveal" data-reveal-dir="left" id="maintenanceSection" aria-label="Wartungsrechner">
                 <h2>🔧 Wartungsrechner</h2>
                 <p class="maint-subtitle">Wähle dein Modell und Kilometerstand — wir berechnen die nächsten 5 Service-Termine.</p>
 
@@ -563,7 +663,7 @@
                 </div>
             </section>
 
-            <section class="closing js-reveal">
+            <section class="closing js-reveal" data-reveal-dir="up">
                 <h2>Kawasaki - Tradition trifft Zukunft</h2>
                 <p>Von klassischen Modellen bis zu High-Tech Superbikes - Kawasaki bleibt eine der Top-Adressen für Motorrad-Enthusiasten weltweit.</p>
                 <div class="legendary-sounds-teaser" style="margin-top:24px;padding:20px 24px;border:1px solid var(--border);border-radius:var(--radius-lg, 12px);background:var(--card-bg);text-align:center;">
@@ -1181,7 +1281,7 @@
         function recordGarageRecentlyView(bikeKey) {
             try {
                 window.ApiClient.addRecentlyViewed(bikeKey);
-            } catch (e) { /* darf Modal.open nie blockieren */ }
+            } catch (e) { /* darf BikeDetailModal.open nie blockieren */ }
         }
 
         /* ==========================================
@@ -1249,9 +1349,9 @@
                         '<h3>' + bike.icon + ' ' + bike.name + '</h3>' +
                         '<p>' + bike.subtitle + '</p>' +
                         '<span class="card-hint">🔍 Öffnen</span>';
-                    card.addEventListener('click', function() { Modal.open(key, card); });
+                    card.addEventListener('click', function() { BikeDetailModal.open(key, card); });
                     card.addEventListener('keydown', function(e) {
-                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); Modal.open(key, card); }
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); BikeDetailModal.open(key, card); }
                     });
                     grid.appendChild(card);
                 });
@@ -1350,14 +1450,19 @@
             function getSelected() { return selected.slice(); }
 
             btnClear.addEventListener('click', clear);
-            btnCompare.addEventListener('click', function() { CompareModal.open(selected); });
+            btnCompare.addEventListener('click', function() { CompareModal.open(selected, btnCompare); });
 
             return { toggle: toggle, clear: clear, getSelected: getSelected };
         })();
 
         /* ==========================================
            Compare Modal — mit Preis-Leistung & %-Diff
-           ========================================== */
+           (refactor(modal): Chrome/Öffnen/Schliessen/Escape/Backdrop/
+           Fokus-Trap laufen jetzt zentral über Modal.openModal()/
+           Modal.closeModal() aus modal.js. Fixt dabei die bisher
+           fehlende Fokus-Rückgabe an den Trigger ("Vergleichen"-Button)
+           beim Schliessen — eine bewusste Verhaltensverbesserung, siehe
+           Migrationsplan.) */
         var CompareModal = (function() {
             var overlay = document.getElementById('compareModal');
             var closeBtn = document.getElementById('compareModalCloseBtn');
@@ -1386,7 +1491,7 @@
                 { label: 'Tank', get: function(b) { return b.extendedSpecs['Kraftstofftank']; } }
             ];
 
-            function open(keys) {
+            function open(keys, triggerEl) {
                 var bikes = keys.map(function(k) { return { key: k, bike: BIKES[k] }; }).filter(function(b) { return b.bike; });
                 if (bikes.length < 2) return;
 
@@ -1466,26 +1571,17 @@
                         return '<p class="compare-advice-item"><strong>' + b.bike.icon + ' ' + b.bike.name + ':</strong> ' + b.bike.advice + '</p>';
                     }).join('');
 
-                overlay.classList.add('modal-visible');
-                overlay.setAttribute('aria-hidden', 'false');
-                document.body.style.overflow = 'hidden';
-                closeBtn.focus();
+                // refactor(modal): #compareModal ist bereits vorhandenes Markup
+                // (Chrome-Modus) — Sichtbarkeit/Escape/Backdrop-Klick/Fokus-
+                // Trap/Fokus-Rückgabe laufen jetzt zentral über modal.js.
+                Modal.openModal({ id: 'compareModal', variant: 'wide', trigger: triggerEl || null });
             }
 
             function close() {
-                overlay.classList.add('modal-closing');
-                setTimeout(function() {
-                    overlay.classList.remove('modal-visible', 'modal-closing');
-                    overlay.setAttribute('aria-hidden', 'true');
-                }, 220);
-                document.body.style.overflow = '';
+                Modal.closeModal('compareModal');
             }
 
             closeBtn.addEventListener('click', close);
-            overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape' && overlay.classList.contains('modal-visible')) close();
-            });
 
             return { open: open, close: close };
         })();
@@ -1520,7 +1616,7 @@
                     '<p class="advice-bike-name">→ ' + b.icon + ' <strong>' + b.name + '</strong></p>' +
                     '<p class="advice-reason">' + p.reason + '</p>' +
                     '<p class="advice-price">💶 ab ' + b.priceRaw.toLocaleString('de-DE') + ' € | 🪪 Klasse ' + b.license + '</p>';
-                function openIt() { Modal.open(p.bike, card); }
+                function openIt() { BikeDetailModal.open(p.bike, card); }
                 card.addEventListener('click', openIt);
                 card.addEventListener('keydown', function(e) {
                     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openIt(); }
@@ -1530,9 +1626,13 @@
         })();
 
         /* ==========================================
-           Modal + Gallery Controller
-           ========================================== */
-        var Modal = (function() {
+           Bike-Detail-Modal + Gallery Controller
+           (refactor(modal): Chrome/Öffnen/Schliessen/Escape/Backdrop/
+           Fokus-Trap laufen jetzt zentral über das globale
+           Modal.openModal()/Modal.closeModal() aus modal.js — dieses
+           IIFE behält nur noch die bike-detail-spezifische Logik
+           (Galerie, Specs, Reviews, Favoriten, YouTube-Link).) */
+        var BikeDetailModal = (function() {
             var overlay = document.getElementById('specModal');
             var titleEl = document.getElementById('modalTitle');
             var subtitleEl = document.getElementById('modalSubtitle');
@@ -1549,7 +1649,6 @@
 
             var currentIndex = 0;
             var autoplayTimer = null;
-            var lastTrigger = null;
             var currentBikeKey = null;
 
             var selectedRating = 0;
@@ -1570,6 +1669,7 @@
                     labelSpan.textContent = label;
                     var valueSpan = document.createElement('span');
                     valueSpan.className = 'spec-value';
+                    valueSpan.setAttribute('data-count-up', '');
                     valueSpan.textContent = specs[label];
                     item.appendChild(labelSpan);
                     item.appendChild(valueSpan);
@@ -1742,7 +1842,6 @@
                     if (typeof window.VroooomAchievements !== 'undefined') window.VroooomAchievements.checkNow();
                 } catch (e) { /* Gamification-Hook darf das Modal nie blockieren */ }
                 currentBikeKey = bikeKey;
-                lastTrigger = triggerEl || null;
                 titleEl.textContent = bike.name;
                 subtitleEl.textContent = bike.subtitle;
                 iconEl.textContent = bike.icon;
@@ -1760,35 +1859,29 @@
                 }
                 var detailsEl = document.getElementById('extendedSpecsSection');
                 if (detailsEl) detailsEl.removeAttribute('open');
-                overlay.classList.add('modal-visible');
-                overlay.setAttribute('aria-hidden', 'false');
-                document.body.style.overflow = 'hidden';
-                closeBtn.focus();
+                // refactor(modal): Sichtbarkeit/Escape/Backdrop-Klick/Fokus-Trap/
+                // Fokus-Rückgabe laufen jetzt zentral über Modal.openModal()
+                // (modal.js) — #specModal ist bereits vorhandenes Markup
+                // (Chrome-Modus), daher werden hier keine title/body/actions
+                // übergeben. onClose räumt den Auto-Play-Timer auf, egal über
+                // welchen Weg (Escape/Backdrop/Close-Button) geschlossen wird.
+                Modal.openModal({ id: 'specModal', trigger: triggerEl || null, onClose: stopAutoplay });
             }
 
             function close() {
-                stopAutoplay();
-                overlay.classList.add('modal-closing');
-                setTimeout(function() {
-                    overlay.classList.remove('modal-visible', 'modal-closing');
-                    overlay.setAttribute('aria-hidden', 'true');
-                }, 220);
-                document.body.style.overflow = '';
-                if (lastTrigger) lastTrigger.focus();
+                Modal.closeModal('specModal');
             }
 
             function isOpen() { return overlay.classList.contains('modal-visible'); }
 
             closeBtn.addEventListener('click', close);
-            overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
             document.getElementById('galleryPrev').addEventListener('click', function() { stopAutoplay(); showSlide(currentIndex - 1); });
             document.getElementById('galleryNext').addEventListener('click', function() { stopAutoplay(); showSlide(currentIndex + 1); });
             autoplayBtn.addEventListener('click', toggleAutoplay);
 
             document.addEventListener('keydown', function(e) {
                 if (!isOpen()) return;
-                if (e.key === 'Escape') close();
-                else if (e.key === 'ArrowLeft') { stopAutoplay(); showSlide(currentIndex - 1); }
+                if (e.key === 'ArrowLeft') { stopAutoplay(); showSlide(currentIndex - 1); }
                 else if (e.key === 'ArrowRight') { stopAutoplay(); showSlide(currentIndex + 1); }
             });
 
@@ -1805,12 +1898,12 @@
                     e.target.classList.contains('compare-checkbox-label') ||
                     e.target.classList.contains('compare-checkbox-wrap') ||
                     e.target.classList.contains('fav-btn')) return;
-                Modal.open(key, card);
+                BikeDetailModal.open(key, card);
             });
             card.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    Modal.open(key, card);
+                    BikeDetailModal.open(key, card);
                 }
             });
         });
@@ -2314,5 +2407,7 @@
     <script src="achievements.js"></script>
     <script src="settings.js"></script>
     <script src="scroll-reveal.js"></script>
+    <script src="count-up.js"></script>
+    <script src="tilt.js"></script>
 </body>
 </html>

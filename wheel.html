@@ -310,15 +310,27 @@
             z-index: 9999;
             animation: confetti-fall linear forwards;
         }
+
+        /* style(hover): Multi-Effekt Hover/Focus/Press — Phase B (additiv,
+           ergänzt nur zusätzliche Eigenschaften auf demselben Selektor). */
+        .btn-primary-sm {
+            transition: background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+        }
+        .btn-primary-sm:hover { box-shadow: var(--shadow-glow, var(--shadow-md)); }
+        .btn-primary-sm:active { transform: translateY(0) scale(0.97); }
+        .btn-primary-sm:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </style>
 </head>
-<body>
+<body class="page-bg-mesh">
 
 <!-- NAV — gemeinsame Navbar (Single Source of Truth), siehe navbar.js.
      data-theme-toggle="external": theme-toggle.js verdrahtet den Button
      weiter unten, navbar.js darf hier NICHT selbst verdrahten. -->
 <nav id="siteNavRoot" class="site-nav" data-theme-toggle="external"></nav>
 <script src="js/api-client.js"></script>
+<script src="modal.js"></script>
 <script src="navbar.js"></script>
 
 <div class="wheel-page">
@@ -329,7 +341,7 @@
 
     <div class="wheel-layout">
         <!-- WHEEL -->
-        <div class="wheel-section js-reveal">
+        <div class="wheel-section js-reveal" data-reveal-dir="left">
             <div class="wheel-canvas-wrap">
                 <canvas id="wheelCanvas" width="480" height="480"></canvas>
                 <div class="wheel-pointer"></div>
@@ -345,7 +357,7 @@
         </div>
 
         <!-- RESULT PANEL -->
-        <div class="result-panel js-reveal">
+        <div class="result-panel js-reveal" data-reveal-dir="right">
             <h2>🏍️ Dein Bike</h2>
             <div class="result-empty" id="resultEmpty">❓<br><small style="font-size:0.9rem;color:#444">Drehe das Rad!</small></div>
             <div class="result-bike-display" id="resultBike">

@@ -178,17 +178,41 @@
     .garage-dream-hero { flex-direction: column; text-align: center; }
     .garage-progress-row { flex-direction: column; align-items: stretch; }
 }
+
+/* style(hover): Multi-Effekt Hover/Focus — Phase B (additiv, ergänzt nur
+   zusätzliche Eigenschaften auf denselben Selektoren, siehe oben). */
+.garage-card {
+    transition: transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.garage-card:hover,
+.garage-card:focus-within {
+    box-shadow: var(--shadow-xl, var(--shadow-md));
+}
+.garage-card:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.garage-ach-card:not(.garage-ach-locked):hover {
+    transform: translateY(-2px);
+    filter: brightness(1.03);
+}
+.garage-ach-card {
+    transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                filter var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
     </style>
 </head>
-<body>
+<body class="page-bg-mesh">
     <!-- Gemeinsame Navbar (Single Source of Truth) — siehe navbar.js.
          data-theme-toggle="external": theme-toggle.js verdrahtet den
          Button weiter unten, navbar.js darf hier NICHT selbst
          verdrahten. -->
     <nav id="siteNavRoot" class="site-nav" data-theme-toggle="external"></nav>
+    <script src="modal.js"></script>
     <script src="navbar.js"></script>
 
-    <header class="garage-hero js-reveal">
+    <header class="garage-hero js-reveal" data-reveal-dir="up">
         <h1>🏠 Meine Garage</h1>
         <p>Deine Favoriten, zuletzt angesehenen Bikes, Bewertungen, dein Traum-Bike, Achievements und Statistiken — alles an einem Ort.</p>
     </header>
@@ -197,7 +221,7 @@
         <main>
 
             <!-- ===== TRAUM-BIKE ===== -->
-            <section class="garage-section js-reveal" aria-label="Mein Traum-Bike">
+            <section class="garage-section js-reveal" data-reveal-dir="left" aria-label="Mein Traum-Bike">
                 <div class="garage-section-title">✨ Mein Traum-Bike</div>
                 <div class="garage-dream-select-row">
                     <label for="garageDreamSelect">Traum-Bike wählen:</label>
@@ -210,7 +234,7 @@
             </section>
 
             <!-- ===== MEINE BIKES (FAVORITEN) ===== -->
-            <section class="garage-section js-reveal" aria-label="Meine Bikes">
+            <section class="garage-section js-reveal" data-reveal-dir="right" aria-label="Meine Bikes">
                 <div class="garage-section-title">❤️ Meine Bikes</div>
                 <div class="garage-grid" id="garageFavoritesGrid" hidden></div>
                 <div class="garage-empty" id="garageFavoritesEmpty">
@@ -220,7 +244,7 @@
             </section>
 
             <!-- ===== ZULETZT ANGESEHEN ===== -->
-            <section class="garage-section js-reveal" aria-label="Zuletzt angesehen">
+            <section class="garage-section js-reveal" data-reveal-dir="left" aria-label="Zuletzt angesehen">
                 <div class="garage-section-title">🔍 Zuletzt angesehen</div>
                 <div class="garage-grid" id="garageRecentGrid" hidden></div>
                 <div class="garage-empty" id="garageRecentEmpty">
@@ -230,7 +254,7 @@
             </section>
 
             <!-- ===== MEINE REVIEWS ===== -->
-            <section class="garage-section js-reveal" aria-label="Meine Reviews">
+            <section class="garage-section js-reveal" data-reveal-dir="right" aria-label="Meine Reviews">
                 <div class="garage-section-title">📝 Meine Reviews</div>
                 <div id="garageReviewsList" hidden></div>
                 <div class="garage-empty" id="garageReviewsEmpty">
@@ -240,7 +264,7 @@
             </section>
 
             <!-- ===== ACHIEVEMENTS ===== -->
-            <section class="garage-section js-reveal" aria-label="Achievements">
+            <section class="garage-section js-reveal" data-reveal-dir="left" aria-label="Achievements">
                 <div class="garage-section-title">🏅 Achievements</div>
                 <div class="garage-progress-row">
                     <div class="garage-progress-track"><div class="garage-progress-fill" id="garageAchievementsProgressBar" style="width:0%"></div></div>
@@ -250,7 +274,7 @@
             </section>
 
             <!-- ===== STATISTIKEN ===== -->
-            <section class="garage-section js-reveal" aria-label="Statistiken">
+            <section class="garage-section js-reveal" data-reveal-dir="right" aria-label="Statistiken">
                 <div class="garage-section-title">📊 Statistiken</div>
                 <div id="garageStatsBars"></div>
                 <p class="garage-most-viewed" id="garageMostViewed" hidden></p>

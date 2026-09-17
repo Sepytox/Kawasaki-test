@@ -1269,3 +1269,50 @@
     transform: translate(-50%, -50%);
   }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   style(hover): Multi-Effekt Hover/Focus — Phase B
+   Rein additive Ergänzungen zu den bestehenden :hover-Regeln oben
+   (hover-polish-test.js sperrt deren genauen Wortlaut — hier werden
+   NUR zusätzliche Eigenschaften auf denselben Selektoren ergänzt,
+   keine bestehende Zeile verändert/entfernt). ".idle-bike-card"
+   bekommt bewusst KEIN transform (siehe Kommentar weiter oben: fixes
+   Zwei-Spalten-Layout) — der "Mehr-Effekt" kommt hier stattdessen aus
+   vertieftem Schatten + einem dezenten Glanz (filter: brightness, kein
+   Pseudo-Element nötig — vermeidet jedes Risiko, dass ein bestehendes
+   absolut positioniertes Kind wie ".idle-track-mode" durch ein neues
+   "position:relative" auf der Karte verschoben würde). Alle anderen
+   Karten dürfen einen kleinen Lift bekommen. Nur transform/opacity/
+   filter werden animiert — prefers-reduced-motion nullt wie überall
+   projektweit die transition-duration.
+   ════════════════════════════════════════════════════════════════ */
+.idle-bike-card:hover {
+  box-shadow: var(--shadow-xl, var(--shadow-md));
+  filter: brightness(1.03);
+}
+.idle-shop-item,
+.idle-contract-item,
+.idle-part-set {
+  transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              box-shadow var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              transform var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              filter var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+.idle-shop-item:not(.is-locked):hover,
+.idle-contract-item:not(.is-owned):hover,
+.idle-part-set:not(.is-complete):hover {
+  transform: translateY(-2px);
+  filter: brightness(1.04);
+}
+.idle-stat-tile:hover,
+.idle-stat-row:hover {
+  filter: brightness(1.03);
+}
+.idle-bike-card:focus-within,
+.idle-shop-item:focus-within,
+.idle-contract-item:focus-within,
+.idle-part-set:focus-within,
+.idle-stat-tile:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

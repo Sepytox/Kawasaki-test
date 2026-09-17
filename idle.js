@@ -583,7 +583,7 @@
    * Element-ids, die ihre EIGENE Enter/Leertaste-Interaktion verdrahten
    * (Schaltpunkt-Leiste/Sparschwein/Powerup/Crash-Zusammenfassung-Button,
    * siehe wireShiftInteraction()/wirePiggyInteraction()/
-   * wirePowerupInteraction()/wireRunSummaryButtons()) — der globale
+   * wirePowerupInteraction()/showCrashSummary()-Aktions-Button) — der globale
    * Sprung/Ducken-Handler in wireRunnerControls() ignoriert Leertaste-
    * Drücke auf genau diesen Elementen, damit "Space" dort NICHT
    * zusätzlich einen Sprung auslöst (verhindert doppelte Aktivierung).
@@ -992,23 +992,50 @@
   }
 
   /**
-   * Zeigt die Crash-Zusammenfassung-Dialog (Teil 3, feat(crash)): Score,
+   * Zeigt die Crash-Zusammenfassung-Dialog (Teil 3, feat(crash); refactor
+   * (modal): jetzt über das zentrale Modal-System, modal.js): Score,
    * gesammelte Coins (bereits über IdleCore.endRun() in km umgewandelt)
-   * und — falls erreicht — den "Neuer Highscore!"-Hinweis.
+   * und — falls erreicht — den "Neuer Highscore!"-Hinweis. variant
+   * "forced-choice" deaktiviert bewusst Escape UND Backdrop-Klick — der
+   * einzige Ausweg ist der "Nochmal fahren"-Button, exakt wie zuvor.
    * @param {{score: number, coins: number, newHighscore: boolean}} summary - Ergebnis von IdleCore.endRun().
    * @returns {void}
    */
   function showCrashSummary(summary) {
-    var overlay = document.getElementById('idleRunSummary');
-    if (!overlay) return;
-    var scoreEl = document.getElementById('idleRunSummaryScore');
-    var coinsEl = document.getElementById('idleRunSummaryCoins');
-    var highscoreEl = document.getElementById('idleRunSummaryHighscore');
-    if (scoreEl) scoreEl.textContent = String(Math.floor(summary.score));
-    if (coinsEl) coinsEl.textContent = String(Math.floor(summary.coins));
-    if (highscoreEl) highscoreEl.hidden = !summary.newHighscore;
-    overlay.hidden = false;
-    window.requestAnimationFrame(function () { overlay.classList.add('is-visible'); });
+    var scoreText = String(Math.floor(summary.score));
+    var coinsText = String(Math.floor(summary.coins));
+    Modal.openModal({
+      id: 'idleRunSummary',
+      variant: 'forced-choice',
+      title: '💥 Crash!',
+      body: function (container) {
+        if (summary.newHighscore) {
+          var highscoreEl = document.createElement('p');
+          highscoreEl.id = 'idleRunSummaryHighscore';
+          highscoreEl.className = 'idle-run-summary-highscore';
+          highscoreEl.textContent = '🏆 Neuer Highscore!';
+          container.appendChild(highscoreEl);
+        }
+        var stats = document.createElement('div');
+        stats.className = 'idle-run-summary-stats';
+        stats.innerHTML =
+          '<div class="idle-run-summary-stat">' +
+            '<span class="idle-run-summary-stat-label">Score</span>' +
+            '<span class="idle-run-summary-stat-value" id="idleRunSummaryScore" data-count-up>' + scoreText + '</span>' +
+          '</div>' +
+          '<div class="idle-run-summary-stat">' +
+            '<span class="idle-run-summary-stat-label">Gesammelte Coins</span>' +
+            '<span class="idle-run-summary-stat-value" id="idleRunSummaryCoins" data-count-up>' + coinsText + '</span>' +
+          '</div>';
+        container.appendChild(stats);
+      },
+      actions: [{
+        label: '🔄 Nochmal fahren',
+        id: 'idleRunSummaryRestartBtn',
+        autofocus: true,
+        onClick: restartRunAndResume
+      }]
+    });
   }
 
   /**
@@ -1016,10 +1043,7 @@
    * @returns {void}
    */
   function hideCrashSummary() {
-    var overlay = document.getElementById('idleRunSummary');
-    if (!overlay) return;
-    overlay.classList.remove('is-visible');
-    overlay.hidden = true;
+    Modal.closeModal('idleRunSummary');
   }
 
   /**
@@ -1045,16 +1069,6 @@
     updateRunComboHud();
     hideCrashSummary();
     ApiClient.saveIdleState(state);
-  }
-
-  /**
-   * Verdrahtet den "Nochmal fahren"-Button der Crash-Zusammenfassung.
-   * @returns {void}
-   */
-  function wireRunSummaryButtons() {
-    var btn = document.getElementById('idleRunSummaryRestartBtn');
-    if (!btn) return;
-    btn.addEventListener('click', restartRunAndResume);
   }
 
   /**
@@ -2851,7 +2865,6 @@
     wireBillPayButton();
     wirePiggyInteraction();
     wirePowerupInteraction();
-    wireRunSummaryButtons();
     wireLifecycleSave();
     window.requestAnimationFrame(tick);
   }

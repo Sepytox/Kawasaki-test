@@ -57,6 +57,26 @@
   --ls-tight: -0.01em;
   --ls-normal: 0em;
   --ls-wide: 0.03em;
+
+  /* Glass / depth (neu, additiv) — Backdrop-Blur-Stufen + Sättigung für
+     Glasmorphismus-Oberflächen (Modals, Hero-Layer). */
+  --glass-blur-sm: 8px;
+  --glass-blur-md: 16px;
+  --glass-blur-lg: 24px;
+  --glass-saturate: 160%;
+
+  /* Layered shadow (neu, additiv) — Elevation oberhalb von --shadow-lg,
+     fuer Modal-Oberflaechen und betonte Glow-Akzente. */
+  --shadow-xl: 0 0 0 1px var(--border), 0 8px 30px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
+  --shadow-glow-lg: 0 0 0 1px var(--border), 0 0 40px rgba(0,112,243,0.25);
+
+  /* Motion-Ergaenzungen (neu, additiv) */
+  --dur-slower: 600ms;
+  --ease-tilt: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Tilt (neu, additiv) */
+  --tilt-max-deg: 6deg;
+  --tilt-perspective: 900px;
 }
 
 /* === DARK MODE (default) ===
@@ -87,6 +107,14 @@
   --shadow-glow: 0 0 0 1px rgba(0,112,243,0.5);
   --glass-bg: rgba(17,17,17,0.6);
   --glass-border: rgba(255,255,255,0.08);
+
+  /* Erweiterte Glass/Gradient-Tokens (neu, additiv, theme-abhaengig) —
+     fuer Modal-Glasmorphismus und einen animierten Hero-Gradient-Mesh. */
+  --gradient-mesh:
+    radial-gradient(at 20% 20%, rgba(0,112,243,0.18), transparent 50%),
+    radial-gradient(at 80% 0%, rgba(31,109,74,0.14), transparent 50%),
+    radial-gradient(at 50% 100%, rgba(0,112,243,0.10), transparent 60%);
+  --glass-bg-strong: rgba(17,17,17,0.55);
 }
 
 /* === LIGHT MODE ===
@@ -113,6 +141,14 @@
   --shadow-glow: 0 0 0 1px rgba(0,112,243,0.35);
   --glass-bg: rgba(255,255,255,0.7);
   --glass-border: rgba(20,20,20,0.08);
+
+  /* Erweiterte Glass/Gradient-Tokens (neu, additiv, theme-abhaengig) —
+     fuer Modal-Glasmorphismus und einen animierten Hero-Gradient-Mesh. */
+  --gradient-mesh:
+    radial-gradient(at 20% 20%, rgba(0,112,243,0.10), transparent 50%),
+    radial-gradient(at 80% 0%, rgba(31,109,74,0.08), transparent 50%),
+    radial-gradient(at 50% 100%, rgba(0,112,243,0.06), transparent 60%);
+  --glass-bg-strong: rgba(255,255,255,0.55);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -196,6 +232,28 @@ summary:focus-visible,
 .reveal-ready .js-reveal.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* feat(scroll-anim): Richtungs-Varianten via "data-reveal-dir" (gesetzt
+   von scroll-reveal.js, entweder explizit im Markup vorgegeben oder aus
+   der horizontalen Layout-Position abgeleitet). Rein additiv: Elemente
+   ohne dieses Attribut behalten exakt das Verhalten der Basisregel oben
+   (translateY(28px) → translateY(0)). Animiert wird ausschliesslich
+   transform/opacity, identisch zur Basisregel. */
+.reveal-ready .js-reveal[data-reveal-dir="down"] {
+  transform: translateY(-28px);
+}
+.reveal-ready .js-reveal[data-reveal-dir="left"] {
+  transform: translateX(-28px);
+}
+.reveal-ready .js-reveal[data-reveal-dir="right"] {
+  transform: translateX(28px);
+}
+.reveal-ready .js-reveal[data-reveal-dir="up"].is-visible,
+.reveal-ready .js-reveal[data-reveal-dir="down"].is-visible,
+.reveal-ready .js-reveal[data-reveal-dir="left"].is-visible,
+.reveal-ready .js-reveal[data-reveal-dir="right"].is-visible {
+  transform: translateY(0) translateX(0);
 }
 
 /* ── Navigation ─────────────────────────────────────────────── */
@@ -682,3 +740,177 @@ summary:focus-visible,
   transition: opacity var(--dur-slow) var(--ease-out);
 }
 .bike-photo.is-loaded { opacity: 1; }
+
+/* ── Zentrales Modal-System (modal.js) — Glassmorphism ──────────
+   Rein additive Ergänzung zu .modal-overlay/.modal-content
+   (styles.css:396-436) — keine bestehende Deklaration wird verändert,
+   nur eine Glass-Oberfläche + stärkere Elevation ergänzt. Ohne
+   backdrop-filter-Unterstützung bleibt der bereits vorhandene solide
+   Fallback aus styles.css unverändert lesbar (progressive enhancement).
+   Betrifft ausschliesslich die Klassen ".modal-overlay"/".modal-content"
+   — soundcheck.html nutzt eigene, andere Klassennamen ("sc-modal-*")
+   und ist von dieser Regel nicht betroffen (GOLDEN_PRINCIPLES_KE.md
+   Regel 6). */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .modal-overlay {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
+  .modal-content {
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    border-color: var(--glass-border);
+  }
+}
+
+.modal-content {
+  box-shadow: var(--shadow-xl);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   style(hover): Multi-Effekt Hover/Focus/Press — Phase B
+   Rein additive Ergänzungen; keine bestehende Deklaration wird entfernt.
+   Da design.css von JEDER Seite inkl. soundcheck.html geladen wird,
+   sind alle neuen Regeln entweder neue, bisher ungenutzte Token/Klassen
+   oder zusätzliche (spätere) Deklarationen für Selektoren, die
+   soundcheck.html nicht im Markup verwendet ("value" der bestehenden
+   Zeilen bleibt exakt gleich, nur zusätzliche Eigenschaften kommen
+   hinzu) — GOLDEN_PRINCIPLES_KE.md Regel 6 bleibt damit gewahrt.
+   ════════════════════════════════════════════════════════════════ */
+
+/* .btn/.btn-outline: identische Transition-Tokens wie oben (--dur-fast/
+   --ease-standard), nur um "transform" erweitert, damit der neue
+   Press-Effekt (siehe styles.css ".btn:active") weich einrastet statt
+   hart zu springen. Werte für background/border-color unverändert. */
+.btn,
+.btn-outline {
+  transition: background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+              transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+}
+
+/* Sichtbarer Fokus-Zustand für die neuen Glassmorphism-Karten (zentrales
+   Modal-System) — zusätzlich zur globalen :focus-visible-Baseline, da
+   ".modal-content" selbst i.d.R. nicht fokussiert wird, sein Rahmen
+   aber beim Fokus eines Kind-Elements (z.B. Schliessen-Button) sichtbar
+   mitleuchten soll. */
+.modal-content:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-xl), var(--shadow-glow, 0 0 0 3px var(--accent-dim));
+}
+
+/* Dezenter "Idle-Pulse" für Call-to-Action-Buttons: eine sehr sanfte,
+   langsame Skalierungs-/Helligkeits-Atmung, ausschliesslich
+   transform/filter (kein box-shadow-Loop, kompositor-freundlich). Opt-in
+   über die Klasse ".btn-cta-pulse" — betrifft ausschliesslich Elemente,
+   die diese Klasse explizit tragen (aktuell: .hero-cta auf index.html),
+   kein bestehendes Element ändert sein Verhalten automatisch. */
+@keyframes btn-cta-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.035); filter: brightness(1.08); }
+}
+.btn-cta-pulse {
+  animation: btn-cta-pulse 3.2s var(--ease-standard, ease) infinite;
+}
+.btn-cta-pulse:hover,
+.btn-cta-pulse:focus-visible {
+  animation-play-state: paused;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   feat(page-transitions): sanfte Cross-Document View Transitions
+   Rein CSS-basiertes Progressive Enhancement (kein Framework, kein JS,
+   keine Änderung an <a href="...">/navbar.js nötig — Navigation bleibt
+   100% normale Mehrseiten-Navigation). "@view-transition" ist eine noch
+   junge, Chromium-spezifische Regel: nicht unterstützende Browser
+   ignorieren sie einfach und navigieren wie bisher instant — kein
+   Fallback-Code nötig. Additiv für JEDE Seite inkl. soundcheck.html
+   (geschützte Datei): das Rendering DURCH die Navigation hindurch wird
+   dadurch weicher, das Rendering DER Seite selbst (die einzige vom
+   GOLDEN_PRINCIPLES_KE.md-Byte-Vergleich betrachtete Grösse) bleibt
+   unverändert, da @view-transition keine normalen Style-Regeln
+   überschreibt.
+   WICHTIG: Die View-Transitions-Spec respektiert prefers-reduced-motion
+   NICHT automatisch (anders als reguläre CSS-Animationen/-Transitions)
+   — die Deaktivierung unten ist daher explizit und eigenständig nötig.
+   ════════════════════════════════════════════════════════════════ */
+@media not (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: auto;
+  }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-slow, 0.4s);
+  animation-timing-function: var(--ease-out, ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   style(glassmorphism): seitenweite Mehrschicht-Hintergrund-Textur
+   Opt-in über eine neue Klasse auf <body> (".page-bg-mesh") — die
+   bestehende, ungeänderte "body"-Basisregel oben (Zeile ~158) bleibt
+   für JEDE Seite ohne diese Klasse (u.a. soundcheck.html) exakt
+   gleich; nur Seiten, die die Klasse tragen, bekommen zusätzlich zum
+   Vollton-Hintergrund das --gradient-mesh-Token (Phase A) als sehr
+   dezente, weiche Mehrschicht-Textur. Dark-Mode nutzt die vollen
+   Werte von --gradient-mesh (kräftigeres Glass-Gefühl), Light-Mode
+   dämpft die Deckkraft zusätzlich (siehe Override unten) — "dark
+   mode: strong glassmorphism; light mode: subtler/balanced". */
+body.page-bg-mesh {
+  background:
+    var(--gradient-mesh),
+    var(--bg);
+  background-attachment: fixed, fixed;
+}
+
+/* ── Glassmorphism für Inline-Panels (nicht-Modal) ───────────────
+   Warenkorb (shop.html ".configurator"), Renn-Ergebnis-Banner
+   (race.html ".endless-result-banner"), Quiz-Ergebnis (quiz.html
+   ".result-card"), Glücksrad-Ergebnis (wheel.html ".result-panel"),
+   Garage-Karten (".garage-card"/".garage-ach-card") — rein additiv,
+   nutzt dieselben Phase-A-Tokens (--glass-blur-sm/-md/-lg, --glass-saturate,
+   --glass-bg-strong, --glass-border) wie das zentrale Modal-System.
+   Ohne backdrop-filter-Unterstützung bleibt der bereits vorhandene
+   solide Kartenhintergrund unverändert lesbar (progressive
+   enhancement, siehe @supports). Dark-Mode: --glass-bg-strong ist
+   dort bereits kräftiger vorkonfiguriert (Phase A); Light-Mode nutzt
+   zusätzlich einen schwächeren Blur (--glass-blur-sm statt -md) für
+   eine "subtilere/ausgewogenere" Optik. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .configurator,
+  .endless-result-banner,
+  .result-card,
+  .result-panel,
+  .garage-card,
+  .garage-ach-card {
+    /* !important nur auf background-image: die Seiten setzen weiter
+       oben (spätere, gleich-spezifische Regeln in ihren eigenen
+       Seiten-<style>-Blocks) ihre eigene background-Kurzform, die
+       background-image sonst implizit auf "none" zurücksetzen und
+       diese additive Glass-Ebene unsichtbar machen würde. */
+    background-image: linear-gradient(165deg, var(--glass-bg-strong), transparent 75%) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate));
+    box-shadow: var(--shadow-xl);
+  }
+  [data-theme="light"] .configurator,
+  [data-theme="light"] .endless-result-banner,
+  [data-theme="light"] .result-card,
+  [data-theme="light"] .result-panel,
+  [data-theme="light"] .garage-card,
+  [data-theme="light"] .garage-ach-card {
+    -webkit-backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-sm)) saturate(var(--glass-saturate));
+  }
+}

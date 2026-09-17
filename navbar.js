@@ -328,67 +328,32 @@
         });
     }
 
-    /** ID des einmalig in den Body eingehängten Login-Platzhalter-Dialogs. */
+    /** id des Login-Platzhalter-Dialogs (verwaltet vom zentralen
+        Modal-System, siehe modal.js). */
     var LOGIN_DIALOG_ID = 'navLoginDialog';
 
     /**
-     * Erstellt (falls noch nicht vorhanden) den "Login folgt bald"-Dialog
-     * und hängt ihn einmalig an document.body an. Rein additiv/idempotent —
-     * ein zweiter mount()-Aufruf (z.B. erneutes Rendern) erzeugt keinen
-     * doppelten Dialog.
-     * @returns {HTMLElement} Das Dialog-Root-Element.
-     */
-    function ensureLoginDialog() {
-        var existing = global.document.getElementById(LOGIN_DIALOG_ID);
-        if (existing) return existing;
-
-        var overlay = global.document.createElement('div');
-        overlay.id = LOGIN_DIALOG_ID;
-        overlay.className = 'nav-login-dialog-overlay';
-        overlay.hidden = true;
-        overlay.innerHTML =
-            '<div class="nav-login-dialog" role="dialog" aria-modal="true" aria-labelledby="navLoginDialogTitle" tabindex="-1">' +
-                '<h2 id="navLoginDialogTitle">Anmeldung</h2>' +
-                '<p>Login folgt bald.</p>' +
-                '<button type="button" class="btn btn-outline nav-login-dialog-close" id="navLoginDialogClose">Schließen</button>' +
-            '</div>';
-        global.document.body.appendChild(overlay);
-        return overlay;
-    }
-
-    /**
-     * Verdrahtet den Login-Platzhalter-Button: öffnet einen einfachen
+     * Verdrahtet den Login-Platzhalter-Button: öffnet über das zentrale
+     * Modal-System (Modal.openModal(), modal.js) einen einfachen
      * "Login folgt bald"-Dialog (keine echte Authentifizierung, reine UI).
-     * Schliesst per Klick auf den Schliessen-Button, Klick ausserhalb des
-     * Dialogs oder Escape.
+     * Escape, Klick ausserhalb des Dialogs, Fokus-Trap und Fokus-Rückgabe
+     * an den Login-Button laufen zentral über modal.js — refactor(modal):
+     * ersetzt die vormals hier hand-verdrahtete Öffnen/Schliessen-Logik.
      * @param {HTMLElement} nav - Das Navbar-Wurzelelement.
      * @returns {void}
      */
     function wireLogin(nav) {
         var loginBtn = nav.querySelector('#navLoginBtn');
-        if (!loginBtn) return;
-        var dialog = ensureLoginDialog();
-        var closeBtn = dialog.querySelector('#navLoginDialogClose');
-        var panel = dialog.querySelector('.nav-login-dialog');
+        if (!loginBtn || typeof global.Modal === 'undefined') return;
 
-        function open() {
-            dialog.hidden = false;
-            if (panel) panel.focus();
-        }
-        function close() {
-            dialog.hidden = true;
-            loginBtn.focus();
-        }
-
-        loginBtn.addEventListener('click', open);
-        if (closeBtn) closeBtn.addEventListener('click', close);
-
-        dialog.addEventListener('click', function (e) {
-            if (e.target === dialog) close();
-        });
-
-        global.document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && !dialog.hidden) close();
+        loginBtn.addEventListener('click', function () {
+            global.Modal.openModal({
+                id: LOGIN_DIALOG_ID,
+                title: 'Anmeldung',
+                body: '<p>Login folgt bald.</p>',
+                actions: [{ label: 'Schließen', variant: 'outline', id: 'navLoginDialogClose' }],
+                trigger: loginBtn
+            });
         });
     }
 

@@ -12,15 +12,16 @@
     <script src="idle-core.js"></script>
     <script src="js/api-client.js"></script>
 </head>
-<body>
+<body class="page-bg-mesh">
     <!-- Gemeinsame Navbar (Single Source of Truth) — siehe navbar.js.
          data-theme-toggle="external": theme-toggle.js verdrahtet den
          Button weiter unten, navbar.js darf hier NICHT selbst
          verdrahten. -->
     <nav id="siteNavRoot" class="site-nav" data-theme-toggle="external"></nav>
+    <script src="modal.js"></script>
     <script src="navbar.js"></script>
 
-    <header class="idle-hero js-reveal">
+    <header class="idle-hero js-reveal" data-reveal-dir="up">
         <h1>🏁 Kawasaki Idle Racer</h1>
         <p>Fahre, sammle Kilometer und kaufe dir Bike für Bike den kompletten Kawasaki-Fuhrpark — auch während du wegschaust.</p>
     </header>
@@ -37,7 +38,7 @@
 
             <div class="idle-layout">
                 <!-- ===== FAHR-BEREICH ===== -->
-                <section class="idle-drive js-reveal" aria-label="Fahrt">
+                <section class="idle-drive js-reveal" data-reveal-dir="left" aria-label="Fahrt">
                     <!-- Endless-Runner (Canvas, Teil 1, feat(idle-runner)): 2–3-Lane-Strasse,
                          Hindernisse rücken Richtung Spieler vor. Lane-Wechsel via ←/→, A/D
                          oder Touch-Swipe; eine Kollision verursacht nur einen kurzen visuellen
@@ -101,7 +102,7 @@
 
                     <div class="idle-km-display">
                         <span class="idle-km-label">Gesamtstrecke</span>
-                        <span class="idle-km-value" id="idleKmValue">0</span>
+                        <span class="idle-km-value" id="idleKmValue" data-count-up>0</span>
                         <span class="idle-km-unit">km</span>
                     </div>
 
@@ -137,7 +138,7 @@
                 </section>
 
                 <!-- ===== AKTUELLES BIKE (Statistik-Balken) ===== -->
-                <section class="idle-bike-card js-reveal" aria-label="Aktuelles Bike">
+                <section class="idle-bike-card js-reveal" data-reveal-dir="right" aria-label="Aktuelles Bike">
                     <div class="idle-bike-card-header">
                         <h2 id="idleBikeName">—</h2>
                         <p id="idleBikeMeta">—</p>
@@ -166,7 +167,7 @@
             </div>
 
             <!-- ===== WERKSTATTRECHNUNGEN + INSOLVENZ (MECHANIK A, feat(idle-bills)) ===== -->
-            <section class="idle-bills-section js-reveal" aria-label="Werkstattrechnungen">
+            <section class="idle-bills-section js-reveal" data-reveal-dir="left" aria-label="Werkstattrechnungen">
                 <h2>🧾 Werkstattrechnungen</h2>
                 <p class="idle-bills-intro">Von Zeit zu Zeit wird eine Werkstattrechnung fällig. Bezahle sie rechtzeitig für einen kleinen Bonus — verpasst du die Frist, ist das keine Katastrophe: eine Insolvenz setzt die Saison einfach neu auf, deine Trophäen, Werksverträge, Teile und Ausrüstung bleiben dir erhalten.</p>
 
@@ -189,28 +190,28 @@
             </section>
 
             <!-- ===== BIKE-SHOP (nächste Bikes kaufen) ===== -->
-            <section class="idle-shop js-reveal" aria-label="Bike-Shop">
+            <section class="idle-shop js-reveal" data-reveal-dir="right" aria-label="Bike-Shop">
                 <h2>🏍️ Bike-Shop</h2>
                 <div class="idle-shop-list" id="idleShopList"></div>
             </section>
 
             <!-- ===== SAISON & WERKSVERTRÄGE (MECHANIK B, feat(idle-prestige)) ===== -->
-            <section class="idle-season js-reveal" aria-label="Saison & Werksverträge">
+            <section class="idle-season js-reveal" data-reveal-dir="left" aria-label="Saison & Werksverträge">
                 <h2>🏆 Saison &amp; Werksverträge</h2>
                 <p class="idle-season-intro">Ab der Ninja ZX-10R kannst du die Saison abschliessen: km und besessene Bikes werden zurückgesetzt, aber du verdienst permanente TROPHÄEN, die dauerhafte Werksverträge kaufen.</p>
 
                 <div class="idle-season-summary">
                     <div class="idle-season-stat">
                         <span class="idle-season-stat-label">Saison</span>
-                        <span class="idle-season-stat-value" id="idleSeasonNumber">1</span>
+                        <span class="idle-season-stat-value" id="idleSeasonNumber" data-count-up>1</span>
                     </div>
                     <div class="idle-season-stat">
                         <span class="idle-season-stat-label">Trophäen</span>
-                        <span class="idle-season-stat-value" id="idleSeasonTrophies">0</span>
+                        <span class="idle-season-stat-value" id="idleSeasonTrophies" data-count-up>0</span>
                     </div>
                     <div class="idle-season-stat">
                         <span class="idle-season-stat-label">Bei Abschluss</span>
-                        <span class="idle-season-stat-value" id="idleSeasonProjected">+0 🏆</span>
+                        <span class="idle-season-stat-value" id="idleSeasonProjected" data-count-up>+0 🏆</span>
                     </div>
                 </div>
 
@@ -224,21 +225,21 @@
             </section>
 
             <!-- ===== TEILE-SAMMLUNG (feat(idle-parts)) ===== -->
-            <section class="idle-parts-section js-reveal" aria-label="Teile-Sammlung">
+            <section class="idle-parts-section js-reveal" data-reveal-dir="right" aria-label="Teile-Sammlung">
                 <h2>🧰 Teile-Sammlung</h2>
                 <p class="idle-parts-intro">Bei jeder abgeschlossenen Runde besteht eine kleine Chance auf ein Teil. Vervollständige ein Set für einen dauerhaften Ertrags-Bonus.</p>
                 <div class="idle-parts-sets" id="idlePartsSets"></div>
             </section>
 
             <!-- ===== AUSRÜSTUNGS-SAMMLUNG (feat(idle-gear)) ===== -->
-            <section class="idle-gear-section js-reveal" aria-label="Ausrüstungs-Sammlung">
+            <section class="idle-gear-section js-reveal" data-reveal-dir="left" aria-label="Ausrüstungs-Sammlung">
                 <h2>🎽 Ausrüstungs-Sammlung</h2>
                 <p class="idle-gear-intro">Beim Bezahlen einer Werkstattrechnung besteht eine Chance auf ein Ausrüstungsteil. Jedes Teil gewährt einen dauerhaften Ertrags-Bonus, ein komplettes Set einen zusätzlichen Bonus.</p>
                 <div class="idle-gear-sets" id="idleGearSets"></div>
             </section>
 
             <!-- ===== STATISTIKEN (feat(idle-stats)) ===== -->
-            <section class="idle-stats-section js-reveal" aria-label="Statistiken">
+            <section class="idle-stats-section js-reveal" data-reveal-dir="right" aria-label="Statistiken">
                 <h2>📊 Statistiken</h2>
                 <div class="idle-stats-grid" id="idleStatsGrid"></div>
                 <h3 class="idle-season-history-heading">Saison-Historie</h3>
@@ -251,32 +252,18 @@
     <!-- Teile-Drop-Toast (feat(idle-parts)) -->
     <div class="idle-toast-container" id="idleToastContainer" aria-live="polite"></div>
 
-    <!-- Crash-Zusammenfassung (Teil 3, feat(crash)): erscheint nach einem
-         echten Crash — Score, gesammelte Coins (bereits einmalig in km
-         umgewandelt, siehe IdleCore.endRun()) und ggf. ein neuer Highscore.
-         "Nochmal fahren" startet sofort einen neuen Run. -->
-    <div class="idle-run-summary" id="idleRunSummary" hidden role="dialog" aria-modal="true" aria-labelledby="idleRunSummaryTitle">
-        <div class="idle-run-summary-card">
-            <h2 id="idleRunSummaryTitle">💥 Crash!</h2>
-            <p class="idle-run-summary-highscore" id="idleRunSummaryHighscore" hidden>🏆 Neuer Highscore!</p>
-            <div class="idle-run-summary-stats">
-                <div class="idle-run-summary-stat">
-                    <span class="idle-run-summary-stat-label">Score</span>
-                    <span class="idle-run-summary-stat-value" id="idleRunSummaryScore">0</span>
-                </div>
-                <div class="idle-run-summary-stat">
-                    <span class="idle-run-summary-stat-label">Gesammelte Coins</span>
-                    <span class="idle-run-summary-stat-value" id="idleRunSummaryCoins">0</span>
-                </div>
-            </div>
-            <button type="button" class="btn idle-run-summary-restart-btn" id="idleRunSummaryRestartBtn">🔄 Nochmal fahren</button>
-        </div>
-    </div>
+    <!-- Crash-Zusammenfassung (Teil 3, feat(crash)): wird jetzt zur Laufzeit
+         vom zentralen Modal-System erzeugt (refactor(modal), siehe
+         idle.js showCrashSummary() / modal.js Modal.openModal() mit
+         variant "forced-choice" — kein Escape, kein Backdrop-Klick, nur
+         "Nochmal fahren" schliesst den Dialog). Kein statisches Markup
+         mehr an dieser Stelle nötig. -->
 
     <script src="theme-toggle.js"></script>
     <script src="settings.js"></script>
     <script src="scroll-reveal.js"></script>
     <script src="achievements.js"></script>
     <script src="idle.js"></script>
+    <script src="count-up.js"></script>
 </body>
 </html>

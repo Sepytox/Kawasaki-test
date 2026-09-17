@@ -485,6 +485,20 @@
             background: linear-gradient(135deg, var(--bg-secondary), var(--accent-dim));
         }
 
+        /* style(hover): Multi-Effekt Hover/Focus/Press — Phase B (additiv,
+           ergänzt nur zusätzliche Eigenschaften auf denselben Selektoren). */
+        .mode-chip,
+        .toggle-btn {
+            transition: border-color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        color var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        background var(--dur-fast, 0.15s) var(--ease-standard, ease),
+                        transform var(--dur-fast, 0.15s) var(--ease-standard, ease);
+        }
+        .mode-chip:hover:not(.active),
+        .toggle-btn:hover:not(.on) { transform: translateY(-1px); }
+        .mode-chip:active,
+        .toggle-btn:active { transform: translateY(0) scale(0.96); }
+
     </style>
 </head>
 <body class="racing-bg" id="bodyEl">
@@ -496,6 +510,7 @@
      weiter unten, navbar.js darf hier NICHT selbst verdrahten. -->
 <nav id="siteNavRoot" class="site-nav" data-theme-toggle="external"></nav>
 <script src="js/api-client.js"></script>
+<script src="modal.js"></script>
 <script src="navbar.js"></script>
 
 <div class="race-page">
@@ -505,7 +520,7 @@
     </div>
 
     <!-- BIKE SELECTOR -->
-    <div class="bike-selector-section js-reveal">
+    <div class="bike-selector-section js-reveal" data-reveal-dir="left">
         <h2>⚙️ Konfiguration</h2>
         <div class="bike-selector-row">
             <div class="selector-group">
@@ -564,7 +579,7 @@
     </div>
 
     <!-- CONTROLS -->
-    <div class="controls-section js-reveal">
+    <div class="controls-section js-reveal" data-reveal-dir="right">
         <h2>🎮 Controls</h2>
         <div class="controls-row">
             <div class="throttle-wrap">
