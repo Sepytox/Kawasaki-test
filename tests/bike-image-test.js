@@ -87,16 +87,28 @@ section('4 · buildCategorySvg() nutzt bike-eigenes g1/g2, falls vorhanden');
   assert(decodeURIComponent(withOwnGradient).indexOf('#123456') !== -1, 'Eigenes g2 wird statt Kategorie-Standardfarbe verwendet');
 })();
 
-section('5 · markup() lädt kein Foto ohne BIKE_PHOTO_MANIFEST-Eintrag (kein 404)');
+section('5 · markup() lädt kein lokales Foto ohne BIKE_PHOTO_MANIFEST-Eintrag — Tier 2 (Unsplash) statt Tier 3 (SVG)');
 (function() {
   // images/bikes/ ist aktuell absichtlich leer — z900 ist NICHT im Manifest,
   // markup() darf daher keinen Ladeversuch für images/bikes/z900.png machen.
+  //
+  // GEÄNDERTES VERHALTEN (3-Stufen-Kette, ersetzt die alte 2-Stufen-Logik):
+  // vorher zeigte `src` hier direkt auf die generierte SVG (`data:image/
+  // svg+xml,...`) — jetzt zeigt `src` zuerst auf die kategorie-passende
+  // Unsplash-Platzhalter-URL (Tier 2); die SVG (Tier 3) ist nur noch das
+  // onerror-Ziel, falls die Unsplash-URL nicht lädt (z. B. offline). Die
+  // ursprüngliche Assertion "src zeigt direkt auf die generierte
+  // SVG-Illustration" ist daher durch die folgende Tier-2-Assertion
+  // ersetzt; die Absicht des Tests (kein 404 fürs lokale Foto, sauberes
+  // HTML) bleibt erhalten.
   const html = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' }, { className: 'fact-card-image' });
   assert(html.indexOf('bike-photo-wrap fact-card-image') !== -1, 'Custom className wird angehängt');
   assert(html.indexOf('src="images/bikes/z900.png"') === -1, 'Ohne Manifest-Eintrag wird KEIN Foto-Pfad referenziert (kein 404-Request)');
-  assert(html.indexOf('src="data:image/svg+xml,') === 0 || html.indexOf('src="data:image/svg+xml,') > -1, 'src zeigt direkt auf die generierte SVG-Illustration');
-  assert(html.indexOf('bike-photo-fallback') !== -1, 'bike-photo-fallback-Klasse ist von Anfang an gesetzt (identisches Endergebnis wie beim alten onerror-Pfad)');
+  assert(html.indexOf('src="' + BikeImage.unsplashUrlFor({ category: 'Naked' }).replace(/&/g, '&amp;') + '"') !== -1, 'src zeigt auf die kategorie-passende Unsplash-Platzhalter-URL (Tier 2), da kein lokales Foto vorliegt (GEÄNDERT: vorher direkt SVG)');
+  assert(html.indexOf('bike-photo-placeholder') !== -1, 'bike-photo-placeholder-Klasse ist von Anfang an gesetzt (markiert "nicht lokal", ersetzt die alte bike-photo-fallback-Klasse für diesen Ausgangszustand)');
   assert(html.indexOf('onload=') !== -1, 'onload-Handler ist gesetzt');
+  assert(html.indexOf('onerror=') !== -1, 'onerror-Handler ist gesetzt (Rückfall auf Tier 3)');
+  assert(html.indexOf('data:image/svg+xml,') !== -1, 'Der onerror-Handler referenziert weiterhin die generierte SVG-Illustration als letzten Rückfall (Tier 3, falls auch Unsplash nicht lädt)');
   // Grobe Balance-Prüfung: gleiche Anzahl " wie erwartet (kein Attribut durch den SVG-Fallback aufgebrochen).
   const quoteCount = (html.match(/"/g) || []).length;
   assert(quoteCount % 2 === 0, `Doppelte Anführungszeichen sind paarig (${quoteCount}) — kein aufgebrochenes Attribut`);
@@ -114,12 +126,23 @@ section('6 · markup() referenziert das echte Foto, sobald eine ID im BIKE_PHOTO
   try {
     assert(BikeImage.hasPhoto('z900') === true, 'hasPhoto() erkennt den simulierten Manifest-Eintrag');
     const html = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' });
-    assert(html.indexOf('src="images/bikes/z900.png"') !== -1, 'Mit Manifest-Eintrag wird das Foto zuerst referenziert');
-    assert(html.indexOf('onerror=') !== -1, 'Mit Manifest-Eintrag bleibt der onerror-Fallback auf die SVG erhalten');
+    assert(html.indexOf('src="images/bikes/z900.png"') !== -1, 'Mit Manifest-Eintrag wird das Foto zuerst referenziert (Tier 1)');
+    assert(html.indexOf('onerror=') !== -1, 'Mit Manifest-Eintrag bleibt ein onerror-Fallback erhalten');
     // Nur das class-Attribut selbst prüfen (nicht den onerror-Handler-Text,
-    // der die Klasse "bike-photo-fallback" als String-Literal enthält).
+    // der die Klassen "bike-photo-fallback"/"bike-photo-placeholder" als
+    // String-Literale enthält).
     const classAttr = (html.match(/class="([^"]*)"/) || [])[1] || '';
     assert(classAttr.indexOf('bike-photo-fallback') === -1, 'Ohne vorherigen Ladefehler ist die Fallback-Klasse im class-Attribut noch NICHT gesetzt');
+    assert(classAttr.indexOf('bike-photo-placeholder') === -1, 'Ohne vorherigen Ladefehler ist die Platzhalter-Klasse im class-Attribut noch NICHT gesetzt (Tier 1 ist aktiv)');
+
+    // NEU: die volle 3-Stufen-Kette muss im onerror-Handler statisch nachweisbar
+    // sein — Tier 1 (lokal) fehlschlägt zuerst zu Tier 2 (Unsplash), und erst
+    // ein ZWEITER, simulierter Ladefehler (auf der Unsplash-URL) fällt
+    // endgültig auf Tier 3 (SVG) zurück.
+    const unsplashUrl = BikeImage.unsplashUrlFor({ category: 'Naked' }).replace(/&/g, '&amp;');
+    assert(html.indexOf(unsplashUrl) !== -1, 'onerror-Handler enthält die Tier-2-Unsplash-URL als Zwischen-Fallback-Ziel, falls das lokale Foto (Tier 1) nicht lädt');
+    assert(html.indexOf('bike-photo-placeholder') !== -1, 'onerror-Handler setzt beim Rückfall auf Tier 2 die "nicht lokal"-Klasse (bike-photo-placeholder), die als Badge-Hook für den Folge-Commit dient');
+    assert(html.indexOf('data:image/svg+xml,') !== -1, 'onerror-Handler enthält verschachtelt weiterhin die generierte SVG (Tier 3) als letzten Rückfall, falls auch die Unsplash-URL (Tier 2) nicht lädt (simulierter Netzwerkfehler-Pfad)');
   } finally {
     delete BikeImage.photoManifest.z900; // aufräumen, damit andere Tests/Consumer unberührt bleiben
   }

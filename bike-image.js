@@ -43,6 +43,58 @@
     return !!(id && BIKE_PHOTO_MANIFEST[id]);
   }
 
+  /**
+   * Mittlere Fallback-Stufe (Tier 2) je Kategorie-Bucket: stabile, direkte
+   * Unsplash-Foto-URLs (fester `photo-<id>`-Slug, NIE `source.unsplash.com/
+   * random`), 4:3-Crop via Query-Parameter. Greift, sobald kein lokales
+   * Foto im BIKE_PHOTO_MANIFEST steht (bzw. wenn ein eingetragenes lokales
+   * Foto beim Laden fehlschlägt) — VOR dem letzten Rückfall auf die
+   * generierte Kategorie-SVG (Tier 3, siehe buildCategorySvg()).
+   *
+   * WICHTIG: Diese Bild-IDs wurden in dieser Sandbox mangels Netzzugriff
+   * auf images.unsplash.com NICHT verifiziert (Option 3, siehe PR-
+   * Beschreibung) — kuratiert nach bestem Wissen als thematisch passende,
+   * bekannte Unsplash-Motorrad-Fotos je Kategorie. Bitte vor dem Merge
+   * einmal visuell in einem normalen Browser gegenprüfen.
+   * @type {Object<string, string>}
+   */
+  var UNSPLASH_BIKE_URLS = {
+    // Sportler/Supersportler/Hypersportler — Sportbike in Schräglage.
+    sport: 'https://images.unsplash.com/photo-1591637333472-0d10ce014dea?w=800&h=600&fit=crop&crop=entropy&q=80&auto=format',
+    // Naked Bike — unverkleidet, urbaner Look.
+    naked: 'https://images.unsplash.com/photo-1580310614729-ccd69652491d?w=800&h=600&fit=crop&crop=entropy&q=80&auto=format',
+    // Sport Tourer/Adventure — Reisemotorrad auf Landstraße.
+    touring: 'https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=800&h=600&fit=crop&crop=entropy&q=80&auto=format',
+    // Klassiker — Cafe-Racer/Retro-Silhouette.
+    retro: 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=800&h=600&fit=crop&crop=entropy&q=80&auto=format',
+    // Off-Road — Enduro/Dirtbike im Gelände.
+    offroad: 'https://images.unsplash.com/photo-1571068316344-75bc76f77890?w=800&h=600&fit=crop&crop=entropy&q=80&auto=format',
+    // Cruiser — klassische, tiefe Cruiser-Silhouette.
+    cruiser: 'https://images.unsplash.com/photo-1622185135505-2d795003994a?w=800&h=600&fit=crop&crop=entropy&q=80&auto=format'
+  };
+
+  /**
+   * Liefert die Tier-2-Unsplash-Platzhalter-URL für ein Bike anhand seiner
+   * (normalisierten) Kategorie.
+   * @param {Object} bike - Bike-Datensatz mit mind. category.
+   * @returns {string} Unsplash-Foto-URL (siehe UNSPLASH_BIKE_URLS).
+   */
+  function unsplashUrlFor(bike) {
+    var key = categoryKey(bike && bike.category);
+    return UNSPLASH_BIKE_URLS[key] || UNSPLASH_BIKE_URLS.naked;
+  }
+
+  /**
+   * HTML-escaped eine URL für die Verwendung als doppelt-gequotetes
+   * HTML-Attribut (nur '&', da Unsplash-Query-Strings '&' zwischen
+   * Parametern verwenden — '<'/'"' kommen in URLs praktisch nie vor).
+   * @param {string} url - Rohe URL.
+   * @returns {string} Attribut-sichere URL.
+   */
+  function escUrlForAttr(url) {
+    return String(url == null ? '' : url).replace(/&/g, '&amp;');
+  }
+
   /** Bildet die (deutschen) Kategorie-Strings aus den Bike-Daten auf einen der sechs Silhouette-Buckets ab. */
   var CATEGORY_MAP = {
     'Hypersportler': 'sport',
@@ -175,17 +227,27 @@
   }
 
   /**
-   * Baut das komplette Bild-Markup (echtes Foto bevorzugt, Kategorie-SVG als
-   * Fallback, sanftes Fade-in beim Laden) als HTML-String zum direkten
-   * Einfügen via innerHTML. Nutzt inline onload/onerror, da die Aufrufer
-   * (index.html, shop.html, wheel.html, garage.js) Karten/Widgets bereits
-   * per String-Konkatenation/Template-Literal rendern.
+   * Baut das komplette Bild-Markup als HTML-String zum direkten Einfügen
+   * via innerHTML. 3-stufige Fallback-Kette:
+   *   Tier 1 (lokal)   → images/bikes/<id>.png, NUR falls im
+   *                      BIKE_PHOTO_MANIFEST eingetragen (siehe hasPhoto()).
+   *   Tier 2 (Unsplash) → kategorie-passende, stabile Unsplash-URL (siehe
+   *                      UNSPLASH_BIKE_URLS/unsplashUrlFor()) — aktiv als
+   *                      initiale src, wenn kein lokales Foto vorhanden ist,
+   *                      ODER als onerror-Ziel, falls das lokale Foto trotz
+   *                      Manifest-Eintrag nicht lädt.
+   *   Tier 3 (SVG)     → generierte Kategorie-Illustration (letzter Rückfall,
+   *                      buildCategorySvg()), greift nur bei einem
+   *                      Ladefehler der Tier-2-URL (z. B. offline).
+   * Die CSS-Klasse `bike-photo-placeholder` markiert jederzeit, ob AKTUELL
+   * eine Nicht-lokal-Stufe (2 oder 3) aktiv ist — dient als Hook für den in
+   * einem Folge-Commit ergänzten "Platzhalter"-Badge (siehe
+   * feat(placeholder-badge)) und verschwindet automatisch, sobald ein
+   * echtes lokales Foto erfolgreich lädt (Klasse wird dafür nie gesetzt).
    *
-   * Versucht ein echtes Foto NUR, wenn die Bike-ID im BIKE_PHOTO_MANIFEST
-   * eingetragen ist (siehe hasPhoto()) — andernfalls wird direkt die
-   * generierte SVG-Illustration als src gesetzt, damit für (noch) nicht
-   * vorhandene Fotos kein 404-Request entsteht. Das Endergebnis (welche
-   * SVG letztlich angezeigt wird) ist in beiden Fällen identisch.
+   * Nutzt inline onload/onerror, da die Aufrufer (index.html, shop.html,
+   * wheel.html, garage.js, idle.js) Karten/Widgets bereits per
+   * String-Konkatenation/Template-Literal rendern.
    * @param {Object} bike - Bike-Datensatz (mind. id, name; optional category, g1, g2).
    * @param {Object} [opts] - { eager?: boolean, className?: string }
    * @returns {string} HTML-Markup: <div class="bike-photo-wrap ...">...</div>.
@@ -195,16 +257,23 @@
     var svgFallback = buildCategorySvg(bike);
     var id = bike && bike.id;
     var photoAvailable = hasPhoto(id);
-    var src = photoAvailable ? photoPath(id) : svgFallback;
+    var unsplashUrl = unsplashUrlFor(bike);
+    var src = photoAvailable ? photoPath(id) : unsplashUrl;
     var altText = escSvgText((bike && bike.name) || '');
     var loading = opts.eager ? 'eager' : 'lazy';
     var extraClass = opts.className ? ' ' + opts.className : '';
-    var imgClass = 'bike-photo' + (photoAvailable ? '' : ' bike-photo-fallback');
+    var imgClass = 'bike-photo' + (photoAvailable ? '' : ' bike-photo-placeholder');
+    // photoAvailable: Tier 1 aktiv → onerror versucht zuerst Tier 2
+    // (Unsplash), erst ein ZWEITER Fehler (auf dem Unsplash-Bild) fällt
+    // endgültig auf Tier 3 (SVG) zurück.
+    // !photoAvailable: src ist bereits Tier 2 → ein einzelner Fehler
+    // (z. B. offline) fällt direkt auf Tier 3 zurück.
+    var unsplashUrlAttrSafe = escUrlForAttr(unsplashUrl);
     var onErrorAttr = photoAvailable
-      ? 'onerror="this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');" '
-      : '';
+      ? 'onerror="this.onerror=function(){this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');};this.classList.add(\'bike-photo-placeholder\');this.src=\'' + unsplashUrlAttrSafe + '\';" '
+      : 'onerror="this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');" ';
     return '<div class="bike-photo-wrap' + extraClass + '">' +
-      '<img class="' + imgClass + '" src="' + src + '" alt="' + altText + '" loading="' + loading + '" ' +
+      '<img class="' + imgClass + '" src="' + escUrlForAttr(src) + '" alt="' + altText + '" loading="' + loading + '" ' +
       'onload="this.classList.add(\'is-loaded\')" ' + onErrorAttr +
       '>' +
       '</div>';
@@ -216,6 +285,8 @@
     photoPath: photoPath,
     hasPhoto: hasPhoto,
     photoManifest: BIKE_PHOTO_MANIFEST,
+    unsplashUrlFor: unsplashUrlFor,
+    unsplashBikeUrls: UNSPLASH_BIKE_URLS,
     markup: markup
   };
 
