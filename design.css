@@ -741,6 +741,29 @@ summary:focus-visible,
 }
 .bike-photo.is-loaded { opacity: 1; }
 
+/* ── Exhaust Image (exhaust-image.js) ───────────────────────────
+   Analog zu .bike-photo-wrap/.bike-photo oben, nur für die 4
+   Auspuff-Teile im Shop-Konfigurator (renderParts(), shop.html) — echtes
+   Foto bevorzugt (images/exhausts/<part-id>.jpg), sonst Unsplash-
+   Platzhalter, sonst generierte Auspuff-SVG-Illustration. */
+.exhaust-photo-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+.exhaust-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+.exhaust-photo.is-loaded { opacity: 1; }
+
 /* ── Zentrales Modal-System (modal.js) — Glassmorphism ──────────
    Rein additive Ergänzung zu .modal-overlay/.modal-content
    (styles.css:396-436) — keine bestehende Deklaration wird verändert,

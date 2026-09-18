@@ -10,6 +10,7 @@
     <script>(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
     <script src="bikes-data.js"></script>
     <script src="bike-image.js"></script>
+    <script src="exhaust-image.js"></script>
     <script src="js/api-client.js"></script>
     <style>
 /* PAGE */
@@ -195,6 +196,16 @@
             padding: 0.15rem 0.4rem;
             border-radius: 3px;
             text-transform: uppercase;
+        }
+
+        /* Bild-Bleed bis zum Kartenrand für Auspuff-Teile — .part-card hat
+           1rem Padding (siehe .part-card oben), daher negative Margins in
+           derselben Grössenordnung (analog .fact-card-image in styles.css,
+           dort für die 18/20px-Padding-Karten der Startseite). */
+        .part-card-image {
+            margin: -1rem -1rem 0.6rem;
+            width: calc(100% + 2rem);
+            border-radius: var(--radius-lg, 12px) var(--radius-lg, 12px) 0 0;
         }
 
         /* CART / CONFIGURATOR */
@@ -1030,9 +1041,17 @@ function renderParts() {
         if (part.weightSave > 0) gains.push(`<span class="gain-chip gain-weight">-${part.weightSave} kg</span>`);
         if (part.accelGain > 0) gains.push(`<span class="gain-chip gain-accel">-${part.accelGain.toFixed(2)}s</span>`);
         if (part.torqueGain > 0) gains.push(`<span class="gain-chip gain-ps">+${part.torqueGain} Nm</span>`);
+        // Bild-Layer NUR für Auspuff-Teile (images/exhausts/, siehe
+        // exhaust-image.js) — andere Teile-Kategorien (performance, wheels,
+        // suspension, chassis, electronics) bleiben bewusst reine
+        // Text/Badge/Chip-Karten (unverändertes Bestandsverhalten).
+        const exhaustImageHtml = part.cat === 'exhaust' && window.ExhaustImage
+            ? ExhaustImage.markup(part, { className: 'part-card-image' })
+            : '';
         return `
         <div class="part-card ${sel ? 'selected' : ''}" id="card_${part.id}" onclick="togglePart('${part.id}')">
             ${part.popular ? '<div class="popular-badge">⭐ Beliebt</div>' : ''}
+            ${exhaustImageHtml}
             <div class="part-card-header">
                 <div class="part-checkbox ${sel ? 'checked' : ''}" id="chk_${part.id}"></div>
                 <div>
