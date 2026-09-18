@@ -117,6 +117,28 @@
     return 'images/exhausts/' + id + '.png';
   }
 
+  /** Markup des dezenten "Platzhalter"-Eck-Badges (siehe design.css .placeholder-badge, geteilt mit bike-image.js). Nur eingefügt, solange Tier 2/3 (nicht lokal) aktiv ist. */
+  var PLACEHOLDER_BADGE_HTML = '<span class="placeholder-badge">Platzhalter</span>';
+
+  /**
+   * Fügt (idempotent) den "Platzhalter"-Eck-Badge in den
+   * `.exhaust-photo-wrap`-Container eines Bildes ein, sobald zur Laufzeit
+   * auf eine Nicht-lokal-Stufe (Unsplash-Tier-2 oder SVG-Tier-3)
+   * zurückgefallen wird — analog zu BikeImage.ensurePlaceholderBadge()
+   * (bike-image.js), hier als eigenständige Kopie, da beide Module
+   * unabhängig voneinander eingebunden werden können.
+   * @param {HTMLImageElement} img - Das <img>-Element, dessen Elternelement den Badge erhalten soll.
+   * @returns {void}
+   */
+  function ensurePlaceholderBadge(img) {
+    var wrap = img && img.parentNode;
+    if (!wrap || wrap.querySelector('.placeholder-badge')) return;
+    var badge = document.createElement('span');
+    badge.className = 'placeholder-badge';
+    badge.textContent = 'Platzhalter';
+    wrap.appendChild(badge);
+  }
+
   /**
    * Baut das komplette Bild-Markup eines Auspuff-Teils als HTML-String zum
    * direkten Einfügen via innerHTML — dieselbe 3-stufige Fallback-Kette
@@ -147,14 +169,15 @@
     var loading = opts.eager ? 'eager' : 'lazy';
     var extraClass = opts.className ? ' ' + opts.className : '';
     var imgClass = 'exhaust-photo' + (photoAvailable ? '' : ' exhaust-photo-placeholder');
+    var badgeHtml = photoAvailable ? '' : PLACEHOLDER_BADGE_HTML;
     var unsplashUrlAttrSafe = escUrlForAttr(UNSPLASH_EXHAUST_URL);
     var onErrorAttr = photoAvailable
-      ? 'onerror="this.onerror=function(){this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'exhaust-photo-fallback\');};this.classList.add(\'exhaust-photo-placeholder\');this.src=\'' + unsplashUrlAttrSafe + '\';" '
+      ? 'onerror="this.onerror=function(){this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'exhaust-photo-fallback\');};this.classList.add(\'exhaust-photo-placeholder\');this.src=\'' + unsplashUrlAttrSafe + '\';if(window.ExhaustImage)window.ExhaustImage.ensurePlaceholderBadge(this);" '
       : 'onerror="this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'exhaust-photo-fallback\');" ';
     return '<div class="exhaust-photo-wrap' + extraClass + '">' +
       '<img class="' + imgClass + '" src="' + escUrlForAttr(src) + '" alt="' + altText + '" loading="' + loading + '" ' +
       'onload="this.classList.add(\'is-loaded\')" ' + onErrorAttr +
-      '>' +
+      '>' + badgeHtml +
       '</div>';
   }
 
@@ -164,6 +187,7 @@
     photoManifest: EXHAUST_PHOTO_MANIFEST,
     buildExhaustSvg: buildExhaustSvg,
     unsplashExhaustUrl: UNSPLASH_EXHAUST_URL,
+    ensurePlaceholderBadge: ensurePlaceholderBadge,
     markup: markup
   };
 

@@ -226,6 +226,29 @@
     return 'images/bikes/' + id + '.png';
   }
 
+  /** Markup des dezenten "Platzhalter"-Eck-Badges (siehe design.css .placeholder-badge, spiegelt .popular-badge aus shop.html). Nur eingefügt, solange Tier 2/3 (nicht lokal) aktiv ist. */
+  var PLACEHOLDER_BADGE_HTML = '<span class="placeholder-badge">Platzhalter</span>';
+
+  /**
+   * Fügt (idempotent) den "Platzhalter"-Eck-Badge in den `.bike-photo-wrap`-
+   * Container eines Bildes ein, sobald zur Laufzeit auf eine Nicht-lokal-
+   * Stufe (Unsplash-Tier-2 oder SVG-Tier-3) zurückgefallen wird — z. B.
+   * weil ein im Manifest eingetragenes lokales Foto trotzdem nicht ladbar
+   * war. Wird vom inline-onerror-Handler aus markup() aufgerufen (der
+   * initiale "kein lokales Foto"-Fall fügt den Badge bereits direkt beim
+   * Rendern ein, siehe badgeHtml in markup()).
+   * @param {HTMLImageElement} img - Das <img>-Element, dessen Elternelement den Badge erhalten soll.
+   * @returns {void}
+   */
+  function ensurePlaceholderBadge(img) {
+    var wrap = img && img.parentNode;
+    if (!wrap || wrap.querySelector('.placeholder-badge')) return;
+    var badge = document.createElement('span');
+    badge.className = 'placeholder-badge';
+    badge.textContent = 'Platzhalter';
+    wrap.appendChild(badge);
+  }
+
   /**
    * Baut das komplette Bild-Markup als HTML-String zum direkten Einfügen
    * via innerHTML. 3-stufige Fallback-Kette:
@@ -240,10 +263,10 @@
    *                      buildCategorySvg()), greift nur bei einem
    *                      Ladefehler der Tier-2-URL (z. B. offline).
    * Die CSS-Klasse `bike-photo-placeholder` markiert jederzeit, ob AKTUELL
-   * eine Nicht-lokal-Stufe (2 oder 3) aktiv ist — dient als Hook für den in
-   * einem Folge-Commit ergänzten "Platzhalter"-Badge (siehe
-   * feat(placeholder-badge)) und verschwindet automatisch, sobald ein
-   * echtes lokales Foto erfolgreich lädt (Klasse wird dafür nie gesetzt).
+   * eine Nicht-lokal-Stufe (2 oder 3) aktiv ist. Sobald das der Fall ist,
+   * erscheint der "Platzhalter"-Eck-Badge (PLACEHOLDER_BADGE_HTML/
+   * ensurePlaceholderBadge()) — er verschwindet automatisch, sobald ein
+   * echtes lokales Foto erfolgreich lädt (Badge wird dafür nie eingefügt).
    *
    * Nutzt inline onload/onerror, da die Aufrufer (index.html, shop.html,
    * wheel.html, garage.js, idle.js) Karten/Widgets bereits per
@@ -263,19 +286,21 @@
     var loading = opts.eager ? 'eager' : 'lazy';
     var extraClass = opts.className ? ' ' + opts.className : '';
     var imgClass = 'bike-photo' + (photoAvailable ? '' : ' bike-photo-placeholder');
+    var badgeHtml = photoAvailable ? '' : PLACEHOLDER_BADGE_HTML;
     // photoAvailable: Tier 1 aktiv → onerror versucht zuerst Tier 2
-    // (Unsplash), erst ein ZWEITER Fehler (auf dem Unsplash-Bild) fällt
-    // endgültig auf Tier 3 (SVG) zurück.
+    // (Unsplash, + Badge einfügen), erst ein ZWEITER Fehler (auf dem
+    // Unsplash-Bild) fällt endgültig auf Tier 3 (SVG) zurück.
     // !photoAvailable: src ist bereits Tier 2 → ein einzelner Fehler
-    // (z. B. offline) fällt direkt auf Tier 3 zurück.
+    // (z. B. offline) fällt direkt auf Tier 3 zurück (Badge ist bereits
+    // von Anfang an im Markup, siehe badgeHtml oben).
     var unsplashUrlAttrSafe = escUrlForAttr(unsplashUrl);
     var onErrorAttr = photoAvailable
-      ? 'onerror="this.onerror=function(){this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');};this.classList.add(\'bike-photo-placeholder\');this.src=\'' + unsplashUrlAttrSafe + '\';" '
+      ? 'onerror="this.onerror=function(){this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');};this.classList.add(\'bike-photo-placeholder\');this.src=\'' + unsplashUrlAttrSafe + '\';if(window.BikeImage)window.BikeImage.ensurePlaceholderBadge(this);" '
       : 'onerror="this.onerror=null;this.src=\'' + svgFallback + '\';this.classList.add(\'is-loaded\');this.classList.add(\'bike-photo-fallback\');" ';
     return '<div class="bike-photo-wrap' + extraClass + '">' +
       '<img class="' + imgClass + '" src="' + escUrlForAttr(src) + '" alt="' + altText + '" loading="' + loading + '" ' +
       'onload="this.classList.add(\'is-loaded\')" ' + onErrorAttr +
-      '>' +
+      '>' + badgeHtml +
       '</div>';
   }
 
@@ -287,6 +312,7 @@
     photoManifest: BIKE_PHOTO_MANIFEST,
     unsplashUrlFor: unsplashUrlFor,
     unsplashBikeUrls: UNSPLASH_BIKE_URLS,
+    ensurePlaceholderBadge: ensurePlaceholderBadge,
     markup: markup
   };
 

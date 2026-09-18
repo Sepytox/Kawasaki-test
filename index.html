@@ -1707,6 +1707,15 @@
                         img.alt = slide.caption;
                         img.className = 'gallery-img' + (tier === 'local' ? '' : ' gallery-img-placeholder');
                         img.setAttribute('loading', 'lazy');
+                        if (tier !== 'local') {
+                            // Kein lokales Foto vorhanden → "Platzhalter"-Badge von
+                            // Anfang an sichtbar (dieselbe Badge-Klasse/-Optik wie
+                            // BikeImage.markup(), siehe design.css .placeholder-badge).
+                            var badge = document.createElement('span');
+                            badge.className = 'placeholder-badge';
+                            badge.textContent = 'Platzhalter';
+                            el.appendChild(badge);
+                        }
                         img.addEventListener('error', function onImgError() {
                             if (tier === 'local') {
                                 // Stufe 2: echtes Foto (images/bikes/<id>.jpg) fehlt/
@@ -1714,6 +1723,7 @@
                                 tier = 'unsplash';
                                 img.classList.add('gallery-img-placeholder');
                                 img.src = slide.unsplashSrc;
+                                if (window.BikeImage) window.BikeImage.ensurePlaceholderBadge(img);
                                 return;
                             }
                             if (tier === 'unsplash' && slide.fallbackSrc) {
@@ -1721,11 +1731,14 @@
                                 // offline) → Kategorie-SVG-Illustration (bike-image.js).
                                 tier = 'svg';
                                 img.src = slide.fallbackSrc;
+                                if (window.BikeImage) window.BikeImage.ensurePlaceholderBadge(img);
                                 return;
                             }
                             // Stufe 4 (praktisch nie, SVG ist ein Data-URI): Emoji zeigen.
                             img.removeEventListener('error', onImgError);
                             el.removeChild(img);
+                            var badgeEl = el.querySelector('.placeholder-badge');
+                            if (badgeEl) el.removeChild(badgeEl);
                             var emoji = document.createElement('span');
                             emoji.className = 'gallery-emoji';
                             emoji.setAttribute('aria-hidden', 'true');

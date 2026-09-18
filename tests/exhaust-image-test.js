@@ -100,6 +100,23 @@ section('4 · markup() referenziert das echte Foto, sobald eine ID im EXHAUST_PH
   }
 })();
 
+section('5 · "Platzhalter"-Badge — nur sichtbar, solange KEIN lokales Foto aktiv ist');
+(function() {
+  const htmlNoLocal = ExhaustImage.markup({ id: 'akrapovic-slip', name: 'Akrapovic Slip-On', brand: 'Akrapovic' });
+  assert(htmlNoLocal.indexOf('placeholder-badge') !== -1, 'Badge-Span ist im Markup enthalten, wenn kein lokales Foto vorliegt');
+  assert(htmlNoLocal.indexOf('>Platzhalter<') !== -1, 'Badge-Text ist auf Deutsch ("Platzhalter")');
+
+  ExhaustImage.photoManifest['akrapovic-slip'] = true;
+  try {
+    const htmlWithLocal = ExhaustImage.markup({ id: 'akrapovic-slip', name: 'Akrapovic Slip-On', brand: 'Akrapovic' });
+    assert(htmlWithLocal.indexOf('src="images/exhausts/akrapovic-slip.png"') !== -1, 'Vorbedingung: lokales Foto ist aktiv (Tier 1)');
+    assert(htmlWithLocal.indexOf('<span class="placeholder-badge">') === -1, 'Badge-Span fehlt initial komplett, solange das lokale Foto (Tier 1) aktiv ist');
+    assert(htmlWithLocal.indexOf('ensurePlaceholderBadge') !== -1, 'onerror-Handler kann den Badge zur Laufzeit nachträglich einfügen, falls Tier 1 doch fehlschlägt');
+  } finally {
+    delete ExhaustImage.photoManifest['akrapovic-slip'];
+  }
+})();
+
 // ============================================================
 // Results
 // ============================================================

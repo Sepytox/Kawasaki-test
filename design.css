@@ -764,6 +764,29 @@ summary:focus-visible,
 }
 .exhaust-photo.is-loaded { opacity: 1; }
 
+/* ── "Platzhalter"-Eck-Badge (bike-image.js/exhaust-image.js) ──────
+   Spiegelt die Positions-/Radius-Konvention von .popular-badge
+   (shop.html), aber neutraler eingefärbt, um nicht mit "Beliebt"
+   verwechselt zu werden. Erscheint NUR, solange Tier 2 (Unsplash) oder
+   Tier 3 (SVG) aktiv ist — verschwindet automatisch, sobald ein echtes
+   lokales Foto lädt (der Badge wird dann gar nicht erst eingefügt/
+   eingesetzt). Setzt .bike-photo-wrap/.exhaust-photo-wrap (beide bereits
+   position:relative) als Positionierungskontext voraus. */
+.placeholder-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  pointer-events: none;
+}
+
 /* ── Zentrales Modal-System (modal.js) — Glassmorphism ──────────
    Rein additive Ergänzung zu .modal-overlay/.modal-content
    (styles.css:396-436) — keine bestehende Deklaration wird verändert,

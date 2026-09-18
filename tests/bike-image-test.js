@@ -148,6 +148,33 @@ section('6 · markup() referenziert das echte Foto, sobald eine ID im BIKE_PHOTO
   }
 })();
 
+section('7 · "Platzhalter"-Badge — nur sichtbar, solange KEIN lokales Foto aktiv ist');
+(function() {
+  // Kein lokales Foto (z900 nicht im Manifest) → Badge muss von Anfang an
+  // im Markup enthalten sein (deckungsgleich mit der Tier-2-Assertion aus
+  // Abschnitt 5, hier isoliert für das Badge-Feature getestet).
+  const htmlNoLocal = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' });
+  assert(htmlNoLocal.indexOf('placeholder-badge') !== -1, 'Badge-Span ist im Markup enthalten, wenn kein lokales Foto vorliegt');
+  assert(htmlNoLocal.indexOf('>Platzhalter<') !== -1, 'Badge-Text ist auf Deutsch ("Platzhalter")');
+
+  // Simuliertes lokales Foto (via Manifest, siehe hasPhoto()) → Badge darf
+  // initial NICHT im Markup stehen (verschwindet automatisch, sobald ein
+  // lokales Foto lädt — der Badge wird für diesen Zustand nie eingefügt).
+  BikeImage.photoManifest.z900 = true;
+  try {
+    const htmlWithLocal = BikeImage.markup({ id: 'z900', name: 'Kawasaki Z900', category: 'Naked' });
+    assert(htmlWithLocal.indexOf('src="images/bikes/z900.png"') !== -1, 'Vorbedingung: lokales Foto ist aktiv (Tier 1)');
+    // Badge-Span darf nicht als eigenständiges Element im initialen Markup
+    // stehen — "ensurePlaceholderBadge" (der Funktionsname) taucht zwar als
+    // String-Literal im onerror-Handler auf, ein "<span class=\"placeholder-badge\">"-
+    // Element jedoch nicht.
+    assert(htmlWithLocal.indexOf('<span class="placeholder-badge">') === -1, 'Badge-Span fehlt initial komplett, solange das lokale Foto (Tier 1) aktiv ist');
+    assert(htmlWithLocal.indexOf('ensurePlaceholderBadge') !== -1, 'onerror-Handler kann den Badge zur Laufzeit nachträglich einfügen, falls Tier 1 doch fehlschlägt');
+  } finally {
+    delete BikeImage.photoManifest.z900;
+  }
+})();
+
 // ============================================================
 // Results
 // ============================================================
