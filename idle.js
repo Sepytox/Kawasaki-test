@@ -525,9 +525,23 @@
       var item = document.createElement('div');
       item.className = 'idle-shop-item' + (isCurrent ? ' is-current' : '') + (!owned && !isNextToBuy ? ' is-locked' : '');
 
-      var icon = document.createElement('span');
-      icon.className = 'idle-shop-item-icon';
-      icon.textContent = CATEGORY_ICONS[bike.kategorie] || '🏍️';
+      // Bild-Layer (BikeImage.markup(), dieselbe 3-Stufen-Kette + "Platzhalter"-
+      // Badge wie überall sonst) statt des bisherigen reinen Emoji-Icons.
+      // Fällt auf das Emoji zurück, falls bike-image.js aus irgendeinem Grund
+      // nicht geladen wurde (defensiv, analog garage.js' renderDreamBike()).
+      var icon;
+      if (window.BikeImage) {
+        icon = document.createElement('div');
+        icon.className = 'idle-shop-item-icon';
+        icon.innerHTML = BikeImage.markup(
+          { id: bike.id, name: bike.name, category: bike.kategorie },
+          { className: 'idle-shop-item-photo' }
+        );
+      } else {
+        icon = document.createElement('span');
+        icon.className = 'idle-shop-item-icon';
+        icon.textContent = CATEGORY_ICONS[bike.kategorie] || '🏍️';
+      }
       item.appendChild(icon);
 
       var info = document.createElement('div');

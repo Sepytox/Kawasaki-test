@@ -1512,7 +1512,17 @@
                 hrow.appendChild(emptyTh);
                 bikes.forEach(function(b) {
                     var th = document.createElement('th');
-                    th.textContent = b.bike.icon + ' ' + b.bike.name;
+                    // Bild-Layer wie überall sonst (BikeImage.markup(), dieselbe
+                    // 3-Stufen-Kette + "Platzhalter"-Badge) — die Vergleichstabelle
+                    // zeigte bisher NUR Icon+Name als reinen Text.
+                    th.innerHTML = BikeImage.markup(
+                        { id: b.key, name: b.bike.name, category: b.bike.category, g1: b.bike.g1, g2: b.bike.g2 },
+                        { className: 'compare-th-image' }
+                    );
+                    var label = document.createElement('div');
+                    label.className = 'compare-th-name';
+                    label.textContent = b.bike.icon + ' ' + b.bike.name;
+                    th.appendChild(label);
                     hrow.appendChild(th);
                 });
                 thead.appendChild(hrow);

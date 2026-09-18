@@ -717,16 +717,18 @@ summary:focus-visible,
 .btn-outline:active { background: var(--accent-dim); }
 
 /* ── Bike Image (bike-image.js) ─────────────────────────────────
-   Echtes Foto (images/bikes/<id>.jpg) bevorzugt, sonst eine
-   kategorie-spezifische SVG-Illustration (Sport, Naked, Touring/Adventure,
-   Retro, Offroad, Cruiser) — nie ein externer Bild-Request. Einheitliches
-   Seitenverhältnis, abgerundete Ecken und sanftes Fade-in überall dort, wo
-   eine Motorrad-Visualisierung erscheint (Grid/Modal, Shop-Hero,
-   Glücksrad-Ergebnis, Garage-Traum-Bike). */
+   Echtes Foto (images/bikes/<id>.jpg) bevorzugt, sonst ein Unsplash-
+   Platzhalter, sonst eine kategorie-spezifische SVG-Illustration (Sport,
+   Naked, Touring/Adventure, Retro, Offroad, Cruiser) als letzter
+   Rückfall. Einheitliches 4:3-Seitenverhältnis, abgerundete Ecken,
+   sanftes Fade-in beim Laden und ein dezenter Hover-Zoom überall dort, wo
+   eine Motorrad-Visualisierung erscheint (Fact-Card-Grid, Compare-Modal,
+   Shop-Hero, Glücksrad-Ergebnis, Garage-Traum-Bike, Idle-Racer-
+   Bike-Auswahl). */
 .bike-photo-wrap {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 4 / 3;
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-secondary);
@@ -737,7 +739,7 @@ summary:focus-visible,
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  transition: opacity var(--dur-slow) var(--ease-out);
+  transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-base) var(--ease-standard);
 }
 .bike-photo.is-loaded { opacity: 1; }
 
@@ -749,7 +751,7 @@ summary:focus-visible,
 .exhaust-photo-wrap {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 4 / 3;
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-secondary);
@@ -760,9 +762,27 @@ summary:focus-visible,
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  transition: opacity var(--dur-slow) var(--ease-out);
+  transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-base) var(--ease-standard);
 }
 .exhaust-photo.is-loaded { opacity: 1; }
+
+/* Dezenter Hover-Zoom auf dem Bild selbst — greift, sobald der Bild-Wrap
+   ODER eine umgebende, ohnehin hoverbare Karte (.fact-card/.part-card)
+   gehovert wird. Nutzt --dur-base (kurz, ~250ms) statt --dur-slow, damit
+   sich Zoom-In/Out klar vom einmaligen Lade-Fade-in unterscheidet. */
+.bike-photo-wrap:hover .bike-photo,
+.fact-card:hover .bike-photo {
+  transform: scale(1.05);
+}
+.exhaust-photo-wrap:hover .exhaust-photo,
+.part-card:hover .exhaust-photo {
+  transform: scale(1.05);
+}
+/* Kein separates prefers-reduced-motion-Override nötig: die globale Regel
+   (siehe oben, "*, *::before, *::after") kürzt die transition-duration auf
+   ~0 für JEDE neue transition/animation im System (analog zum bestehenden
+   .gallery-img-Hover-Zoom und .fact-card-Hover) — der Endzustand
+   (scale(1.05) bei :hover) bleibt korrekt, nur ohne animierten Übergang. */
 
 /* ── "Platzhalter"-Eck-Badge (bike-image.js/exhaust-image.js) ──────
    Spiegelt die Positions-/Radius-Konvention von .popular-badge
