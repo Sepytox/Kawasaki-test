@@ -717,16 +717,18 @@ summary:focus-visible,
 .btn-outline:active { background: var(--accent-dim); }
 
 /* ── Bike Image (bike-image.js) ─────────────────────────────────
-   Echtes Foto (images/bikes/<id>.jpg) bevorzugt, sonst eine
-   kategorie-spezifische SVG-Illustration (Sport, Naked, Touring/Adventure,
-   Retro, Offroad, Cruiser) — nie ein externer Bild-Request. Einheitliches
-   Seitenverhältnis, abgerundete Ecken und sanftes Fade-in überall dort, wo
-   eine Motorrad-Visualisierung erscheint (Grid/Modal, Shop-Hero,
-   Glücksrad-Ergebnis, Garage-Traum-Bike). */
+   Echtes Foto (images/bikes/<id>.jpg) bevorzugt, sonst ein Unsplash-
+   Platzhalter, sonst eine kategorie-spezifische SVG-Illustration (Sport,
+   Naked, Touring/Adventure, Retro, Offroad, Cruiser) als letzter
+   Rückfall. Einheitliches 4:3-Seitenverhältnis, abgerundete Ecken,
+   sanftes Fade-in beim Laden und ein dezenter Hover-Zoom überall dort, wo
+   eine Motorrad-Visualisierung erscheint (Fact-Card-Grid, Compare-Modal,
+   Shop-Hero, Glücksrad-Ergebnis, Garage-Traum-Bike, Idle-Racer-
+   Bike-Auswahl). */
 .bike-photo-wrap {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 4 / 3;
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-secondary);
@@ -737,9 +739,73 @@ summary:focus-visible,
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  transition: opacity var(--dur-slow) var(--ease-out);
+  transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-base) var(--ease-standard);
 }
 .bike-photo.is-loaded { opacity: 1; }
+
+/* ── Exhaust Image (exhaust-image.js) ───────────────────────────
+   Analog zu .bike-photo-wrap/.bike-photo oben, nur für die 4
+   Auspuff-Teile im Shop-Konfigurator (renderParts(), shop.html) — echtes
+   Foto bevorzugt (images/exhausts/<part-id>.jpg), sonst Unsplash-
+   Platzhalter, sonst generierte Auspuff-SVG-Illustration. */
+.exhaust-photo-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+.exhaust-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-base) var(--ease-standard);
+}
+.exhaust-photo.is-loaded { opacity: 1; }
+
+/* Dezenter Hover-Zoom auf dem Bild selbst — greift, sobald der Bild-Wrap
+   ODER eine umgebende, ohnehin hoverbare Karte (.fact-card/.part-card)
+   gehovert wird. Nutzt --dur-base (kurz, ~250ms) statt --dur-slow, damit
+   sich Zoom-In/Out klar vom einmaligen Lade-Fade-in unterscheidet. */
+.bike-photo-wrap:hover .bike-photo,
+.fact-card:hover .bike-photo {
+  transform: scale(1.05);
+}
+.exhaust-photo-wrap:hover .exhaust-photo,
+.part-card:hover .exhaust-photo {
+  transform: scale(1.05);
+}
+/* Kein separates prefers-reduced-motion-Override nötig: die globale Regel
+   (siehe oben, "*, *::before, *::after") kürzt die transition-duration auf
+   ~0 für JEDE neue transition/animation im System (analog zum bestehenden
+   .gallery-img-Hover-Zoom und .fact-card-Hover) — der Endzustand
+   (scale(1.05) bei :hover) bleibt korrekt, nur ohne animierten Übergang. */
+
+/* ── "Platzhalter"-Eck-Badge (bike-image.js/exhaust-image.js) ──────
+   Spiegelt die Positions-/Radius-Konvention von .popular-badge
+   (shop.html), aber neutraler eingefärbt, um nicht mit "Beliebt"
+   verwechselt zu werden. Erscheint NUR, solange Tier 2 (Unsplash) oder
+   Tier 3 (SVG) aktiv ist — verschwindet automatisch, sobald ein echtes
+   lokales Foto lädt (der Badge wird dann gar nicht erst eingefügt/
+   eingesetzt). Setzt .bike-photo-wrap/.exhaust-photo-wrap (beide bereits
+   position:relative) als Positionierungskontext voraus. */
+.placeholder-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  pointer-events: none;
+}
 
 /* ── Zentrales Modal-System (modal.js) — Glassmorphism ──────────
    Rein additive Ergänzung zu .modal-overlay/.modal-content

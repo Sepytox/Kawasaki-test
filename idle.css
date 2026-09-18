@@ -645,6 +645,9 @@
   box-shadow: var(--shadow-sm);
 }
 .idle-shop-item-icon { font-size: 1.6em; flex-shrink: 0; }
+/* Bike-Thumbnail statt Emoji (BikeImage.markup(), siehe idle.js
+   renderShopList()) — fixe Breite, damit die Liste kompakt bleibt. */
+.idle-shop-item-photo { width: 64px; flex-shrink: 0; }
 .idle-shop-item-info { flex: 1; min-width: 160px; }
 .idle-shop-item-info h4 { font-size: 0.98em; margin-bottom: 0.15rem; }
 .idle-shop-item-info p { color: var(--text-muted); font-size: 0.8em; margin: 0; }

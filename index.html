@@ -777,23 +777,30 @@
            ========================================== */
 
         /**
-         * Baut die Galerie-Folien eines Motorrads. Die erste Folie bevorzugt
-         * ein echtes Foto (images/bikes/<id>.jpg, siehe renderSlides()'
-         * Fallback-Kette) und trägt zusätzlich `fallbackSrc` — eine
-         * kategorie-spezifische, selbst erzeugte SVG-Illustration aus dem
-         * geteilten bike-image.js (siehe dort), gefärbt mit der bike-eigenen
-         * Gradientfarbe g1/g2 statt der Kategorie-Standardfarbe.
+         * Baut die Galerie-Folien eines Motorrads. Die erste Folie nutzt
+         * dieselbe 3-stufige Fallback-Kette wie BikeImage.markup() (siehe
+         * bike-image.js): Tier 1 (`localSrc`, echtes Foto unter
+         * images/bikes/<id>.jpg — nur gesetzt, falls BikeImage.hasPhoto()
+         * zutrifft, siehe der Setup-Loop weiter unten), Tier 2
+         * (`unsplashSrc`, kategorie-passende Unsplash-Platzhalter-URL) und
+         * Tier 3 (`fallbackSrc`, selbst erzeugte SVG-Illustration, gefärbt
+         * mit der bike-eigenen Gradientfarbe g1/g2 statt der
+         * Kategorie-Standardfarbe). `src` ist der jeweils initiale
+         * Ladeversuch (Tier 1 falls vorhanden, sonst direkt Tier 2) — siehe
+         * renderSlides() für die tatsächliche onerror-Kaskade + den
+         * "Platzhalter"-Badge.
          * @param {string} name - Anzuzeigender Modellname.
          * @param {string} emoji - Icon-Emoji als letzte Fallback-Stufe.
          * @param {string} g1 - Erste Gradient-Hexfarbe (ohne '#').
          * @param {string} g2 - Zweite Gradient-Hexfarbe (ohne '#').
-         * @param {string} category - Kategorie (steuert die SVG-Silhouette).
+         * @param {string} category - Kategorie (steuert die SVG-Silhouette + Unsplash-Bucket).
          * @returns {Array<Object>} Liste von Galerie-Folien-Objekten.
          */
         function makeSlides(name, emoji, g1, g2, category) {
             var svgFallback = BikeImage.buildCategorySvg({ name: name, category: category, g1: g1, g2: g2 });
+            var unsplashFallback = BikeImage.unsplashUrlFor({ category: category });
             return [
-                { type: 'img', src: svgFallback, fallbackSrc: null, caption: name + ' – Seitenansicht', gradient: 'linear-gradient(135deg, #' + g1 + ', #' + g2 + ')' },
+                { type: 'img', src: unsplashFallback, isLocal: false, unsplashSrc: unsplashFallback, fallbackSrc: svgFallback, caption: name + ' – Seitenansicht', gradient: 'linear-gradient(135deg, #' + g1 + ', #' + g2 + ')' },
                 { type: 'emoji', emoji: emoji, caption: name + ' unterwegs', gradient: 'linear-gradient(135deg, #' + g2 + ', #' + g1 + ')' },
                 { type: 'emoji', emoji: '🔧', caption: 'Technik im Detail', gradient: 'linear-gradient(135deg, #232526, #414345)' }
             ];
@@ -1178,10 +1185,12 @@
         // Bevorzugt ein echtes Foto (images/bikes/<id>.jpg) für die erste
         // Galerie-Folie jedes Bikes — aber NUR, wenn BikeImage.hasPhoto()
         // bestätigt, dass die Datei laut Manifest tatsächlich vorhanden ist
-        // (siehe bike-image.js), sonst bleibt die bereits generierte
-        // Kategorie-SVG als src stehen (kein 404-Ladeversuch ins Leere).
-        // Fällt bei Ladefehler eines echten Fotos auf die zuvor generierte
-        // Kategorie-SVG zurück (siehe renderSlides() unten und bike-image.js).
+        // (siehe bike-image.js). Ohne Manifest-Eintrag bleibt `src` bereits
+        // auf der Tier-2-Unsplash-URL stehen (siehe makeSlides()) — kein
+        // 404-Ladeversuch für das lokale Foto. `unsplashSrc`/`fallbackSrc`
+        // bleiben in JEDEM Fall gesetzt, damit renderSlides() bei einem
+        // Ladefehler die volle 3-Stufen-Kette (lokal → Unsplash → SVG)
+        // durchlaufen kann.
         // Ergänzt außerdem `id`, damit der Bike-Datensatz seinen eigenen
         // Schlüssel kennt (u. a. für BikeImage-Aufrufe).
         Object.keys(BIKES).forEach(function(key) {
@@ -1189,7 +1198,7 @@
             bike.id = key;
             var firstSlide = bike.slides && bike.slides[0];
             if (firstSlide && firstSlide.type === 'img' && BikeImage.hasPhoto(key)) {
-                firstSlide.fallbackSrc = firstSlide.src;
+                firstSlide.isLocal = true;
                 firstSlide.src = BikeImage.photoPath(key);
             }
         });
@@ -1503,7 +1512,17 @@
                 hrow.appendChild(emptyTh);
                 bikes.forEach(function(b) {
                     var th = document.createElement('th');
-                    th.textContent = b.bike.icon + ' ' + b.bike.name;
+                    // Bild-Layer wie überall sonst (BikeImage.markup(), dieselbe
+                    // 3-Stufen-Kette + "Platzhalter"-Badge) — die Vergleichstabelle
+                    // zeigte bisher NUR Icon+Name als reinen Text.
+                    th.innerHTML = BikeImage.markup(
+                        { id: b.key, name: b.bike.name, category: b.bike.category, g1: b.bike.g1, g2: b.bike.g2 },
+                        { className: 'compare-th-image' }
+                    );
+                    var label = document.createElement('div');
+                    label.className = 'compare-th-name';
+                    label.textContent = b.bike.icon + ' ' + b.bike.name;
+                    th.appendChild(label);
                     hrow.appendChild(th);
                 });
                 thead.appendChild(hrow);
@@ -1688,22 +1707,48 @@
 
                     if (slide.type === 'img') {
                         var img = document.createElement('img');
-                        var triedFallback = false;
+                        // Selber Tier-Zustand wie in bike-image.js' markup():
+                        // 'local' → 'unsplash' (Tier 2) → 'svg' (Tier 3, letzter
+                        // Rückfall vor dem Emoji). Startet bei 'unsplash', falls
+                        // kein lokales Foto im Manifest steht (siehe slide.isLocal,
+                        // gesetzt im 25-Bike-Setup-Loop weiter oben).
+                        var tier = slide.isLocal ? 'local' : 'unsplash';
                         img.src = slide.src;
                         img.alt = slide.caption;
-                        img.className = 'gallery-img';
+                        img.className = 'gallery-img' + (tier === 'local' ? '' : ' gallery-img-placeholder');
                         img.setAttribute('loading', 'lazy');
+                        if (tier !== 'local') {
+                            // Kein lokales Foto vorhanden → "Platzhalter"-Badge von
+                            // Anfang an sichtbar (dieselbe Badge-Klasse/-Optik wie
+                            // BikeImage.markup(), siehe design.css .placeholder-badge).
+                            var badge = document.createElement('span');
+                            badge.className = 'placeholder-badge';
+                            badge.textContent = 'Platzhalter';
+                            el.appendChild(badge);
+                        }
                         img.addEventListener('error', function onImgError() {
-                            // Stufe 1: echtes Foto (images/bikes/<id>.jpg) fehlt/fehlerhaft
-                            // → Kategorie-SVG-Illustration (bike-image.js) versuchen.
-                            if (!triedFallback && slide.fallbackSrc) {
-                                triedFallback = true;
-                                img.src = slide.fallbackSrc;
+                            if (tier === 'local') {
+                                // Stufe 2: echtes Foto (images/bikes/<id>.jpg) fehlt/
+                                // fehlerhaft → Unsplash-Platzhalter (Tier 2) versuchen.
+                                tier = 'unsplash';
+                                img.classList.add('gallery-img-placeholder');
+                                img.src = slide.unsplashSrc;
+                                if (window.BikeImage) window.BikeImage.ensurePlaceholderBadge(img);
                                 return;
                             }
-                            // Stufe 2 (praktisch nie, SVG ist ein Data-URI): Emoji zeigen.
+                            if (tier === 'unsplash' && slide.fallbackSrc) {
+                                // Stufe 3: auch die Unsplash-URL lädt nicht (z. B.
+                                // offline) → Kategorie-SVG-Illustration (bike-image.js).
+                                tier = 'svg';
+                                img.src = slide.fallbackSrc;
+                                if (window.BikeImage) window.BikeImage.ensurePlaceholderBadge(img);
+                                return;
+                            }
+                            // Stufe 4 (praktisch nie, SVG ist ein Data-URI): Emoji zeigen.
                             img.removeEventListener('error', onImgError);
                             el.removeChild(img);
+                            var badgeEl = el.querySelector('.placeholder-badge');
+                            if (badgeEl) el.removeChild(badgeEl);
                             var emoji = document.createElement('span');
                             emoji.className = 'gallery-emoji';
                             emoji.setAttribute('aria-hidden', 'true');
