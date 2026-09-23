@@ -1248,20 +1248,7 @@
 
     var masterSlider = document.getElementById('volumeSlider');
     if (masterSlider && String(masterSlider.value) !== String(vol)) masterSlider.value = vol;
-    var playerSlider = document.getElementById('playerVolume');
-    if (playerSlider) playerSlider.value = masterVolume;
     return vol;
-  }
-
-  function initVolumeControl() {
-    var volumeSlider = document.getElementById('playerVolume');
-    if (!volumeSlider) return;
-
-    volumeSlider.addEventListener('input', function() {
-      var vol = Math.round(parseFloat(volumeSlider.value) * 100);
-      applyVolume(vol);
-      try { localStorage.setItem('soundcheckVolume', vol); } catch(e) {}
-    });
   }
 
   /**
@@ -1426,7 +1413,6 @@
       });
     }
 
-    initVolumeControl();
     initPersistentVolume();
     initTimeline();
     initRewindForward();
