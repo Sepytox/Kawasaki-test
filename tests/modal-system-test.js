@@ -23,8 +23,10 @@
  *  8. design.css erweitert die Glassmorphism-Optik für .modal-overlay/
  *     .modal-content rein additiv (neue @supports-Regel, keine bestehende
  *     Deklaration verändert) und lässt soundcheck.html unangetastet.
- *  9. soundcheck.html/soundcheck.js bleiben unverändert
- *     (GOLDEN_PRINCIPLES_KE.md Regel 6).
+ *  9. soundcheck.html/soundcheck.js bleiben unverändert bis auf die von Miro
+ *     direkt freigegebene, eng begrenzte Ausnahme (Entfernen des doppelten
+ *     Lautstärke-Reglers #playerVolume/initVolumeControl() + Favicon;
+ *     GOLDEN_PRINCIPLES_KE.md Regel 6).
  *
  * Run: node tests/modal-system-test.js
  * Exit 0 = alle Tests bestanden, Exit 1 = mindestens ein Fehler.
@@ -189,16 +191,23 @@ section('8. design.css: additive Glassmorphism für .modal-overlay/.modal-conten
   assert(!css.includes('.sc-modal'), 'design.css definiert keine soundcheck-spezifischen .sc-modal-Selektoren (bleibt unangetastet)');
 }
 
-section('9. soundcheck.html/soundcheck.js bleiben unverändert (GOLDEN_PRINCIPLES_KE.md Regel 6)');
+section('9. soundcheck.html/soundcheck.js bleiben unverändert, ausser der von Miro freigegebenen Ausnahme (GOLDEN_PRINCIPLES_KE.md Regel 6)');
 {
-  ['soundcheck.html', 'soundcheck.js'].forEach((file) => {
-    try {
-      const diff = execSync(`git diff origin/main -- ${file}`, { cwd: ROOT, encoding: 'utf8' });
-      assert(diff.trim() === '', `git diff origin/main -- ${file} ist leer (Datei unverändert)`);
-    } catch (e) {
-      console.log(`  ⚠️  Konnte git diff für ${file} nicht ausführen (`, e.message.split('\n')[0], ') — überspringe.');
-    }
-  });
+  // Miro hat direkt und persönlich genau EINE eng begrenzte Ausnahme freigegeben:
+  // Entfernen des doppelten Lautstärke-Reglers (#playerVolume/initVolumeControl())
+  // sowie Ergänzen eines Favicons. Statt eines leeren Diffs prüfen wir daher
+  // gezielt, dass GENAU dieser freigegebene Zustand vorliegt und der einzige
+  // verbleibende Regler #volumeSlider unangetastet funktionsfähig ist.
+  const soundcheckHtml = read('soundcheck.html');
+  const soundcheckJs = read('soundcheck.js');
+
+  assert(!/id=["']playerVolume["']/.test(soundcheckHtml), 'soundcheck.html enthält kein #playerVolume mehr (freigegebene Ausnahme)');
+  assert(/id=["']volumeSlider["']/.test(soundcheckHtml), 'soundcheck.html enthält weiterhin den einzigen Lautstärke-Regler #volumeSlider');
+  assert(soundcheckHtml.includes('<link rel="icon"'), 'soundcheck.html hat ein <link rel="icon"> (freigegebene Ausnahme)');
+
+  assert(!soundcheckJs.includes('initVolumeControl'), 'soundcheck.js enthält initVolumeControl() nicht mehr (freigegebene Ausnahme)');
+  assert(!soundcheckJs.includes('playerVolume'), 'soundcheck.js referenziert #playerVolume nicht mehr (freigegebene Ausnahme)');
+  assert(/function initPersistentVolume/.test(soundcheckJs), 'soundcheck.js: initPersistentVolume() (verdrahtet #volumeSlider) bleibt vorhanden');
 }
 
 // ============================================================
